@@ -1,7 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { permissions, qk, useApi, useMe } from '../app/context';
-import { readAccessCode } from '../app/signin';
+import { permissions, qk, useApi, useMe, useSessionActions } from '../app/context';
+import { markSignedOut, readAccessCode } from '../app/signin';
 import { Avatar, Button, ErrorState, Modal, SkeletonRows, useToast } from '../components';
 
 /**
@@ -11,7 +11,7 @@ import { Avatar, Button, ErrorState, Modal, SkeletonRows, useToast } from '../co
 export function UserSwitcher({ onClose }: { onClose: () => void }) {
   const api = useApi();
   const me = useMe();
-  const client = useQueryClient();
+  const session = useSessionActions();
   const navigate = useNavigate();
   const toast = useToast();
   const isDev = me.authMode === 'Dev';
@@ -19,22 +19,27 @@ export function UserSwitcher({ onClose }: { onClose: () => void }) {
 
   const users = useQuery({ queryKey: qk.devUsers, queryFn: () => api.getDevUsers(readAccessCode()), enabled: isDev });
 
-  const reset = async () => {
-    onClose();
-    navigate('/');
-    client.clear();
-    await client.invalidateQueries();
-  };
-
   const login = useMutation({
     mutationFn: (userId: string) => api.devLogin(userId, readAccessCode()),
-    onSuccess: async (user) => {
-      await reset();
+    onSuccess: (user) => {
+      onClose();
+      navigate('/');
+      // Sets `me` from the response and drops the previous user's data; the shell is rebuilt.
+      session.signedIn(user);
       toast.show(`You are now ${user.name}`);
     },
     onError: (e) => toast.error(e),
   });
-  const logout = useMutation({ mutationFn: () => api.logout(), onSuccess: reset, onError: (e) => toast.error(e) });
+  const logout = useMutation({
+    mutationFn: () => api.logout(),
+    onSuccess: async () => {
+      onClose();
+      navigate('/');
+      markSignedOut();
+      await session.signedOut();
+    },
+    onError: (e) => toast.error(e),
+  });
 
   return (
     <Modal

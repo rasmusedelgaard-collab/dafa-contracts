@@ -3,8 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Route, Routes } from 'react-router-dom';
 import { ApiError } from './api/api';
 import type { DevConfig } from './api/types';
-import { qk, ScopeProvider, SessionProvider, useApi, useLookupsQuery, useMeQuery } from './app/context';
-import { browser, currentPath, entraLoginUrl, readAccessCode, redirectedRecently, storeAccessCode } from './app/signin';
+import { qk, ScopeProvider, SessionProvider, useApi, useLookupsQuery, useMeQuery, useSessionActions } from './app/context';
+import { browser, currentPath, entraLoginUrl, isSignedOut, markSignedOut, readAccessCode, redirectedRecently, storeAccessCode } from './app/signin';
+import { isThrottled, THROTTLED_MESSAGE } from './lib/errors';
 import { Avatar, Button, Card, ErrorState, Field, Icon, Skeleton, SkeletonRows, TextInput, useToast } from './components';
 import { Home } from './pages/Home';
 import { NotFound } from './pages/NotFound';
@@ -56,12 +57,20 @@ function SignInCard({ title, children }: { title: string; children: ReactNode })
 function EntraSignIn() {
   const url = entraLoginUrl(currentPath());
   const [looping] = useState(() => redirectedRecently());
+  const [signedOut] = useState(() => isSignedOut());
   useEffect(() => {
-    if (!looping) browser.redirect(url);
-  }, [looping, url]);
+    if (!looping && !signedOut) browser.redirect(url);
+  }, [looping, signedOut, url]);
   return (
-    <SignInCard title={looping ? 'Sign-in did not complete' : 'Signing you in'}>
-      {looping ? (
+    <SignInCard title={signedOut ? 'You are signed out' : looping ? 'Sign-in did not complete' : 'Signing you in'}>
+      {signedOut ? (
+        <>
+          <p className="secondary">You have signed out of DAFA Contracts.</p>
+          <a className="btn btn--block" href={url}>
+            Sign in with your DAFA account
+          </a>
+        </>
+      ) : looping ? (
         <>
           <p className="secondary">You were sent to sign in with your DAFA account, but the session was not started. Try again, or contact an administrator if it keeps happening.</p>
           <a className="btn btn--block" href={url}>
@@ -95,7 +104,8 @@ function AccessCodeForm({ notice, onAccepted }: { notice?: string; onAccepted: (
       onAccepted(value);
     },
     onError: (e) => {
-      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) setError('The access code is not correct');
+      if (isThrottled(e)) setError(THROTTLED_MESSAGE);
+      else if (e instanceof ApiError && (e.status === 401 || e.status === 403)) setError('The access code is not correct');
       else toast.error(e);
     },
   });
@@ -144,6 +154,7 @@ function AccessCodeForm({ notice, onAccepted }: { notice?: string; onAccepted: (
 function DevSignIn({ config }: { config: DevConfig }) {
   const api = useApi();
   const client = useQueryClient();
+  const session = useSessionActions();
   const toast = useToast();
   const [code, setCode] = useState(() => readAccessCode());
   const [notice, setNotice] = useState<string>();
@@ -154,8 +165,8 @@ function DevSignIn({ config }: { config: DevConfig }) {
     mutationFn: (userId: string) => api.devLogin(userId, code),
     onSuccess: (me) => {
       // `dev/login` returns Me: show the app right away and drop anything loaded while signed out.
-      client.removeQueries({ predicate: (q) => q.queryKey[0] !== qk.me[0] && q.queryKey[0] !== qk.devConfig[0] });
-      client.setQueryData(qk.me, me);
+      markSignedOut(false);
+      session.signedIn(me);
     },
     onError: (e) => toast.error(e),
   });
@@ -187,7 +198,9 @@ function DevSignIn({ config }: { config: DevConfig }) {
       {users.isLoading ? (
         <SkeletonRows rows={4} label="Loading demo users" />
       ) : users.isError ? (
-        <p className="secondary">Sign-in with a demo user is not available on this site. Reload the page to sign in with your DAFA account, or contact an administrator.</p>
+        <p className="secondary" role="alert">
+          {isThrottled(users.error) ? THROTTLED_MESSAGE : 'Sign-in with a demo user is not available on this site. Reload the page to sign in with your DAFA account, or contact an administrator.'}
+        </p>
       ) : (
         <>
           <p className="secondary">Test environment. Choose a demo user; each one has different access.</p>
@@ -239,7 +252,8 @@ export function App() {
   if (!lookups.data) return <Splash />;
 
   return (
-    <SessionProvider me={me.data} lookups={lookups.data}>
+    // Keyed on the user: switching demo user rebuilds the shell, navigation and every page.
+    <SessionProvider key={me.data.id} me={me.data} lookups={lookups.data}>
       <ScopeProvider>
         <Suspense fallback={<Splash />}>
           <Routes>

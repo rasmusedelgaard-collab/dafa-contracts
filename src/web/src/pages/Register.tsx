@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiMode } from '../api';
@@ -7,6 +8,7 @@ import type { ContractListItem, ContractQuery, ContractSort, ContractStatus, Con
 import { Avatar, Button, ButtonLink, Card, ChipSelect, EmptyState, ErrorState, Icon, NoticePill, Segmented, Skeleton, SkeletonRows, StatusDot, Table, useToast, type Column } from '../components';
 import { formatDate, noticeTone } from '../lib/dates';
 import { ALL_STATUSES, formatMoneyCompact, plural, saveBlob, statusLabel } from '../lib/format';
+import { useNarrow, usePhone } from '../lib/media';
 
 const VIEWS: { value: ContractView; label: string }[] = [
   { value: 'all', label: 'All contracts' },
@@ -90,6 +92,13 @@ function QuickLook({ item }: { item: ContractListItem }) {
   );
 }
 
+/** Renders its children in the top bar, next to "New contract" (Register.dc.html has Export there). */
+function TopBarActions({ children }: { children: ReactNode }) {
+  const [target, setTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => setTarget(document.getElementById('topbar-actions')), []);
+  return target ? createPortal(children, target) : null;
+}
+
 export function Register() {
   const api = useApi();
   const lookups = useLookups();
@@ -97,6 +106,8 @@ export function Register() {
   const toast = useToast();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
+  const phone = usePhone();
+  const narrow = useNarrow();
 
   const view: ContractView = isView(params.get('view')) ? (params.get('view') as ContractView) : 'all';
   const q = params.get('q') ?? '';
@@ -145,7 +156,9 @@ export function Register() {
   const query: ContractQuery = { ...filters, page, pageSize: PAGE_SIZE };
 
   const list = useQuery({ queryKey: qk.contractList(query), queryFn: () => api.getContracts(query), placeholderData: keepPreviousData });
-  const all = useQuery({ queryKey: qk.contractList({ count: true }), queryFn: () => api.getContracts({ pageSize: 1 }) });
+  // Everything the user can see, to say how many contracts in how many legal entities (up to 200 rows).
+  const all = useQuery({ queryKey: qk.contractList({ count: true }), queryFn: () => api.getContracts({ pageSize: 200 }) });
+  const entityCount = all.data && all.data.total <= all.data.items.length ? new Set(all.data.items.map((i) => i.entityName)).size : null;
 
   const exportCsv = useMutation({
     mutationFn: () => api.exportContracts(filters),
@@ -159,6 +172,12 @@ export function Register() {
   const items = list.data?.items ?? [];
   const total = list.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  // A page past the end (an old link, or a filter that shortened the list) goes to the last page.
+  const pastEnd = !!list.data && !list.isPlaceholderData && page > pages;
+  useEffect(() => {
+    if (pastEnd) update({ page: pages <= 1 ? null : String(pages) }, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pastEnd, pages]);
   const selected = items.find((i) => i.id === selectedId) ?? items[0] ?? null;
   const hasFilters = !!(q || scope.entityId || departmentId || typeId || status || view !== 'all');
 
@@ -170,44 +189,58 @@ export function Register() {
 
   const pick = (row: ContractListItem) => {
     // Under 720px there is no quick look panel: go straight to the contract.
-    if (window.matchMedia?.('(max-width: 720px)').matches) navigate(`/contracts/${row.id}`);
+    if (phone) navigate(`/contracts/${row.id}`);
     else update({ sel: row.id }, true);
   };
 
-  const columns: Column<ContractListItem>[] = [
+  const allColumns: Column<ContractListItem>[] = [
     {
       key: 'contract',
       header: 'Contract',
       sortKey: 'title',
+      width: '40%',
       render: (r) => (
         <div className="cell-title">
-          <button type="button" className="cell-title__btn" aria-label={`Preview ${r.title}`} onClick={(e) => { e.stopPropagation(); pick(r); }} onDoubleClick={() => navigate(`/contracts/${r.id}`)}>
+          <button type="button" className="cell-title__btn" title={r.title} aria-label={`${phone ? 'Open' : 'Preview'} ${r.title}`} onClick={(e) => { e.stopPropagation(); pick(r); }} onDoubleClick={() => navigate(`/contracts/${r.id}`)}>
             {r.title}
           </button>
-          <span className="caption">
+          <span className="caption cell-title__meta" title={`${r.counterparty} · ${r.typeName}`}>
             {r.counterparty} · {r.typeName}
             <span className="only-sm"> · {statusLabel(r.status)}</span>
           </span>
         </div>
       ),
     },
-    { key: 'entity', header: 'Entity', sortKey: 'entity', className: 'col-hide-sm', render: (r) => r.entityName },
+    { key: 'entity', header: 'Entity', sortKey: 'entity', className: 'col-hide-sm', width: '17%', render: (r) => <span className="cell-clip" title={r.entityName}>{r.entityName}</span> },
     {
       key: 'owner',
       header: 'Owner',
       sortKey: 'owner',
-      className: 'col-hide-sm',
+      className: 'col-hide-sm col-hide-md',
+      width: '14%',
       render: (r) => (
-        <span className="cell-owner" title={r.ownerName}>
+        <span className="cell-owner" title={`${r.ownerName}, ${r.departmentName}`}>
           <Avatar initials={r.ownerInitials} size="sm" />
           <span className="sr-only">{r.ownerName}, </span>
-          {r.departmentName}
+          <span className="cell-clip">{r.departmentName}</span>
         </span>
       ),
     },
-    { key: 'notice', header: 'Notice', sortKey: 'notice', render: (r) => <NoticePill days={r.daysToNotice} /> },
-    { key: 'status', header: 'Status', sortKey: 'status', className: 'col-hide-sm', render: (r) => <StatusDot status={r.status} /> },
+    { key: 'notice', header: 'Notice', sortKey: 'notice', width: '136px', render: (r) => <NoticePill days={r.daysToNotice} /> },
+    { key: 'status', header: 'Status', sortKey: 'status', className: 'col-hide-sm', width: '11%', render: (r) => <StatusDot status={r.status} /> },
   ];
+  // Tablet (720–1000px): no room for five columns. Contract, Notice and Status stay; the entity and
+  // the owner are in the record. (A phone shows cards; the CSS hides the extra cells there.)
+  const tablet = narrow && !phone;
+  const columns = tablet
+    ? allColumns.filter((c) => c.key !== 'entity' && c.key !== 'owner').map((c) => (c.key === 'contract' ? { ...c, width: undefined } : c.key === 'status' ? { ...c, width: '112px' } : c))
+    : allColumns;
+
+  const exportButton = (
+    <Button variant="secondary" icon="download" loading={exportCsv.isPending} onClick={() => exportCsv.mutate()}>
+      Export
+    </Button>
+  );
 
   const refs = (xs: { id: string; name: string }[]) => xs.map((x) => ({ value: x.id, label: x.name }));
 
@@ -217,16 +250,20 @@ export function Register() {
         <div className="page-head__text">
           <h1 className="h1">Contracts</h1>
           <span className="page-sub">
-            {all.data ? `${plural(all.data.total, 'contract')} you can see, across ${lookups.entities.length} legal entities` : all.isError ? 'Contracts you can see' : <Skeleton width={260} height={16} />}
+            {all.data ? (
+              `${plural(all.data.total, 'contract')} you can see${entityCount ? `, across ${plural(entityCount, 'legal entity', 'legal entities')}` : ''}`
+            ) : all.isError ? (
+              'Contracts you can see'
+            ) : (
+              <Skeleton width={260} height={16} />
+            )}
           </span>
         </div>
-        <div className="spacer" />
-        <Button variant="secondary" icon="download" loading={exportCsv.isPending} onClick={() => exportCsv.mutate()}>
-          Export
-        </Button>
       </div>
+      {/* Export sits beside "New contract" in the top bar; under 1000px it is in the filter row. */}
+      {narrow ? null : <TopBarActions>{exportButton}</TopBarActions>}
 
-      <div className="toolbar">
+      <div className="toolbar toolbar--views">
         <Segmented ariaLabel="Views" options={VIEWS} value={view} onChange={(v) => update({ view: v === 'all' ? null : v, sel: null })} />
         <div className="spacer" />
         <label className="search-pill">
@@ -234,9 +271,12 @@ export function Register() {
           <Icon name="search" size={15} stroke={2.2} />
           <input type="search" placeholder="Search" value={text} onChange={(e) => setText(e.target.value)} />
         </label>
+      </div>
+      <div className="toolbar toolbar--chips" role="group" aria-label="Filters">
         <ChipSelect label="Entity" options={refs(lookups.entities)} value={scope.entityId} onChange={(v) => { scope.setEntityId(v); update({ sel: null }); }} />
         <ChipSelect label="Department" options={refs(lookups.departments)} value={departmentId} onChange={(v) => update({ department: v, sel: null })} />
         <ChipSelect label="Type" options={refs(lookups.contractTypes)} value={typeId} onChange={(v) => update({ type: v, sel: null })} />
+        <ChipSelect label="Status" options={ALL_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))} value={status} onChange={(v) => update({ status: v, sel: null })} />
         <select className={`chip only-phone${sort !== 'notice' ? ' chip--on' : ''}`} aria-label="Sort by" value={sort} onChange={(e) => update({ sort: e.target.value === 'notice' ? null : e.target.value })}>
           {SORTS.map((s) => (
             <option key={s.value} value={s.value}>
@@ -244,7 +284,12 @@ export function Register() {
             </option>
           ))}
         </select>
-        <ChipSelect label="Status" options={ALL_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))} value={status} onChange={(v) => update({ status: v, sel: null })} />
+        {narrow ? (
+          <>
+            <div className="spacer hide-phone" />
+            {exportButton}
+          </>
+        ) : null}
       </div>
 
       <div className="split">
@@ -263,7 +308,7 @@ export function Register() {
           ) : (
             <>
               <div style={{ opacity: list.isPlaceholderData ? 0.6 : 1 }} aria-busy={list.isPlaceholderData}>
-                <Table caption="Contracts" columns={columns} rows={items} rowKey={(r) => r.id} sort={sort} onSort={(s) => update({ sort: s === 'notice' ? null : s })} onRowClick={pick} selectedKey={selected?.id} />
+                <Table fixed caption="Contracts" columns={columns} rows={items} rowKey={(r) => r.id} sort={sort} onSort={(s) => update({ sort: s === 'notice' ? null : s })} onRowClick={pick} selectedKey={selected?.id} />
               </div>
               <div className="pager">
                 <span aria-live="polite">
@@ -282,7 +327,7 @@ export function Register() {
         </Card>
         {selected ? <QuickLook key={selected.id} item={selected} /> : null}
       </div>
-      {apiMode === 'mock' ? <p className="caption">Sample data. Select a row to preview it.</p> : null}
+      {apiMode === 'mock' ? <p className="caption">Sample data.<span className="hide-phone"> Select a row to preview it.</span></p> : null}
     </div>
   );
 }

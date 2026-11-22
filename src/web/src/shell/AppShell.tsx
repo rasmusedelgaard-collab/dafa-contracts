@@ -83,6 +83,8 @@ function TopBar({ onUser }: { onUser: () => void }) {
         placeholder="All entities"
         options={lookups.entities.map((e) => ({ value: e.id, label: e.name }))}
       />
+      {/* Pages add their own actions here, beside "New contract" (the register's Export). */}
+      <div id="topbar-actions" className="topbar__actions" />
       {permissions(me).canCreate ? (
         <ButtonLink to="/contracts/new" icon="plus" aria-label="New contract">
           <span>New contract</span>
@@ -147,10 +149,13 @@ export function AppShell() {
 
   return (
     <div className="shell">
+      <a href="#main-content" className="skip-link" onClick={(e) => { e.preventDefault(); mainRef.current?.focus(); }}>
+        Skip to content
+      </a>
       <Sidebar work={work} manage={manage} onUser={() => setSwitching(true)} />
       <div className="main">
         <TopBar onUser={() => setSwitching(true)} />
-        <main ref={mainRef} tabIndex={-1} style={{ outline: 'none' }}>
+        <main ref={mainRef} id="main-content" tabIndex={-1} style={{ outline: 'none' }}>
           <Suspense
             fallback={
               <div className="page" style={{ paddingTop: 10 }} role="status" aria-label="Loading page">
@@ -159,7 +164,7 @@ export function AppShell() {
               </div>
             }
           >
-            <Outlet />
+            <Outlet context={{ openUser: () => setSwitching(true) }} />
           </Suspense>
         </main>
       </div>

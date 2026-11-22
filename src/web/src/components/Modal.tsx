@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { usePhone } from '../lib/media';
 import { Icon } from './Icon';
 
 export interface ModalProps {
@@ -17,6 +18,21 @@ export interface ModalProps {
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
+ * Where focus goes when a dialog opens: an element marked `data-autofocus`, else the first
+ * control in the body. When that first control is disabled (locked fields at the top of a
+ * form), focus goes to the dialog itself, so it opens at the top instead of scrolling past the
+ * locked part to the first field that can be edited.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function initialFocus(dialog: HTMLElement | null): HTMLElement | null {
+  if (!dialog) return null;
+  const marked = dialog.querySelector<HTMLElement>('[data-autofocus]');
+  if (marked) return marked;
+  const first = dialog.querySelector<HTMLInputElement>('.modal__body input, .modal__body select, .modal__body textarea, .modal__body button, .modal__body a[href]');
+  return first && !first.disabled ? first : dialog;
+}
+
+/**
  * Dialog on desktop, bottom sheet under 720px. Traps focus, closes on Escape and on a click
  * on the backdrop, and returns focus to the element that opened it.
  */
@@ -25,12 +41,13 @@ export function Modal({ title, subtitle, onClose, children, footer, wide, onSubm
   const ref = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  // On a phone a long subtitle scrolls with the body instead of taking a fixed share of the sheet.
+  const phone = usePhone();
 
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
     const node = ref.current;
-    const first = node?.querySelector<HTMLElement>('[data-autofocus]') ?? node?.querySelector<HTMLElement>('.modal__body ' + FOCUSABLE.split(', ').join(', .modal__body ')) ?? node;
-    first?.focus();
+    initialFocus(node)?.focus();
     const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
 
@@ -63,7 +80,10 @@ export function Modal({ title, subtitle, onClose, children, footer, wide, onSubm
 
   const inner = (
     <>
-      <div className="modal__body">{children}</div>
+      <div className="modal__body">
+        {subtitle && phone ? <p className="modal__sub modal__sub--body">{subtitle}</p> : null}
+        {children}
+      </div>
       {footer ? <div className="modal__foot">{footer}</div> : null}
     </>
   );
@@ -76,7 +96,7 @@ export function Modal({ title, subtitle, onClose, children, footer, wide, onSubm
             <h2 className="modal__title" id={titleId}>
               {title}
             </h2>
-            {subtitle ? <p className="modal__sub">{subtitle}</p> : null}
+            {subtitle && !phone ? <p className="modal__sub">{subtitle}</p> : null}
           </div>
           <button type="button" className="modal__close" aria-label="Close" onClick={onClose}>
             <Icon name="x" size={18} stroke={2.2} />

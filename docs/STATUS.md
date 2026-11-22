@@ -286,3 +286,82 @@ The deploy workflow now writes only `Auth:Mode`, `Auth:Dev:AccessCode`, `Databas
 - The throttle and the job lock are per process; nothing is shared between app instances.
 - A rejected or expired contract keeps its documents and approval history; reopening a Draft after rejection unlocks all fields again (by design: it must be re-approved).
 - Moving the lock to "submission" means a rejected contract is the only way back to free editing; there is no "withdraw from approval" action.
+
+## Frontend phase 3 (QA fixes) (2026-11-22)
+
+Scope: `src/web` (source, tests, new `e2e/`), `docs/REVIEW_FRONTEND.md` (the independent review, committed as written), this file, `docs/DECISIONS.md`, and two deploy items (`.github/workflows/deploy-test.yml`, `docs/DEPLOY_TEST.md`). `src/api` not touched. The work was started by one engineer and finished by a second; the table reflects the state after both.
+
+### Results of the last run here
+
+| Command (in `src/web`) | Result |
+|---|---|
+| `npm run lint` | exit 0 |
+| `npm test` | exit 0, 11 files, 202 tests |
+| `npm run build` | exit 0, entry 254 kB (78.6 kB gzip) |
+| `VITE_API_MODE=real npm run build` | exit 0; `grep -rlE "Nordpolymer\|createSeed\|rubber compounds\|Sample data" dist` finds nothing; no `mockApi-*` chunk |
+| `npm run build:demo` | exit 0, `mockApi-*` chunk 78 kB |
+| `npm run e2e:demo` | exit 0: passes at 390 and 1440 px, motion on (headless Chrome for Testing 153 via playwright-core) |
+
+`npm run e2e:demo` builds the demo, serves it with `vite preview` and runs one journey per width: sign in as a reader, switch user (shell name and "New contract" must change), create a contract from the Supply agreement template (the counterparty field must keep what is typed; one "Submit for approval"), switch to an approver and approve (at 390 px the Reject/Approve bar must be `position: fixed`, at the bottom edge, inside the viewport, with no transformed ancestor, also at 390x560 after scrolling, and must not cover Delegate), sign out (sign-in screen, no shell). It was checked once against a deliberately re-introduced H3 (fill mode `both`): it fails with "Ancestors of the fixed bar that un-pin it: approvals__body". It needs a local Chrome (`CHROME_PATH`) and is not run in CI.
+
+### Findings from docs/REVIEW_FRONTEND.md
+
+| Finding | Result | Note |
+|---|---|---|
+| C1 Counterparty cannot be typed into | Fixed | The form sends one patch per user action (`onPatch`), so the name and the matched supplier are set together. Unit tests on both paths and in Edit details; e2e types into it. |
+| H1 User switch keeps the old shell | Fixed | `me` is set from the `dev/login` response, the previous user's cache is dropped and the shell is keyed on the user id. Tests in both directions (reader to admin, admin to reader); e2e. |
+| H2 Sign out does not sign out | Fixed | Cache dropped and `me` reset; the 401 shows the sign-in screen. Entra mode shows "You are signed out" instead of redirecting back at once (unit test with a fake API; never run against Entra). |
+| H3 Phone Reject/Approve bar not pinned | Fixed | No entrance animation keeps a transform (`backwards` fill), Approvals fades without a transform, `.decide` has bottom padding for the bar. Measured with motion on: bar at y 763–844 of 844 (390 px) and 659–740 of 740 (360 px); Delegate receives the click. |
+| M1 Entity filter not in the URL | Fixed | `?entity=<id>`, survives reload and in-app navigation. |
+| M2 Register at 768 px cuts off Status | Fixed | 720–1000 px shows Contract, Notice and Status (no horizontal scroll, table 504 px in a 504 px card); the top bar is one row (72 px). Entity and Owner are not shown at this width. |
+| M3 Renewals offers a decision the user may not take | Fixed | "Record decision"/"Decide" only for administrators and people on the contract; others get "Open contract". Costs one extra list request (see DECISIONS.md). |
+| M4 Selected card below the fold at 1440x900 | Fixed | Lanes 44 px; timeline card 486 px high, selected card at y 734–850. |
+| M5 29 tab stops on the timeline | Fixed | Roving tabindex (one stop). |
+| M6 Edit details opens past the locked notice on a phone | Fixed | Focus goes to the dialog when the first field is locked; sheet opens at scroll 0 (checked at 360 px). |
+| M7 "across 9 legal entities" for everyone | Fixed | Counts the entities of the visible contracts. |
+| L1 `?page=99` shows the empty state | Fixed | Goes to the last page. |
+| L2 Captions that do not fit the state | Fixed | |
+| L3 Phone cards named "Preview" | Fixed | "Open <title>" on a phone. |
+| L4 Phone toasts over sheets | Fixed | Top of the screen, newest only. |
+| L5 11 px text | Fixed | Small avatar initials and the file tile are 12 px. |
+| L6 Sign date error only as a toast | Fixed | Server refusal shown at the field. The Renew dialog still shows its inline error; the duplicate toast for a client-side error was not re-checked. |
+| L7 "One field ... They are" | Fixed | |
+| L8 Delegate picker offers approvers of the same contract | Fixed | Excludes everyone already in the same stage (the API's rule). Approvers of later stages are still offered, as the API allows them. |
+| L9 Seed: approval log without an approval | Fixed | The flagship contract has its finished approval; imported ones say "Registered as approved". |
+| L10 Mock signs back in after sign-out | Fixed | |
+| L11 No skip link | Fixed | |
+| L12 Hint on a locked Counterparty | Fixed | |
+| L13 Submit on a record without confirmation | Fixed | Confirmation dialog with the route. |
+| L14 Timeline track scrolls 12 px | Fixed | scrollWidth = clientWidth (908) at 1440. |
+| L15 Disabled placeholder contrast | Fixed | #5b6672 on #f4f6f9. Computed, not measured in the browser. |
+| Design: phone Home | Fixed | Task-first: date, "My work", avatar; compact hero with one line; 44 px segmented control; first task card at about y 280 of 844; route tiles after the tasks; icon tiles tinted by urgency. |
+| Design: phone approval view | Fixed, one deviation | No top bar or tab bar, 2x2 term tiles, one-sentence route, fits 390x844 without scrolling, pinned bar. Deviation kept: comment field and Delegate above the bar. |
+| Design: Home 1440 urgency tint | Fixed | |
+| Design: Contracts 1440 | Fixed | Rows 55 px (15 rows measured), Contract column 40% with one-line meta, four chips on one row under the views, Export beside New contract in the top bar. |
+| Design: Record 1440 | Fixed | 15 cells in five full rows (Contract no. and Next reminder added), no trailing hairlines, "14 Feb 2024 · both parties". |
+| Design: New contract 1440 | Fixed, one point open | One "Submit for approval" (page only), value-band chips. Not changed: error toasts on desktop still appear bottom right for 8 s and can lie over the right-hand column (they can be closed). |
+| Design: Approvals 1440 | Fixed | Five term tiles in one row, route cards top-aligned with their own height, the substitute explanation on its own line (two lines max). |
+| Design: Renewals 1440 | Fixed | M4, and overdue markers have their own "Overdue" column. |
+| Design: Overview 1440 | Fixed | KPI labels on one line ("Notice within 90 days"), columns stretch to the same height. |
+| Design: Settings rule dialog on a phone | Fixed (not re-checked in the browser) | The subtitle scrolls with the body under 720 px. |
+| Design: 768 px top bar | Fixed | 72 px on every shell page. |
+
+### Backend alignment (mock, types, client)
+
+Done, per the "Contract additions for frontend" list of backend phase 2: problem types and their messages, 429, `lockedFields` semantics and lock from submission, `roles`/`submittedById` and the delegate filter, `AnnualReview`, open-ended GiveNotice only, Renew window (the 409 detail stays in the dialog), `note` on extract, `annualReviewReminders`, 25 MB + allowlist (already there), `approvals/preview` value = max(total, annual), `due90` without decided contracts, non-null renewals rows. Enums were already sent as strings. None of this has run against the real API from here.
+
+### Verified in a browser (headless Chrome, motion on, mock API)
+
+- 390 and 1440 px: the e2e journey above. Screenshots looked at: sign-in, Home (reader and owner), New contract steps 2 and 4, the new record, the approval view, signed-out screen.
+- 360 px (Mette): Home, Contracts, Renewals, record, Edit details; approval view as Rasmus (bar pinned, Delegate clickable after scrolling).
+- 768 px: Home, Contracts, Approvals, Renewals, Overview, record, New contract, Settings: no horizontal page overflow, top bar 72 px.
+- 1440 px: Home, Contracts, Approvals, Renewals (marker selected), Overview, record, Edit details as administrator, New contract; compared with the designs by eye.
+
+### Known gaps
+
+- Not verified in a browser in this phase: Settings dialogs, the Submit confirmation dialog, the Renewal dialog's 409 text, the "note" under an unreadable upload, the skip link (all have unit tests or are small CSS changes).
+- Nothing was run against the real .NET API, Firefox, Safari or a real phone.
+- Tablet register (720–1000 px) has no Entity or Owner column.
+- Desktop error toasts can still cover content at the bottom right (New contract step 4).
+- `e2e:demo` is not in CI.
+- The value-band chips in New contract are hard-coded to the seeded rule limits.

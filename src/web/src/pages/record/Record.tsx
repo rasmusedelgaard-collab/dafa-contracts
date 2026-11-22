@@ -8,10 +8,9 @@ import type { ContractDetail, ContractReminder, Obligation, RenewalDecision } fr
 import { Avatar, Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Icon, Pill, Segmented, Skeleton, StatusPill, useToast } from '../../components';
 import { ApprovalRoute, DecisionForm, Deviations } from '../../features/Approval';
 import { RenewalDialog } from '../../features/RenewalDialog';
-import { staleMessage } from '../../lib/errors';
 import { addDays, daysBetween, formatDate, formatDateLong, formatDayMonth, todayIso } from '../../lib/dates';
 import { fileExtension, formatFileSize, formatMoney, saveBlob } from '../../lib/format';
-import { EditDetailsDialog, LinkDialog, ObligationDialog, SignDialog, UploadDialog } from './dialogs';
+import { EditDetailsDialog, LinkDialog, ObligationDialog, SignDialog, SubmitDialog, UploadDialog } from './dialogs';
 
 type Tab = 'overview' | 'obligations' | 'approvals' | 'activity';
 const TABS: { value: Tab; label: string }[] = [
@@ -25,6 +24,7 @@ type Dialog =
   | { kind: 'renewal'; initial?: RenewalDecision }
   | { kind: 'edit' }
   | { kind: 'sign' }
+  | { kind: 'submit' }
   | { kind: 'upload' }
   | { kind: 'link' }
   | { kind: 'obligation'; obligation: Obligation | null }
@@ -41,6 +41,7 @@ const DOC_KIND_LABEL: Record<string, string> = { Main: 'Main contract', Appendix
 
 function reminderLabel(r: ContractReminder): string {
   if (r.kind === 'Escalation') return 'Escalates to owner';
+  if (r.kind === 'AnnualReview') return 'Annual review';
   const days = /^Notice(\d+)$/.exec(r.kind)?.[1];
   return days ? `${days} days` : r.kind;
 }
@@ -209,6 +210,12 @@ function StatusCard({ c, open, setTab }: { c: ContractDetail; open: (d: Dialog) 
   );
 }
 
+/** "Signed by both parties" -> "both parties", so the Signed cell stays on one line. */
+function shortMethod(method: string): string {
+  const m = method.replace(/^signed by (the )?/i, '');
+  return `${m.charAt(0).toLowerCase()}${m.slice(1)}`;
+}
+
 function Facts({ c }: { c: ContractDetail }) {
   const facts: [string, string][] = [
     ['Term', c.endDate ? `${formatDate(c.startDate)} – ${formatDate(c.endDate)}` : `From ${formatDate(c.startDate)}, open-ended`],
@@ -218,13 +225,15 @@ function Facts({ c }: { c: ContractDetail }) {
     ['Total value', formatMoney(c.totalValue, c.currency)],
     ['Renewal', c.autoRenew && c.renewalMonths ? `Automatic, ${c.renewalMonths} months` : c.endDate ? 'Fixed term' : 'Open-ended'],
     ['Exclusivity', c.exclusivity ?? '–'],
-    ['Signed', c.signedDate ? `${formatDate(c.signedDate)}${c.signingMethod ? `, ${c.signingMethod.charAt(0).toLowerCase()}${c.signingMethod.slice(1)}` : ''}` : 'Not signed'],
+    ['Signed', c.signedDate ? `${formatDate(c.signedDate)}${c.signingMethod ? ` · ${shortMethod(c.signingMethod)}` : ''}` : 'Not signed'],
     ['Payment terms', c.paymentTerms ?? '–'],
     ['Governing law', c.governingLaw ?? '–'],
     ['Change of control', c.changeOfControl === null ? 'Not set' : c.changeOfControl ? 'Yes, has a clause' : 'No clause'],
     ['Liability cap', c.liabilityCap ?? '–'],
     ['Contract type', c.typeName],
-    ...(c.nextReminderDate ? ([['Next reminder', formatDate(c.nextReminderDate)]] as [string, string][]) : []),
+    ['Contract no.', c.contractNo],
+    // Always shown, so the grid is 15 cells (five full rows of three) with or without a planned reminder.
+    ['Next reminder', c.nextReminderDate ? formatDate(c.nextReminderDate) : 'None planned'],
   ];
   return (
     <Card aria-label="Key terms">
@@ -676,13 +685,10 @@ export function Record() {
       toast.show('Submitted for approval');
       setTab('approvals');
     },
-    onError: async (e) => {
-      // A 409 means the contract changed under us: show the current state.
-      if (e instanceof ApiError && e.status === 409) {
-        await invalidate();
-        toast.error(null, staleMessage(e));
-      } else toast.error(e);
-    },
+    // A 409 refetches everything (query client). `stale` gets the fixed sentence; `no-approval-rule`,
+    // `no-approver` and `invalid-state` show the server's own explanation.
+    onError: (e) => toast.error(e),
+    onSettled: () => setDialog(null),
   });
 
   if (contract.isLoading) return <RecordSkeleton />;
@@ -740,9 +746,7 @@ export function Record() {
             </Button>
           ) : null}
           {c.status === 'Draft' && c.canEdit ? (
-            <Button loading={submit.isPending} onClick={() => submit.mutate()}>
-              Submit for approval
-            </Button>
+            <Button onClick={() => setDialog({ kind: 'submit' })}>Submit for approval</Button>
           ) : c.status === 'Approved' && c.canEdit ? (
             <Button onClick={() => setDialog({ kind: 'sign' })}>Mark as signed</Button>
           ) : c.canDecideRenewal && c.endDate === null && c.renewalDecision === null ? (
@@ -762,13 +766,14 @@ export function Record() {
       <div role="tabpanel" id={`record-panel-${tab}`} aria-labelledby={`record-tab-${tab}`} className="stack rise" style={{ gap: 16 }} key={tab}>
         {tab === 'overview' ? <Overview c={c} open={setDialog} setTab={setTab} /> : null}
         {tab === 'obligations' ? <ObligationsTab c={c} open={setDialog} /> : null}
-        {tab === 'approvals' ? <ApprovalsTab c={c} onSubmit={() => submit.mutate()} submitting={submit.isPending} /> : null}
+        {tab === 'approvals' ? <ApprovalsTab c={c} onSubmit={() => setDialog({ kind: 'submit' })} submitting={submit.isPending} /> : null}
         {tab === 'activity' ? <ActivityTab c={c} /> : null}
       </div>
       {apiMode === 'mock' ? <p className="caption">Sample data. Seeded documents are placeholder files.</p> : null}
 
       {dialog?.kind === 'renewal' ? <RenewalDialog contractId={c.id} initial={dialog.initial} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'edit' ? <EditDetailsDialog contract={c} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === 'submit' ? <SubmitDialog contract={c} submitting={submit.isPending} onSubmit={() => submit.mutate()} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'sign' ? <SignDialog contract={c} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'upload' ? <UploadDialog contract={c} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'link' ? <LinkDialog contract={c} onClose={() => setDialog(null)} /> : null}

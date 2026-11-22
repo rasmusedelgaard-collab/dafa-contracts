@@ -155,3 +155,15 @@ export function formatDateTime(isoDateTime: string | null | undefined, fallback 
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+/** The length of a term for a tile: "36 months", "45 days". Inclusive of both dates. */
+export function termLength(startDate: string, endDate: string): string {
+  if (!isIsoDate(startDate) || !isIsoDate(endDate) || endDate < startDate) return '–';
+  const days = daysBetween(startDate, endDate) + 1;
+  if (days < 45) return `${days} ${days === 1 ? 'day' : 'days'}`;
+  let months = 0;
+  while (addMonths(startDate, months + 1) <= addDays(endDate, 1)) months += 1;
+  // Round to the nearest month when the term does not end on a month boundary.
+  if (daysBetween(addMonths(startDate, months), addDays(endDate, 1)) > 15) months += 1;
+  return `${months} ${months === 1 ? 'month' : 'months'}`;
+}

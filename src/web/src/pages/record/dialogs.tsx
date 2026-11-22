@@ -6,9 +6,10 @@ import type { ContractDetail, DocumentKind, LinkKind, Obligation } from '../../a
 import { Button, Field, Modal, Select, Skeleton, TextInput, useToast } from '../../components';
 import { ContractForm } from '../../features/ContractForm';
 import { isIsoDate, todayIso } from '../../lib/dates';
-import { formatFileSize } from '../../lib/format';
+import { RoutePreview } from '../../features/Approval';
+import { formatFileSize, formatMoney, toDkk } from '../../lib/format';
 import { LOCKED_MESSAGE, UPLOAD_ACCEPT, UPLOAD_HINT, uploadError } from '../../lib/uploads';
-import { draftToInput, fieldsToDraft, hasErrors, parseWhole, validateDraft, type ContractDraft, type DraftErrors, type DraftField } from '../../lib/validation';
+import { draftToInput, fieldsToDraft, hasErrors, parseWhole, validateDraft, type ContractDraft, type DraftErrors } from '../../lib/validation';
 
 interface DialogProps {
   contract: ContractDetail;
@@ -42,8 +43,8 @@ export function EditDetailsDialog({ contract, onClose }: DialogProps) {
     },
   });
 
-  const onChange = <K extends DraftField>(field: K, value: ContractDraft[K]) => {
-    const next = { ...draft, [field]: value };
+  const onPatch = (patch: Partial<ContractDraft>) => {
+    const next = { ...draft, ...patch };
     setDraft(next);
     if (tried) setErrors(validateDraft(next));
   };
@@ -78,7 +79,42 @@ export function EditDetailsDialog({ contract, onClose }: DialogProps) {
       }
     >
       {contract.lockedFields.length > 0 ? <p className="banner tone-amber">{LOCKED_MESSAGE}</p> : null}
-      <ContractForm flat draft={draft} errors={errors} onChange={onChange} lockedFields={contract.lockedFields} />
+      <ContractForm flat draft={draft} errors={errors} onPatch={onPatch} lockedFields={contract.lockedFields} />
+    </Modal>
+  );
+}
+
+/** Confirms "Submit for approval" on a draft and shows who will approve, as the New contract flow does. */
+export function SubmitDialog({ contract, submitting, onSubmit, onClose }: DialogProps & { submitting: boolean; onSubmit: () => void }) {
+  const api = useApi();
+  // The approval value is the larger of total and annual value, in DKK.
+  const query = { entityId: contract.entityId, typeId: contract.typeId, departmentId: contract.departmentId, value: Math.round(toDkk(Math.max(contract.totalValue ?? 0, contract.annualValue ?? 0), contract.currency)) };
+  const preview = useQuery({ queryKey: qk.approvalPreview(query), queryFn: () => api.previewApproval(query) });
+  const missing = contract.missingData;
+  return (
+    <Modal
+      title="Submit for approval"
+      subtitle={`${contract.title} · ${contract.contractNo}`}
+      onClose={onClose}
+      onSubmit={onSubmit}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" loading={submitting} disabled={missing.length > 0} data-autofocus="">
+            Submit for approval
+          </Button>
+        </>
+      }
+    >
+      {missing.length > 0 ? <p className="banner tone-amber">Complete the contract before you submit it. Missing: {missing.join(', ').toLowerCase()}.</p> : null}
+      <p className="secondary">From submission on, the key terms and the main document are locked. Only an administrator can change them, or the contract comes back to you as a draft if an approver rejects it.</p>
+      <div className="stack" style={{ gap: 10 }}>
+        <h3 className="card-title">Approval route</h3>
+        <RoutePreview preview={preview.data} loading={preview.isLoading} />
+        <span className="caption">From the approval rules in Settings, for a value of {formatMoney(query.value, 'DKK')}.</span>
+      </div>
     </Modal>
   );
 }
@@ -100,7 +136,11 @@ export function SignDialog({ contract, onClose }: DialogProps) {
       toast.show('Marked as signed. The contract is now active');
       onClose();
     },
-    onError: (e) => toast.error(e),
+    onError: (e) => {
+      // A date the server refuses is shown at the field, like the client-side checks.
+      if (e instanceof ApiError && e.problem.errors?.signedDate) setError((e.problem.detail ?? 'Check the signing date').replace(/\.$/, ''));
+      else toast.error(e);
+    },
   });
 
   const submit = () => {
@@ -150,8 +190,8 @@ export function UploadDialog({ contract, onClose }: DialogProps) {
   const [file, setFile] = useState<File | null>(null);
   const me = useMe();
   const hasMain = contract.documents.some((d) => d.kind === 'Main');
-  // After approval only an administrator may replace the main document; others add an amendment.
-  const mainLocked = hasMain && !permissions(me).isAdmin && contract.status !== 'Draft' && contract.status !== 'InApproval';
+  // From submission on only an administrator may replace the main document; others add an amendment.
+  const mainLocked = hasMain && !permissions(me).isAdmin && contract.status !== 'Draft';
   const kinds = mainLocked ? DOC_KINDS.filter((k) => k.value !== 'Main') : DOC_KINDS;
   const [kind, setKind] = useState<DocumentKind>(hasMain ? (mainLocked ? 'Amendment' : 'Appendix') : 'Main');
   const [error, setError] = useState<string>();
@@ -208,7 +248,7 @@ export function UploadDialog({ contract, onClose }: DialogProps) {
           />
         )}
       </Field>
-      <Field label="Document type" hint={mainLocked ? 'The main contract is approved. Only an administrator can replace it; upload changes as an amendment.' : undefined}>
+      <Field label="Document type" hint={mainLocked ? 'The main contract is locked once it is submitted. Only an administrator can replace it; upload changes as an amendment.' : undefined}>
         {(p) => <Select {...p} value={kind} onChange={(e) => setKind(e.target.value as DocumentKind)} options={kinds} />}
       </Field>
     </Modal>

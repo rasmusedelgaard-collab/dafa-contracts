@@ -40,7 +40,7 @@ export interface LookupUser {
   name: string;
   initials: string;
   departmentIds: Id[];
-  /** Requested from the backend (phase 2): lets the delegate picker offer only Approver/Admin users. */
+  /** Lets the delegate picker offer only Approver/Admin users. Optional so an older API still works. */
   roles?: Role[];
 }
 
@@ -200,11 +200,14 @@ export interface ContractDetail extends ContractListItem, Omit<ContractFields, '
   /** null when it was never filled in (then "Change of control" is in `missingData`). */
   changeOfControl: boolean | null;
   /**
-   * camelCase names of the fields the signed-in user may not change: after approval the
-   * approved terms are locked for owners. Changing one returns 409.
+   * camelCase names of the fields the signed-in user may not change. From submission on (every
+   * status except Draft) the approved terms are locked for owners, but only the ones that have a
+   * value: an empty locked field is not listed and can be filled in once. `annualValue` and
+   * `totalValue` are listed together as soon as either is set. Changing a listed field returns
+   * 409 `locked-fields`. Empty for administrators and in Draft.
    */
   lockedFields: string[];
-  /** Requested from the backend (phase 2): who submitted the contract for approval, when known. */
+  /** Who submitted the current or most recent approval. */
   submittedById?: Id | null;
   status: ContractStatus;
   signedDate: string | null;
@@ -335,6 +338,8 @@ export interface ExtractResult {
   suggestions: Suggestion[];
   summary: string;
   deviations: Deviation[];
+  /** Set when the file was too large or too slow to read; then there are no suggestions. */
+  note?: string | null;
 }
 
 export interface Template {
@@ -373,7 +378,7 @@ export interface ApprovalPreviewQuery {
   entityId?: Id;
   typeId?: Id;
   departmentId?: Id;
-  /** Contract value in DKK. */
+  /** Contract value in DKK: the larger of total and annual value. */
   value?: number;
 }
 
@@ -495,6 +500,8 @@ export interface JobRunResult {
   remindersCreated: number;
   escalations: number;
   obligationReminders: number;
+  /** Yearly review reminders for open-ended contracts (kind `AnnualReview`). */
+  annualReviewReminders: number;
   contractsExpired: number;
 }
 
@@ -528,6 +535,19 @@ export interface DevUser {
   /** Short description of the access the demo user has, e.g. "Group CFO". */
   title: string;
 }
+
+/**
+ * `type` of a 409 problem. Only `stale` means "someone else changed this at the same time";
+ * for every other type the server's `detail` is the message to show.
+ */
+export const PROBLEM = {
+  stale: 'urn:dafa:problem:stale',
+  noApprovalRule: 'urn:dafa:problem:no-approval-rule',
+  noApprover: 'urn:dafa:problem:no-approver',
+  lockedFields: 'urn:dafa:problem:locked-fields',
+  duplicate: 'urn:dafa:problem:duplicate',
+  invalidState: 'urn:dafa:problem:invalid-state',
+} as const;
 
 /** RFC 7807 problem details. */
 export interface ProblemDetails {

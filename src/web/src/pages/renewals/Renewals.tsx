@@ -2,7 +2,7 @@ import { useMemo, useState, type KeyboardEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { apiMode } from '../../api';
-import { qk, useApi, useScope } from '../../app/context';
+import { permissions, qk, useApi, useMe, useScope } from '../../app/context';
 import type { RenewalItem } from '../../api/types';
 import { Button, ButtonLink, Card, EmptyState, ErrorState, NoticePill, Segmented, Skeleton } from '../../components';
 import { RenewalDialog } from '../../features/RenewalDialog';
@@ -12,7 +12,9 @@ import { buildLanes, isOverdue, markerUrgency, onAxis, timelineAxis, type LaneGr
 
 // One extra month is requested so the last column of the axis (which starts on the 1st of this month) is complete.
 const MONTHS = 12;
-const ROW_STEP = 26;
+/** Lane height for one row of markers, and the step for each extra row of overlapping markers (px). */
+const LANE = 44;
+const ROW_STEP = 22;
 
 const renewalText = (i: RenewalItem) => (i.autoRenew ? 'auto-renews' : 'fixed term');
 
@@ -33,11 +35,15 @@ function Timeline({ items, today, grouping, selectedId, onSelect }: { items: Ren
     e.currentTarget.closest('.timeline')?.querySelector<HTMLElement>(`[data-marker="${target.item.id}"]`)?.focus();
   };
 
+  // Overdue deadlines get their own narrow column at the left, so they do not sit on a border.
+  const hasOverdue = order.some((m) => isOverdue(m.item));
+
   return (
     <Card className="timeline-card">
-      <div className="timeline" role="group" aria-label={`Notice deadlines by ${grouping === 'entity' ? 'legal entity' : 'department'}. Use the left and right arrow keys to move between contracts.`}>
+      <div className={`timeline${hasOverdue ? ' timeline--overdue' : ''}`} role="group" aria-label={`Notice deadlines by ${grouping === 'entity' ? 'legal entity' : 'department'}. Use the left and right arrow keys to move between contracts.`}>
         <div className="timeline__months" aria-hidden="true">
           <span />
+          {hasOverdue ? <span className="timeline__month timeline__month--overdue">Overdue</span> : null}
           {axis.months.map((m) => (
             <span key={m} className="timeline__month">
               {monthShort(m)}
@@ -47,16 +53,20 @@ function Timeline({ items, today, grouping, selectedId, onSelect }: { items: Ren
         {lanes.map((lane) => (
           <div key={lane.key} className="timeline__lane" role="group" aria-label={`${lane.name}, ${plural(lane.markers.length, 'deadline')}`}>
             <span className="timeline__name">{lane.name}</span>
-            <div className="timeline__track" style={{ height: 60 + (lane.rows - 1) * ROW_STEP, backgroundSize: `${100 / MONTHS}% 100%` }}>
-              <span className="timeline__today" style={{ left: `${axis.todayPct}%` }} aria-hidden="true" />
+            <div className="timeline__track" style={{ height: LANE + (lane.rows - 1) * ROW_STEP }}>
+              <div className="timeline__plot" style={{ backgroundSize: `${100 / MONTHS}% 100%` }}>
+                <span className="timeline__today" style={{ left: `${axis.todayPct}%` }} aria-hidden="true" />
+              </div>
               {lane.markers.map((m) => (
                 <button
                   key={m.item.id}
                   type="button"
-                  className={`marker marker--${m.urgency}`}
+                  className={`marker marker--${m.urgency}${isOverdue(m.item) ? ' marker--overdue' : ''}`}
                   data-marker={m.item.id}
-                  style={{ left: `${m.leftPct}%`, top: 8 + m.row * ROW_STEP }}
+                  style={{ ['--pct' as string]: m.leftPct / 100, top: 8 + m.row * ROW_STEP }}
                   aria-pressed={m.item.id === selectedId}
+                  // Roving tabindex: one Tab stop for the timeline; the arrow keys move between markers.
+                  tabIndex={m.item.id === selectedId ? 0 : -1}
                   aria-label={`${m.item.title}, notice by ${formatDate(m.item.noticeDeadline)}, ${noticeLabel(m.item.daysToNotice).toLowerCase()}`}
                   title={`${m.item.title} · ${formatDate(m.item.noticeDeadline)}`}
                   onClick={() => onSelect(m.item.id)}
@@ -73,9 +83,26 @@ function Timeline({ items, today, grouping, selectedId, onSelect }: { items: Ren
   );
 }
 
+/**
+ * The contracts the signed-in user may record a renewal decision for: an administrator all of
+ * them, others the active contracts they are owner, delegate or responsible on (`view=mine`).
+ * `renewals` rows do not carry `canDecideRenewal`, so this decides which rows offer the action;
+ * the API still checks.
+ */
+function useDecidable(): (id: string) => boolean {
+  const api = useApi();
+  const me = useMe();
+  const isAdmin = permissions(me).isAdmin;
+  const query = { view: 'mine' as const, status: 'Active' as const, pageSize: 200 };
+  const mine = useQuery({ queryKey: qk.contractList(query), queryFn: () => api.getContracts(query), enabled: !isAdmin });
+  const ids = useMemo(() => new Set((mine.data?.items ?? []).map((i) => i.id)), [mine.data]);
+  return (id) => isAdmin || ids.has(id);
+}
+
 export function Renewals() {
   const api = useApi();
   const scope = useScope();
+  const canDecide = useDecidable();
   const [grouping, setGrouping] = useState<LaneGrouping>('entity');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [decideFor, setDecideFor] = useState<string | null>(null);
@@ -176,9 +203,11 @@ export function Renewals() {
               </span>
             </div>
             <div className="selected-card__actions">
-              <Button variant="on-dark-ghost" onClick={() => setDecideFor(selected.id)}>
-                Record decision
-              </Button>
+              {canDecide(selected.id) ? (
+                <Button variant="on-dark-ghost" onClick={() => setDecideFor(selected.id)}>
+                  Record decision
+                </Button>
+              ) : null}
               <ButtonLink variant="on-dark" to={`/contracts/${selected.id}`}>
                 Open contract
               </ButtonLink>
@@ -210,10 +239,17 @@ export function Renewals() {
                       <NoticePill days={i.daysToNotice} />
                     </span>
                     <span className="rlist__value">{formatMoneyCompact(i.annualValue, i.currency)}</span>
-                    <Button size="sm" variant="secondary" className="rlist__btn" onClick={() => setDecideFor(i.id)} aria-label={`Decide on renewal: ${i.title}`}>
-                      <span className="rlist__btn-short">Decide</span>
-                      <span className="rlist__btn-long">Decide on renewal</span>
-                    </Button>
+                    {canDecide(i.id) ? (
+                      <Button size="sm" variant="secondary" className="rlist__btn" onClick={() => setDecideFor(i.id)} aria-label={`Decide on renewal: ${i.title}`}>
+                        <span className="rlist__btn-short">Decide</span>
+                        <span className="rlist__btn-long">Decide on renewal</span>
+                      </Button>
+                    ) : (
+                      <ButtonLink size="sm" variant="secondary" className="rlist__btn rlist__btn--open" to={`/contracts/${i.id}`} aria-label={`Open contract: ${i.title}`}>
+                        <span className="rlist__btn-short">Open</span>
+                        <span className="rlist__btn-long">Open contract</span>
+                      </ButtonLink>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -221,7 +257,7 @@ export function Renewals() {
           </section>
         </>
       )}
-      {apiMode === 'mock' ? <p className="caption">Sample data. Select a marker to see the contract.</p> : null}
+      {apiMode === 'mock' ? <p className="caption">Sample data.<span className="hide-phone"> Select a marker to see the contract.</span></p> : null}
 
       {decideFor ? <RenewalDialog contractId={decideFor} onClose={() => setDecideFor(null)} /> : null}
     </div>

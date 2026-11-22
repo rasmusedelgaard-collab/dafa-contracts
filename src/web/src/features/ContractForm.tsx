@@ -14,7 +14,11 @@ export interface SuggestionState {
 export interface ContractFormProps {
   draft: ContractDraft;
   errors: DraftErrors;
-  onChange: <K extends DraftField>(field: K, value: ContractDraft[K]) => void;
+  /**
+   * One update per user action. A field that sets two values at once (the counterparty name and
+   * the matched supplier) sends them in one patch, so neither is lost to a stale draft.
+   */
+  onPatch: (patch: Partial<ContractDraft>) => void;
   suggestions?: SuggestionState;
   /** Renders the form without card padding (inside a dialog). */
   flat?: boolean;
@@ -38,7 +42,8 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 /** The contract details form, shared by New contract (step 2) and Edit details. */
-export function ContractForm({ draft, errors, onChange, suggestions, flat, lockedFields }: ContractFormProps) {
+export function ContractForm({ draft, errors, onPatch, suggestions, flat, lockedFields }: ContractFormProps) {
+  const onChange = <K extends DraftField>(field: K, value: ContractDraft[K]) => onPatch({ [field]: value } as Partial<ContractDraft>);
   const locked = (field: string) => lockedFields?.includes(field) ?? false;
   const api = useApi();
   const reminderSettings = useReminderSettings();
@@ -150,7 +155,7 @@ export function ContractForm({ draft, errors, onChange, suggestions, flat, locke
     <div className={`form-grid${flat ? ' form-grid--flat' : ''}`}>
       <h2 className="form-section">Contract</h2>
       {text('title', 'Title', { full: true, placeholder: 'For example: Freight framework – Nordics' })}
-      <Field label="Counterparty" error={errors.counterpartyName} tag={cp.tag} after={cp.after} hint="Pick a supplier from the list or type a new name.">
+      <Field label="Counterparty" error={errors.counterpartyName} tag={cp.tag} after={cp.after} hint={locked('counterpartyName') ? undefined : 'Pick a supplier from the list or type a new name.'}>
         {(p) => (
           <TextInput
             {...p}
@@ -161,9 +166,8 @@ export function ContractForm({ draft, errors, onChange, suggestions, flat, locke
             value={draft.counterpartyName}
             onChange={(e) => {
               const name = e.target.value;
-              onChange('counterpartyName', name);
               const match = suppliers.data?.find((s) => s.name.toLowerCase() === name.trim().toLowerCase());
-              onChange('supplierId', match?.id ?? null);
+              onPatch({ counterpartyName: name, supplierId: match?.id ?? null });
             }}
           />
         )}
@@ -206,8 +210,11 @@ export function ContractForm({ draft, errors, onChange, suggestions, flat, locke
         </label>
       </div>
       {text('noticePeriodDays', 'Notice period (days)', { numeric: true, hint: 'Enter 0 if there is none. 3 months is about 90 days.' })}
-      {yesNo('autoRenew', 'Renews automatically')}
-      {draft.autoRenew ? text('renewalMonths', 'Renewal period (months)', { numeric: true }) : null}
+      {/* The renewal period sits under the toggle, so the section keeps an even number of cells. */}
+      <div className="stack" style={{ gap: 12 }}>
+        {yesNo('autoRenew', 'Renews automatically')}
+        {draft.autoRenew ? text('renewalMonths', 'Renewal period (months)', { numeric: true }) : null}
+      </div>
 
       <h2 className="form-section">Value</h2>
       {select('currency', 'Currency', lookups.currencies.map((c) => ({ value: c, label: c })))}

@@ -9,6 +9,8 @@ export interface RegisterRow {
   typeId: Id;
   /** Owner, delegate and responsible user ids. */
   peopleIds: Id[];
+  /** A renewal decision is recorded; such a contract is no longer "due" (`view=due90`). */
+  decided?: boolean;
 }
 
 const STATUS_ORDER = ['Draft', 'InApproval', 'Approved', 'Active', 'NoticeGiven', 'Expired', 'Terminated'];
@@ -17,7 +19,7 @@ export function matchesView(row: RegisterRow, view: ContractQuery['view'], userI
   const { item } = row;
   switch (view ?? 'all') {
     case 'due90':
-      return item.status === 'Active' && item.daysToNotice !== null && item.daysToNotice <= 90;
+      return item.status === 'Active' && !row.decided && item.daysToNotice !== null && item.daysToNotice <= 90;
     case 'approval':
       return item.status === 'InApproval';
     case 'mine':

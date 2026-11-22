@@ -35,7 +35,7 @@ function RunJobs() {
     mutationFn: () => api.admin.runJobs(),
     onSuccess: async (r) => {
       await Promise.all([invalidate(), client.invalidateQueries({ queryKey: ['admin'] })]);
-      toast.show(`Jobs run: ${plural(r.remindersCreated, 'reminder')}, ${plural(r.escalations, 'escalation')}, ${plural(r.obligationReminders, 'obligation reminder')}, ${plural(r.contractsExpired, 'contract')} expired`);
+      toast.show(`Jobs run: ${plural(r.remindersCreated, 'reminder')}, ${plural(r.escalations, 'escalation')}, ${plural(r.obligationReminders, 'obligation reminder')}, ${plural(r.annualReviewReminders ?? 0, 'annual review reminder')}, ${plural(r.contractsExpired, 'contract')} expired`);
     },
     onError: (e) => toast.error(e, 'The jobs could not be run. Try again.'),
   });

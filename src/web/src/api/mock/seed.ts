@@ -390,7 +390,8 @@ export function createSeed(today: string): Db {
     if (inFlight || status === 'Approved') {
       addDoc(id, `${s.t} – draft.pdf`, 'Main', 1, s.own, createdAt, 180_000 + i * 9_100);
     } else {
-      if (approvedAt) log(approvedAt, null, 'ApprovalCompleted', id, 'Approved by all approvers');
+      // Only the flagship contract has its approval on record here (below); the rest were approved before they were imported.
+      if (approvedAt) log(approvedAt, null, 'ApprovalCompleted', id, s.no ? 'Approved by all approvers' : 'Registered as approved (approval on file outside DAFA Contracts)');
       if (signedDate && !missingImport) log(signedDate, s.own, 'ContractSigned', id, 'Marked as signed by both parties');
       addDoc(id, `${s.t} – signed.pdf`, 'Main', 1 + (i % 3), s.own, signedDate ?? createdAt, 420_000 + i * 31_700);
       if (i % 4 === 1) addDoc(id, 'Appendix 1 – price list.pdf', 'Appendix', 1 + (i % 2), s.own, addDays(startDate, 30), 96_000 + i * 2_300);
@@ -458,7 +459,7 @@ export function createSeed(today: string): Db {
     {
       id: seedId(G.approval, 1), contractId: erp, status: 'Pending', currentStage: 2, startedAt: d(-5),
       stages: [
-        { order: 1, steps: [step(1, 'pet', 'Department head (substitute: Søren Dahl is the owner or submitter)', 'Approved', d(-2), addDays(today, -5), 'Fits the IT roadmap and budget.')] },
+        { order: 1, steps: [step(1, 'pet', 'Department head (instead of Søren Dahl, who owns or submitted the contract)', 'Approved', d(-2), addDays(today, -5), 'Fits the IT roadmap and budget.')] },
         { order: 2, steps: [step(2, 'lou', 'Legal', 'Pending', null, addDays(today, -2)), step(3, 'ras', 'Group CFO', 'Pending', null, addDays(today, -2))] },
         { order: 3, steps: [step(4, 'kar', 'Group CEO', 'Waiting', null, null)] },
       ],
@@ -470,7 +471,7 @@ export function createSeed(today: string): Db {
     {
       id: seedId(G.approval, 3), contractId: cid('Raw material supply – silicone'), status: 'Pending', currentStage: 3, startedAt: d(-9),
       stages: [
-        { order: 1, steps: [step(6, 'met', 'Department head', 'Approved', d(-8), addDays(today, -9))] },
+        { order: 1, steps: [step(6, 'pet', 'Department head (instead of Mette Kjær, who owns or submitted the contract)', 'Approved', d(-8), addDays(today, -9))] },
         { order: 2, steps: [step(7, 'lou', 'Legal', 'Approved', d(-5), addDays(today, -8), 'Commitment clause accepted after supplier added a force majeure carve-out.'), step(8, 'ras', 'Group CFO', 'Approved', d(-4), addDays(today, -8))] },
         { order: 3, steps: [step(9, 'kar', 'Group CEO', 'Pending', null, addDays(today, -4))] },
       ],
@@ -480,7 +481,22 @@ export function createSeed(today: string): Db {
       stages: [{ order: 1, steps: [step(10, 'hen', 'Department head', 'Approved', d(-3), addDays(today, -10))] }],
     },
   ];
+  // The flagship contract's finished approval, so its approval log and "Approved" date have a route behind them.
+  const rubberRec = contracts.find((c) => c.id === rubber);
+  if (rubberRec?.approvedAt) {
+    const at = (n: number) => `${addDays(rubberRec.approvedAt ?? today, n)}T09:00:00Z`;
+    approvals.push({
+      id: seedId(G.approval, 5), contractId: rubber, status: 'Approved', currentStage: 3, startedAt: at(-6),
+      stages: [
+        { order: 1, steps: [step(11, 'pet', 'Department head (instead of Mette Kjær, who owns or submitted the contract)', 'Approved', at(-5), addDays(rubberRec.approvedAt, -6))] },
+        { order: 2, steps: [step(12, 'lou', 'Legal', 'Approved', at(-3), addDays(rubberRec.approvedAt, -5)), step(13, 'ras', 'Group CFO', 'Approved', at(-2), addDays(rubberRec.approvedAt, -5))] },
+        { order: 3, steps: [step(14, 'kar', 'Group CEO', 'Approved', at(0), addDays(rubberRec.approvedAt, -2))] },
+      ],
+    });
+  }
   for (const a of approvals) {
+    const submitted = contracts.find((c) => c.id === a.contractId);
+    if (submitted) submitted.submittedBy = submitted.ownerId;
     const owner = USER_ORDER.find((k) => USER[k] === contracts.find((c) => c.id === a.contractId)?.ownerId) ?? null;
     log(a.startedAt.slice(0, 10), owner, 'ApprovalStarted', a.contractId, 'Submitted for approval');
     for (const st of a.stages.flatMap((x) => x.steps)) {

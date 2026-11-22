@@ -1,4 +1,28 @@
 /* ---------- Home ---------- */
+.home-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.home-head__text {
+  gap: 6px;
+  min-width: 0;
+}
+/* Phone-only parts of My work (Phone.dc.html); switched on under 720px below. */
+.home-head__phone,
+.home-head__avatar,
+.hero__text--phone,
+.task__action-long {
+  display: none;
+}
+.home-head__avatar {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
 .hero {
   background: var(--primary);
   color: #fff;
@@ -195,6 +219,16 @@ a.task__title:hover {
   gap: 12px;
   align-items: center;
 }
+/* Register: the views and the search on one row, the four filter chips on the next. */
+.toolbar--chips {
+  gap: 8px;
+  margin-top: -4px;
+}
+.toolbar__clear {
+  font-size: 13px;
+  padding: 0 6px;
+  min-height: 36px;
+}
 .search-pill {
   display: flex;
   align-items: center;
@@ -239,11 +273,25 @@ a.task__title:hover {
   font-weight: 600;
   color: var(--text);
   border-radius: 4px;
+  /* One line each for the title and the meta line keeps a row at about 56px. */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell-title__btn:focus-visible {
+  outline-offset: -2px;
+}
+.cell-title__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cell-owner {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 .pager {
   display: flex;
@@ -398,15 +446,21 @@ a.task__title:hover {
   font-weight: 700;
   letter-spacing: -0.01em;
 }
+/*
+ * Hairlines sit above each cell and the first row's are clipped away, so there is never a
+ * line under the last row or under an empty cell, whatever the number of cells and columns.
+ */
 .facts {
-  padding: 6px 22px;
+  margin: 6px 22px;
+  overflow: hidden;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0 24px;
 }
 .fact {
   padding: 10px 0;
-  border-bottom: 1px solid var(--hairline);
+  margin-top: -1px;
+  border-top: 1px solid var(--hairline);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -564,6 +618,35 @@ a.task__title:hover {
   flex-direction: column;
   gap: 2px;
 }
+/* `note` from intake/extract: why there are no suggestions. */
+.file-card__note {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--amber-fg);
+}
+/* Approval route card: which value band the contract is in (NewContract.dc.html). */
+.bands {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.band {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
+  background: var(--surface);
+}
+.band--on {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
 .dropzone {
   display: flex;
   flex-direction: column;
@@ -652,22 +735,80 @@ a.task__title:hover {
 .only-sm {
   display: none;
 }
+/* 720–1000px: the register keeps Contract, Notice and Status (Register.tsx drops Entity and Owner). */
+@media (max-width: 1000px) {
+  .col-hide-md {
+    display: none;
+  }
+  .toolbar--views .seg__btn {
+    padding: 0 11px;
+  }
+  .toolbar--chips .btn {
+    height: 36px;
+    font-size: 13px;
+    padding: 0 14px;
+  }
+  .facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 @media (max-width: 720px) {
+  /* Phone register cards: the status is part of the contract cell's second line. */
   .only-sm {
     display: inline;
+  }
+  /* My work, task-first (Phone.dc.html): date, "My work" and the avatar; a compact hero; the tasks. */
+  .page--home {
+    padding: 20px 20px 24px;
+    gap: 14px;
+  }
+  .home-head__wide,
+  .hero__text--wide,
+  .hero__cta,
+  .hero__stats,
+  .task__action-short,
+  .section-head--tasks .h2,
+  .section-head--tasks .spacer {
+    display: none;
+  }
+  .home-head__phone,
+  .hero__text--phone,
+  .task__action-long {
+    display: inline;
+  }
+  .home-head__avatar {
+    display: inline-flex;
+  }
+  .home-head__avatar .avatar {
+    width: 40px;
+    height: 40px;
+    font-size: 14px;
+  }
+  .home-head__text {
+    gap: 2px;
+  }
+  .home-head .h1 {
+    font-size: 28px;
   }
   .hero {
     padding: 20px;
     border-radius: 20px;
   }
+  .hero__main {
+    flex: 1 1 100%;
+    gap: 6px;
+  }
   .hero__title {
     font-size: 24px;
   }
-  .hero-stat {
-    padding: 14px;
+  .hero .eyebrow {
+    opacity: 0.8;
   }
-  .hero-stat__value {
-    font-size: 20px;
+  .split--home {
+    gap: 14px;
+  }
+  .split--home .quick-tiles {
+    flex: 1 1 100%;
   }
   .task {
     padding: 14px 16px;
@@ -679,6 +820,11 @@ a.task__title:hover {
   .section-head .seg {
     display: flex;
     flex: 1 1 100%;
+    border-radius: 12px;
+  }
+  .section-head .seg__btn {
+    font-size: 14px;
+    border-radius: 9px;
   }
   .section-head .seg__btn {
     flex: 1 1 0;
@@ -726,9 +872,12 @@ a.task__title:hover {
     padding: 0;
   }
   .facts {
-    padding: 6px 16px;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 6px 16px;
     gap: 0 16px;
+  }
+  .toolbar--chips .btn {
+    flex: 1 1 40%;
+    height: 44px;
   }
   .tab-card {
     padding: 18px 16px;

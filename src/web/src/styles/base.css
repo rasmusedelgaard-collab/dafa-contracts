@@ -146,8 +146,17 @@ a:hover {
     }
   }
 
+  /*
+   * Fill mode is `backwards`, never `both` or `forwards`: an element that keeps a transform
+   * after its animation becomes the containing block of every `position: fixed` descendant
+   * (the phone approval bar ended up at the end of the page that way).
+   */
   .rise > * {
-    animation: rise 0.4s ease both;
+    animation: rise 0.4s ease backwards;
+  }
+  /* Pages with a fixed descendant fade in without a transform at all. */
+  .rise--fade > * {
+    animation-name: fade-in;
   }
   .rise > *:nth-child(2) {
     animation-delay: 0.05s;
@@ -160,6 +169,15 @@ a:hover {
   }
   .rise > *:nth-child(n + 5) {
     animation-delay: 0.2s;
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 
   @keyframes shimmer {
@@ -182,18 +200,42 @@ a:hover {
     }
   }
 
-  @keyframes fade-in {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-
   @keyframes spin {
     to {
       transform: rotate(360deg);
     }
+  }
+}
+
+/* First Tab stop on every shell page: jump over the navigation. */
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  padding: 10px 16px;
+  border-radius: var(--r-control);
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+  /* Off screen until focused; not a transform, so nothing else is affected. */
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.skip-link:focus {
+  clip-path: none;
+  width: auto;
+  height: auto;
+  color: #fff;
+  outline: 2px solid #fff;
+  outline-offset: -4px;
+}
+
+@media (max-width: 720px) {
+  .hide-phone {
+    display: none;
   }
 }

@@ -80,7 +80,7 @@ export function onAxis(items: RenewalItem[], axis: TimelineAxis): RenewalItem[] 
  * per contract. Markers closer than `minGapPct` to one already in the same row move down a row,
  * so two deadlines in the same week stay separately clickable.
  */
-export function buildLanes(items: RenewalItem[], axis: TimelineAxis, grouping: LaneGrouping = 'entity', minGapPct = 3.2): Lane[] {
+export function buildLanes(items: RenewalItem[], axis: TimelineAxis, grouping: LaneGrouping = 'entity', minGapPct = 2.6): Lane[] {
   const lanes = new Map<string, Lane>();
   const sorted = onAxis(items, axis).sort((a, b) => a.noticeDeadline.localeCompare(b.noticeDeadline) || a.title.localeCompare(b.title));
   for (const item of sorted) {
@@ -91,10 +91,12 @@ export function buildLanes(items: RenewalItem[], axis: TimelineAxis, grouping: L
       lane = { key, name, markers: [], rows: 1 };
       lanes.set(key, lane);
     }
-    // Overdue deadlines are pinned at the left edge, whatever their date.
-    const leftPct = isOverdue(item) ? 0 : positionPct(item.noticeDeadline, axis);
+    // Overdue deadlines are pinned at the left edge (their own column), whatever their date.
+    const overdue = isOverdue(item);
+    const leftPct = overdue ? 0 : positionPct(item.noticeDeadline, axis);
     let row = 0;
-    while (lane.markers.some((m) => m.row === row && Math.abs(m.leftPct - leftPct) < minGapPct)) row += 1;
+    // Overdue markers only stack with each other: they are not on the month axis.
+    while (lane.markers.some((m) => m.row === row && isOverdue(m.item) === overdue && Math.abs(m.leftPct - leftPct) < minGapPct)) row += 1;
     lane.markers.push({ item, leftPct, row, urgency: markerUrgency(item.daysToNotice) });
     lane.rows = Math.max(lane.rows, row + 1);
   }

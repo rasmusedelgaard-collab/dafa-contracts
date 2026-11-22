@@ -8,6 +8,8 @@ export interface Column<T> {
   sortKey?: string;
   render: (row: T) => ReactNode;
   className?: string;
+  /** Column width (e.g. `42%`) when the table has `fixed` layout. */
+  width?: string;
 }
 
 export interface TableProps<T> {
@@ -21,16 +23,25 @@ export interface TableProps<T> {
   onRowClick?: (row: T) => void;
   selectedKey?: string | null;
   minWidth?: number;
+  /** Fixed layout: columns keep their `width`, cell content is clipped instead of widening the column. */
+  fixed?: boolean;
 }
 
-export function Table<T>({ columns, rows, rowKey, caption, sort, onSort, onRowClick, selectedKey, minWidth }: TableProps<T>) {
+export function Table<T>({ columns, rows, rowKey, caption, sort, onSort, onRowClick, selectedKey, minWidth, fixed }: TableProps<T>) {
   const desc = sort?.startsWith('-') ?? false;
   const field = desc ? sort?.slice(1) : sort;
 
   return (
     <div className="table-wrap">
-      <table className="table" style={minWidth ? { minWidth } : undefined}>
+      <table className={`table${fixed ? ' table--fixed' : ''}`} style={minWidth ? { minWidth } : undefined}>
         <caption className="sr-only">{caption}</caption>
+        {fixed ? (
+          <colgroup>
+            {columns.map((c) => (
+              <col key={c.key} className={c.className} style={c.width ? { width: c.width } : undefined} />
+            ))}
+          </colgroup>
+        ) : null}
         <thead>
           <tr>
             {columns.map((c) => {

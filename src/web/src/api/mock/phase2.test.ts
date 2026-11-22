@@ -106,7 +106,7 @@ describe('approvals decision flow', () => {
     expect((await problem(api.delegateApprovalStep(stepId, USER.ras))).status).toBe(400);
     expect((await problem(api.delegateApprovalStep(stepId, USER.sor))).status).toBe(400); // owner of the contract
     expect((await problem(api.delegateApprovalStep(stepId, USER.emm))).status).toBe(400); // reader
-    expect((await problem(api.delegateApprovalStep(stepId, USER.lou))).status).toBe(409); // already approving this stage
+    expect((await problem(api.delegateApprovalStep(stepId, USER.lou))).status).toBe(400); // already an approver in this stage
     expect(stepOf(api, ERP, USER.ras).status).toBe('Pending');
   });
 
@@ -122,7 +122,7 @@ describe('approvals decision flow', () => {
     const steps = submitted.approval!.stages.flatMap((s) => s.steps);
     expect(steps.length).toBeGreaterThan(0);
     expect(steps.some((s) => s.approverId === USER.met)).toBe(false);
-    expect(steps[0]?.roleLabel).toMatch(/substitute: Mette Kjær is the owner or submitter/);
+    expect(steps[0]?.roleLabel).toMatch(/\(instead of Mette Kjær, who owns or submitted the contract\)$/);
     expect(submitted.submittedById).toBe(USER.met);
   });
 });
@@ -202,7 +202,7 @@ describe('phase 2 contract additions', () => {
     // Unlocked fields can still change.
     expect((await owner.updateContract(rec.id, { ...body, paymentTerms: '45 days net' })).paymentTerms).toBe('45 days net');
     const locked = await problem(owner.updateContract(rec.id, { ...body, currency: detail.currency === 'EUR' ? 'DKK' : 'EUR' }));
-    expect(locked).toEqual({ status: 409, detail: 'Approved terms are locked. Register an amendment as a linked contract, or ask an administrator.' });
+    expect(locked).toEqual({ status: 409, detail: 'Approved terms are locked. Register an amendment as a linked contract, or ask an administrator. Locked: currency.' });
   });
 
   it('a draft has no locked fields, and a missing change-of-control answer is missing data', async () => {
@@ -232,7 +232,7 @@ describe('phase 2 contract additions', () => {
     const rec = api.db.contracts.find((c) => c.status === 'Active')!;
     rec.endDate = null;
     expect((await api.getContract(rec.id)).canDecideRenewal).toBe(true);
-    expect((await problem(api.decideRenewal(rec.id, { decision: 'Renegotiate', comment: '' }))).status).toBe(400);
+    expect((await problem(api.decideRenewal(rec.id, { decision: 'Renegotiate', comment: '' }))).status).toBe(409);
     expect((await api.decideRenewal(rec.id, { decision: 'GiveNotice', comment: 'Supplier replaced.' })).status).toBe('NoticeGiven');
   });
 
@@ -254,7 +254,7 @@ describe('phase 2 contract additions', () => {
     const rec = seed.db.contracts.find((c) => c.status === 'Active' && seed.db.documents.some((d) => d.contractId === c.id && d.kind === 'Main') && seed.db.users.find((u) => u.id === c.ownerId)?.roles.includes('ContractOwner') && c.ownerId !== USER.pet)!;
     const owner = as(rec.ownerId);
     expect((await problem(owner.uploadDocument(rec.id, new File(['x'], 'tool.exe'), 'Other'))).status).toBe(400);
-    expect((await problem(owner.uploadDocument(rec.id, new File(['x'], 'Signed copy.pdf'), 'Main'))).status).toBe(403);
+    expect((await problem(owner.uploadDocument(rec.id, new File(['x'], 'Signed copy.pdf'), 'Main'))).status).toBe(409);
     expect((await owner.uploadDocument(rec.id, new File(['x'], 'Amendment 1.pdf'), 'Amendment')).documents.some((d) => d.name === 'Amendment 1.pdf')).toBe(true);
     expect((await problem(seed.uploadDocument(rec.id, new File(['x'], 'Signed copy.pdf'), 'Main'))).status).toBe(200);
   });

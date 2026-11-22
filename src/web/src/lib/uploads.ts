@@ -16,4 +16,5 @@ export function uploadError(file: { name: string; size: number } | null | undefi
   return undefined;
 }
 
-export const LOCKED_MESSAGE = 'Approved terms are locked. Register an amendment as a linked contract, or ask an administrator.';
+/** Shown above Edit details when some fields are locked. Fields that are still empty can be filled in once. */
+export const LOCKED_MESSAGE = 'Approved terms are locked. Register an amendment as a linked contract, or ask an administrator. Fields that are still empty can be filled in.';
