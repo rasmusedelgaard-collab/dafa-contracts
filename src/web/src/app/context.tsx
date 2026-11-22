@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Api } from '../api/api';
-import type { Lookups, Me, ReminderSettings } from '../api/types';
+import type { AppConfig, Lookups, Me, ReminderSettings } from '../api/types';
 
 // ----- API -----
 const ApiContext = createContext<Api | null>(null);
@@ -39,6 +39,22 @@ export const qk = {
   renewals: (months: number) => ['renewals', months] as const,
   overview: ['overview'] as const,
   admin: (resource: string, ...rest: unknown[]) => ['admin', resource, ...rest] as const,
+  // Release 3
+  appConfig: ['app-config'] as const,
+  analytics: (filter: object) => ['overview', 'analytics', filter] as const,
+  searchFull: (query: object) => ['search', 'full', query] as const,
+  person: (id: string) => ['contracts', 'person', id] as const,
+  counterparty: (id: string) => ['contracts', 'counterparty', id] as const,
+  counterparties: (q: string) => ['counterparties', q] as const,
+  watching: ['contracts', 'watching'] as const,
+  comments: (id: string) => ['contracts', 'comments', id] as const,
+  versions: (id: string) => ['contracts', 'versions', id] as const,
+  compare: (id: string, from: string, to: string) => ['contracts', 'compare', id, from, to] as const,
+  notifications: ['notifications'] as const,
+  unread: ['notifications', 'unread'] as const,
+  preferences: ['preferences'] as const,
+  views: ['views'] as const,
+  dataRoom: ['data-room'] as const,
 };
 
 /** Refreshes everything a contract change can touch: lists, the record, Home, approvals. */
@@ -51,6 +67,7 @@ export function useInvalidateContracts(): () => Promise<void> {
       client.invalidateQueries({ queryKey: qk.approvals }),
       client.invalidateQueries({ queryKey: ['renewals'] }),
       client.invalidateQueries({ queryKey: qk.overview }),
+      client.invalidateQueries({ queryKey: qk.notifications }),
     ]);
   };
 }
@@ -116,6 +133,33 @@ export function useLookupsQuery(enabled: boolean) {
   return useQuery({ queryKey: qk.lookups, queryFn: () => api.getLookups(), enabled, staleTime: 5 * 60_000 });
 }
 
+const EMPTY_CONFIG: AppConfig = {
+  appName: 'DAFA Contracts',
+  dateFormat: 'd MMM yyyy',
+  numberFormat: 'en-GB',
+  features: { aiSuggestions: true, templates: true, eSign: false },
+  sessionTimeoutMinutes: 480,
+  landingPage: 'home',
+  defaultEntityId: null,
+  dataQualityFields: [],
+  ddThresholdDkk: 5_000_000,
+  customFields: [],
+  fieldRules: { types: [] },
+  tags: [],
+  rates: {},
+  canExportDataRoom: false,
+};
+
+/**
+ * `GET app-config` (release 3): custom fields, field rules, tags, feature toggles. Falls back to
+ * empty settings while loading or against an API without the endpoint, so forms still work.
+ */
+export function useAppConfig(): AppConfig & { loaded: boolean } {
+  const api = useApi();
+  const q = useQuery({ queryKey: qk.appConfig, queryFn: () => api.getAppConfig(), staleTime: 5 * 60_000, retry: false });
+  return useMemo(() => ({ ...(q.data ?? EMPTY_CONFIG), loaded: !!q.data }), [q.data]);
+}
+
 export const DEFAULT_REMINDER_SETTINGS: ReminderSettings = { noticeDays: [120, 60, 30], escalationDays: 14, obligationDays: 14 };
 
 /**
@@ -141,7 +185,9 @@ export function permissions(me: Me) {
   return {
     isAdmin,
     canCreate: isAdmin || me.roles.includes('ContractOwner'),
-    canSeeOverview: isAdmin || me.isGroupManagement || me.managedEntityIds.length > 0,
+    /** Release 3: every user has Overview, scoped to what they can see. */
+    canSeeOverview: true,
+    canExportDataRoom: isAdmin || me.isGroupManagement || me.managedEntityIds.length > 0,
     canSeeSettings: isAdmin,
   };
 }
@@ -161,6 +207,8 @@ export function accessLabel(me: Me, lookups: Lookups): string {
 interface Scope {
   entityId: string;
   setEntityId: (id: string) => void;
+  /** Takes over a value the page has already written to the URL (Overview drill-downs), without writing again. */
+  adopt: (id: string) => void;
 }
 const ScopeContext = createContext<Scope | null>(null);
 
@@ -195,6 +243,10 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       entityId,
+      adopt: (id: string) => {
+        setLocal(id);
+        setSeen(id);
+      },
       setEntityId: (id: string) => {
         setLocal(id);
         setSeen(id);

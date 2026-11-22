@@ -28,7 +28,10 @@ export function GlobalSearch() {
   const enabled = q.length >= 2;
 
   const results = useQuery({ queryKey: qk.search(q), queryFn: () => api.search(q), enabled, staleTime: 30_000 });
-  const items = enabled ? (results.data ?? []) : [];
+  // The last option always opens the full search page (contracts, documents, people).
+  const all: SearchResult = { kind: 'Contract', id: '__all__', title: `See all results for "${text.trim()}"`, subtitle: 'Contracts, documents, people and counterparties' };
+  const found = enabled ? (results.data ?? []) : [];
+  const items = enabled && results.data ? [...found, all] : found;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -55,8 +58,11 @@ export function GlobalSearch() {
     setOpen(false);
     setText('');
     inputRef.current?.blur();
-    if (r.kind === 'Contract') navigate(`/contracts/${r.id}`);
-    else navigate(`/contracts?q=${encodeURIComponent(r.title)}`);
+    if (r.id === '__all__') navigate(`/search?q=${encodeURIComponent(text.trim())}`);
+    else if (r.kind === 'Contract') navigate(`/contracts/${r.id}`);
+    else if (r.kind === 'Document') navigate(`/contracts/${r.contractId ?? ''}?doc=${r.id}`);
+    else if (r.kind === 'Person') navigate(`/people/${r.id}`);
+    else navigate(`/counterparties/${r.id}`);
   };
 
   const showPop = open && text.trim().length >= 2;
@@ -65,7 +71,7 @@ export function GlobalSearch() {
   return (
     <div className="gsearch" ref={boxRef}>
       <label htmlFor={`${listId}-input`} className="sr-only">
-        Search contracts and suppliers
+        Search contracts, documents and people
       </label>
       <div className="gsearch__box">
         <Icon name="search" size={18} stroke={2} />
@@ -103,7 +109,7 @@ export function GlobalSearch() {
                 go(item);
               } else if (text.trim()) {
                 setOpen(false);
-                navigate(`/contracts?q=${encodeURIComponent(text.trim())}`);
+                navigate(`/search?q=${encodeURIComponent(text.trim())}`);
               }
             } else if (e.key === 'Escape') {
               setOpen(false);
@@ -123,8 +129,13 @@ export function GlobalSearch() {
           <div className="gsearch__note" role="alert">
             Search is not available right now.
           </div>
-        ) : showPop && items.length === 0 ? (
-          <div className="gsearch__note">No contracts or suppliers match "{text.trim()}".</div>
+        ) : showPop && found.length === 0 ? (
+          <div className="gsearch__note">
+            Nothing matches "{text.trim()}".{' '}
+            <button type="button" className="link-btn" onMouseDown={(e) => e.preventDefault()} onClick={() => go(all)}>
+              Search everything
+            </button>
+          </div>
         ) : (
           items.map((r, i) => (
             <div
@@ -132,13 +143,13 @@ export function GlobalSearch() {
               id={`${listId}-${i}`}
               role="option"
               aria-selected={i === activeIndex}
-              className="gsearch__opt"
+              className={`gsearch__opt${r.id === '__all__' ? ' gsearch__opt--all' : ''}`}
               onMouseEnter={() => setActive(i)}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => go(r)}
             >
               <span className="tile" aria-hidden="true">
-                <Icon name={r.kind === 'Contract' ? 'doc' : 'users'} size={18} />
+                <Icon name={r.id === '__all__' ? 'search' : r.kind === 'Contract' ? 'doc' : r.kind === 'Document' ? 'docPlus' : r.kind === 'Person' ? 'person' : 'building'} size={18} />
               </span>
               <span className="kv">
                 <span className="kv__v" style={{ fontSize: 14 }}>

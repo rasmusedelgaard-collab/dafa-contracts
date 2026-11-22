@@ -99,7 +99,10 @@ public sealed class ApiExceptionMiddleware
     }
 }
 
-/// <summary>Runs the background jobs every hour (Jobs:IntervalMinutes) while the app is running.</summary>
+/// <summary>
+/// Release 3: checks every Jobs:TickMinutes (default 5) which jobs are due on their own schedules
+/// (admin/jobs) and runs them through JobRunner, while the app is running.
+/// </summary>
 public sealed class JobsHostedService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
@@ -120,7 +123,7 @@ public sealed class JobsHostedService : BackgroundService
             _logger.LogInformation("Background jobs are disabled (Jobs:Enabled=false)");
             return;
         }
-        var interval = TimeSpan.FromMinutes(Math.Max(1, _configuration.GetValue("Jobs:IntervalMinutes", 60)));
+        var interval = TimeSpan.FromMinutes(Math.Max(1, _configuration.GetValue("Jobs:TickMinutes", 5)));
         var startupDelay = TimeSpan.FromSeconds(Math.Max(0, _configuration.GetValue("Jobs:StartupDelaySeconds", 30)));
 
         try
@@ -144,11 +147,12 @@ public sealed class JobsHostedService : BackgroundService
         try
         {
             using var scope = _scopeFactory.CreateScope();
-            var jobs = scope.ServiceProvider.GetRequiredService<JobService>();
-            var result = await jobs.RunAllAsync(stoppingToken);
-            _logger.LogInformation(
-                "Jobs ran: {Notice} notice reminders, {Escalations} escalations, {Obligations} obligation reminders, {Renewed} renewed, {Ended} ended, {Errors} errors",
-                result.NoticeReminders, result.Escalations, result.ObligationReminders, result.ContractsRenewed, result.ContractsEnded, result.Errors.Count);
+            var runner = scope.ServiceProvider.GetRequiredService<JobRunner>();
+            var ran = await runner.RunDueAsync(stoppingToken);
+            if (ran > 0)
+            {
+                _logger.LogInformation("Scheduler ran {Count} due jobs", ran);
+            }
         }
         catch (OperationCanceledException)
         {

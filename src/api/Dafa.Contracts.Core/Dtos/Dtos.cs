@@ -39,15 +39,19 @@ public class LookupUserDto
     public string Name { get; set; } = "";
     public string Initials { get; set; } = "";
     public List<Guid> DepartmentIds { get; set; } = new();
+    /// <summary>Release 3: inactive users are included so names resolve.</summary>
+    public bool IsActive { get; set; }
+    public string Email { get; set; } = "";
+    public string? Title { get; set; }
     /// <summary>Reader, ContractOwner, Approver, Admin. Lets the UI offer only approvers as delegates.</summary>
     public List<string> Roles { get; set; } = new();
 }
 
 public class LookupsDto
 {
-    public List<IdNameDto> Entities { get; set; } = new();
-    public List<IdNameDto> Departments { get; set; } = new();
-    public List<IdNameDto> ContractTypes { get; set; } = new();
+    public List<LookupEntityDto> Entities { get; set; } = new();
+    public List<NamedRefV3Dto> Departments { get; set; } = new();
+    public List<NamedRefV3Dto> ContractTypes { get; set; } = new();
     public List<LookupUserDto> Users { get; set; } = new();
     public List<string> Currencies { get; set; } = new();
 }
@@ -77,6 +81,30 @@ public class ContractListItemDto
     public string Currency { get; set; } = "";
     public string Status { get; set; } = "";
     public List<string> MissingData { get; set; } = new();
+
+    // Release 3 (ContractListItemV3)
+    public Guid EntityId { get; set; }
+    public Guid DepartmentId { get; set; }
+    public Guid TypeId { get; set; }
+    public Guid OwnerId { get; set; }
+    public string? DelegateName { get; set; }
+    public string? ResponsibleName { get; set; }
+    /// <summary>= supplierId.</summary>
+    public Guid? CounterpartyId { get; set; }
+    public DateOnly StartDate { get; set; }
+    public DateOnly? EndDate { get; set; }
+    public decimal? TotalValue { get; set; }
+    public decimal AnnualValueDkk { get; set; }
+    public decimal TotalValueDkk { get; set; }
+    public bool AutoRenew { get; set; }
+    public bool? ChangeOfControl { get; set; }
+    public string? Exclusivity { get; set; }
+    public DateOnly CreatedAt { get; set; }
+    public DateOnly? SignedDate { get; set; }
+    public bool HasSignedDocument { get; set; }
+    public List<TagRefDto> Tags { get; set; } = new();
+    public bool Watching { get; set; }
+    public Dictionary<string, object?> CustomFields { get; set; } = new();
 }
 
 public class PagedDto<T>
@@ -179,32 +207,27 @@ public class ActivityDto
 
 public class ContractDetailDto : ContractListItemDto
 {
-    public Guid TypeId { get; set; }
+    // typeId, entityId, departmentId, ownerId, startDate, endDate, totalValue, autoRenew,
+    // exclusivity, changeOfControl and signedDate are inherited from the list item (release 3).
     public Guid? SupplierId { get; set; }
     public string CounterpartyName { get; set; } = "";
-    public Guid EntityId { get; set; }
-    public Guid DepartmentId { get; set; }
-    public Guid OwnerId { get; set; }
     public Guid? DelegateId { get; set; }
     public Guid? ResponsibleId { get; set; }
     public string ReminderRecipient { get; set; } = "";
-    public DateOnly StartDate { get; set; }
-    public DateOnly? EndDate { get; set; }
     public bool OpenEnded { get; set; }
     public int? NoticePeriodDays { get; set; }
-    public bool AutoRenew { get; set; }
     public int? RenewalMonths { get; set; }
-    public decimal? TotalValue { get; set; }
     public string? PaymentTerms { get; set; }
     public string? PriceAdjustment { get; set; }
     public DateOnly? PriceAdjustmentDate { get; set; }
     public string? GoverningLaw { get; set; }
     public string? LiabilityCap { get; set; }
-    public string? Exclusivity { get; set; }
-    public bool? ChangeOfControl { get; set; }
     public string? Summary { get; set; }
-    public DateOnly? SignedDate { get; set; }
     public string? SigningMethod { get; set; }
+    /// <summary>Release 3.</summary>
+    public int WatcherCount { get; set; }
+    public int CommentCount { get; set; }
+    public bool CanTag { get; set; }
     public string? RenewalDecision { get; set; }
     public Guid? RenewalDecidedById { get; set; }
     public string? RenewalDecidedBy { get; set; }
@@ -285,6 +308,8 @@ public class SearchResultDto
     public Guid Id { get; set; }
     public string Title { get; set; } = "";
     public string Subtitle { get; set; } = "";
+    /// <summary>Release 3: the contract of a Document hit.</summary>
+    public Guid? ContractId { get; set; }
 }
 
 public class MyApprovalDto
@@ -430,6 +455,10 @@ public class ContractInput
     public bool? ChangeOfControl { get; set; }
     public string? Summary { get; set; }
     public Guid? UploadId { get; set; }
+    /// <summary>Release 3: custom field values by key. Omitted = unchanged (update); given = the full set.</summary>
+    public Dictionary<string, System.Text.Json.JsonElement>? CustomFields { get; set; }
+    /// <summary>Release 3: tag ids. Omitted = unchanged.</summary>
+    public List<Guid>? TagIds { get; set; }
 }
 
 public class SignInput

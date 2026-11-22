@@ -22,6 +22,23 @@ public static class CurrencyRates
 
     public static bool IsKnown(string? currency) => currency != null && ToDkkRates.ContainsKey(currency);
 
+    /// <summary>
+    /// Release 3: converts with the admin-editable rates (Currencies table) when they know the
+    /// currency, else with the fixed rates above. Not rounded.
+    /// </summary>
+    public static decimal ToDkk(decimal? amount, string? currency, IReadOnlyDictionary<string, decimal>? rates)
+    {
+        if (amount is null)
+        {
+            return 0m;
+        }
+        if (rates is not null && currency != null && rates.TryGetValue(currency, out var rate) && rate > 0m)
+        {
+            return amount.Value * rate;
+        }
+        return ToDkk(amount, currency);
+    }
+
     public static decimal ToDkk(decimal? amount, string? currency)
     {
         if (amount is null)

@@ -49,6 +49,13 @@ public static class ApprovalRuleMatcher
         return CurrencyRates.ToDkk(value, currency);
     }
 
+    /// <summary>Release 3: as above with the admin-editable currency rates (fixed rates for unknown codes).</summary>
+    public static decimal ValueDkk(decimal? annualValue, decimal? totalValue, string? currency, IReadOnlyDictionary<string, decimal>? rates)
+    {
+        var value = Math.Max(totalValue ?? 0m, annualValue ?? 0m);
+        return decimal.Round(CurrencyRates.ToDkk(value, currency, rates), 2);
+    }
+
     public static List<ApprovalStageDefinition> Stages(ApprovalRule rule)
     {
         return JsonDefaults.ReadList<ApprovalStageDefinition>(rule.StagesJson)
@@ -250,7 +257,8 @@ public class ApprovalService
         var profile = await _currentUser.GetProfileAsync(cancellationToken);
         var excluded = new HashSet<Guid> { profile.UserId };
         var rules = await _db.ApprovalRules.AsNoTracking().ToListAsync(cancellationToken);
-        var valueDkk = CurrencyRates.ToDkk(value ?? 0m, string.IsNullOrWhiteSpace(currency) ? "DKK" : currency);
+        var rates = await CurrencyTable.LoadRatesAsync(_db, cancellationToken);
+        var valueDkk = decimal.Round(CurrencyRates.ToDkk(value ?? 0m, string.IsNullOrWhiteSpace(currency) ? "DKK" : currency, rates), 2);
         var rule = ApprovalRuleMatcher.Match(rules, entityId, typeId, departmentId, valueDkk);
         var preview = new ApprovalPreviewDto();
         if (rule is null)
@@ -316,7 +324,8 @@ public class ApprovalService
         }
 
         var rules = await _db.ApprovalRules.AsNoTracking().ToListAsync(cancellationToken);
-        var valueDkk = ApprovalRuleMatcher.ValueDkk(contract.AnnualValue, contract.TotalValue, contract.Currency);
+        var rates = await CurrencyTable.LoadRatesAsync(_db, cancellationToken);
+        var valueDkk = ApprovalRuleMatcher.ValueDkk(contract.AnnualValue, contract.TotalValue, contract.Currency, rates);
         var rule = ApprovalRuleMatcher.Match(rules, contract.EntityId, contract.TypeId, contract.DepartmentId, valueDkk);
         if (rule is null)
         {
@@ -432,7 +441,8 @@ public class ApprovalService
                 "Approval needed: " + contract.Title,
                 "Contract " + contract.ContractNo + " (" + contract.Title + ") with " + contract.CounterpartyName
                     + " is waiting for your approval as " + step.RoleLabel + ".",
-                contract.Id), cancellationToken);
+                contract.Id,
+                new Dictionary<string, string> { ["step.role"] = step.RoleLabel }), cancellationToken);
         }
     }
 
@@ -540,7 +550,8 @@ public class ApprovalService
                 "Rejected: " + contract.Title,
                 profile.Name + " rejected contract " + contract.ContractNo + ". Comment: " + trimmed
                     + " The contract is back in draft.",
-                contract.Id), cancellationToken);
+                contract.Id,
+                new Dictionary<string, string> { ["comment"] = trimmed }), cancellationToken);
             await _db.SaveChangesAsync(cancellationToken);
             return;
         }
@@ -739,7 +750,7 @@ public class ApprovalService
         }
         await _notifier.SendAsync(new Notification(
             target.Id,
-            "ApprovalRequested",
+            "ApprovalDelegated",
             "Approval delegated to you: " + contract.Title,
             previousName + "'s approval of contract " + contract.ContractNo + " (" + contract.Title + ") was handed to you.",
             contract.Id), cancellationToken);

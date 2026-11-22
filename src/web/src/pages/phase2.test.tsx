@@ -155,28 +155,25 @@ describe('Renewals', () => {
 });
 
 describe('Overview access', () => {
-  it('shows the portfolio to group management', async () => {
+  it('shows the portfolio analytics to group management', async () => {
     renderApp('/overview');
     expect(await screen.findByRole('heading', { level: 1, name: 'Overview' })).toBeInTheDocument();
-    expect(await screen.findByRole('list', { name: 'Annual contract value by legal entity, in DKK' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Change of control' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Missing data/ })).toHaveAttribute('href', '/contracts?view=missing');
+    expect(await screen.findByRole('list', { name: 'Annual value by legal entity' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Due diligence' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /Change of control/ })).toBeInTheDocument();
   });
 
-  it('gives a reader a clear no-access state, hides the menu item and never asks the API', async () => {
-    const api = createMockApi({ today: TODAY, userId: USER.emm });
-    const spy = vi.spyOn(api, 'getOverview');
-    renderWith(api, '/overview');
-    expect(await screen.findByRole('heading', { name: 'You do not have access to Overview' })).toBeInTheDocument();
-    expect(within(screen.getByRole('navigation', { name: 'Main' })).queryByRole('link', { name: 'Overview' })).not.toBeInTheDocument();
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it('shows the no-access state when the API refuses, whatever the client believes', async () => {
-    const api = createMockApi({ today: TODAY, userId: USER.ras });
-    api.getOverview = () => Promise.reject(new ApiError({ title: 'Forbidden', status: 403 }));
-    renderWith(api, '/overview');
-    expect(await screen.findByRole('heading', { name: 'You do not have access to Overview' })).toBeInTheDocument();
+  it('is open to a reader, scoped to what they can see, and drills down on a click', async () => {
+    const user = userEvent.setup();
+    renderApp('/overview', USER.emm);
+    const bars = await screen.findByRole('list', { name: 'Annual value by department' });
+    expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Overview' })).toBeInTheDocument();
+    expect(within(bars).getAllByRole('button')).toHaveLength(1);
+    await user.click(within(bars).getByRole('button', { name: /^Quality:/ }));
+    const crumbs = await screen.findByRole('navigation', { name: 'Applied drill-downs' });
+    expect(within(crumbs).getByText('Quality')).toBeInTheDocument();
+    await user.click(within(crumbs).getByRole('button', { name: 'Remove Quality' }));
+    await waitFor(() => expect(screen.queryByRole('navigation', { name: 'Applied drill-downs' })).not.toBeInTheDocument());
   });
 
   it('shows entity management the overview and keeps Settings for administrators', async () => {

@@ -135,7 +135,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 16px;
-  padding: 14px 32px;
+  padding: 14px var(--gutter);
 }
 .topbar__actions {
   display: contents;
@@ -148,9 +148,9 @@
   border-radius: 50%;
 }
 .page {
-  max-width: 1240px;
+  /* Release 3: fluid, full width; long prose limits its own line length (.prose). */
   width: 100%;
-  padding: 4px 32px 40px;
+  padding: 4px var(--gutter) 40px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -362,15 +362,13 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 12px 16px;
-  padding: 16px 32px;
+  padding: 16px var(--gutter);
   background: var(--surface);
   border-bottom: 1px solid var(--nav-border);
 }
 .flow__body {
-  max-width: 1180px;
   width: 100%;
-  margin: 0 auto;
-  padding: 24px 32px 40px;
+  padding: 24px var(--gutter) 40px;
   display: flex;
   flex-wrap: wrap;
   gap: 24px;

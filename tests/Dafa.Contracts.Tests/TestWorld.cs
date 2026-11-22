@@ -86,6 +86,51 @@ public sealed class MemoryDocumentStore : IDocumentStore
     }
 }
 
+/// <summary>Data room zips in memory.</summary>
+public sealed class MemoryExportStorage : IExportStorage
+{
+    public Dictionary<string, byte[]> Files { get; } = new();
+
+    private sealed class CapturingStream : MemoryStream
+    {
+        private readonly Action<byte[]> _onClose;
+        private bool _closed;
+
+        public CapturingStream(Action<byte[]> onClose)
+        {
+            _onClose = onClose;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (!_closed)
+            {
+                _closed = true;
+                _onClose(ToArray());
+            }
+            base.Dispose(disposing);
+        }
+    }
+
+    public Task<Stream> CreateAsync(string key, CancellationToken cancellationToken = default)
+    {
+        Stream stream = new CapturingStream(bytes => Files[key] = bytes);
+        return Task.FromResult(stream);
+    }
+
+    public Task<Stream?> OpenReadAsync(string key, CancellationToken cancellationToken = default)
+    {
+        Stream? stream = Files.TryGetValue(key, out var bytes) ? new MemoryStream(bytes, false) : null;
+        return Task.FromResult(stream);
+    }
+
+    public Task DeleteAsync(string key, CancellationToken cancellationToken = default)
+    {
+        Files.Remove(key);
+        return Task.CompletedTask;
+    }
+}
+
 public sealed class EmptySupplierSource : ISupplierSource
 {
     public Task<IReadOnlyList<SupplierRecord>> GetSuppliersAsync(CancellationToken cancellationToken = default)
@@ -177,7 +222,43 @@ public sealed class Actor
         Documents = new DocumentService(Db, user, Access, world.Store, writer, audit);
         Jobs = new JobService(Db, clock, notifier, new EmptySupplierSource(), new SeededDirectoryService(),
             Approvals, audit, NullLogger<JobService>.Instance);
+
+        // Release 3 services, wired the same way the host wires them.
+        Audit = audit;
+        Dispatcher = new NotificationDispatcher(Db, new OutboxNotifier(Db, clock), clock, user);
+        Indexer = new DocumentTextIndexer(Db, world.Store, new DocumentTextExtractor(), clock);
+        IndexedDocuments = new DocumentService(Db, user, Access, world.Store, writer, audit, Indexer);
+        CustomFields = new CustomFieldService(Db, audit, user);
+        Collaboration = new CollaborationService(Db, user, Access, clock, audit, Queries, Dispatcher);
+        Search = new SearchService(Db, user, Access, clock, Queries);
+        Analytics = new AnalyticsService(Db, user, Access, clock);
+        Versions = new VersionService(Db, Access);
+        DataRoom = new DataRoomService(Db, user, Access, clock, world.Store, world.Exports, audit);
+        AdminDirectory = new AdminDirectoryService(Db, user, clock, audit);
+        Counterparties = new CounterpartyService(Db, clock, audit);
+        Imports = new ImportService(Db, user, clock, audit, new TabularFileReader(), Dispatcher);
+        Sync = new SyncService(Db, clock, audit, new DemoSyncSourceReader(new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build()), Imports, Dispatcher);
+        Settings = new SettingsService(Db, clock, audit);
+        Personal = new PersonalService(Db, user, clock, audit);
     }
+
+    public AuditService Audit { get; }
+    public NotificationDispatcher Dispatcher { get; }
+    public DocumentTextIndexer Indexer { get; }
+    /// <summary>A DocumentService that extracts text at upload (as in the host).</summary>
+    public DocumentService IndexedDocuments { get; }
+    public CustomFieldService CustomFields { get; }
+    public CollaborationService Collaboration { get; }
+    public SearchService Search { get; }
+    public AnalyticsService Analytics { get; }
+    public VersionService Versions { get; }
+    public DataRoomService DataRoom { get; }
+    public AdminDirectoryService AdminDirectory { get; }
+    public CounterpartyService Counterparties { get; }
+    public ImportService Imports { get; }
+    public SyncService Sync { get; }
+    public SettingsService Settings { get; }
+    public PersonalService Personal { get; }
 
     public DocumentService Documents { get; }
 
@@ -196,6 +277,7 @@ public sealed class TestWorld : IDisposable
 
     public FakeClock Clock { get; } = new(new DateTime(2026, 3, 2, 9, 0, 0, DateTimeKind.Utc));
     public MemoryDocumentStore Store { get; } = new();
+    public MemoryExportStorage Exports { get; } = new();
 
     public Guid EntityA { get; } = Guid.NewGuid();
     public Guid EntityB { get; } = Guid.NewGuid();

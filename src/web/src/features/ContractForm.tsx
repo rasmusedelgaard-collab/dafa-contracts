@@ -1,6 +1,8 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { listDays, qk, useApi, useLookups, useReminderSettings } from '../app/context';
+import { listDays, qk, useApi, useAppConfig, useLookups, useReminderSettings } from '../app/context';
+import { fieldsForType, rulesForType } from '../lib/customFields';
+import { CustomFieldInput, TagPicker } from './CustomFields';
 import { Button, Field, Pill, Segmented, Select, Textarea, TextInput } from '../components';
 import type { ContractDraft, DraftErrors, DraftField } from '../lib/validation';
 
@@ -24,6 +26,10 @@ export interface ContractFormProps {
   flat?: boolean;
   /** Field names from `ContractDetail.lockedFields`: shown, but disabled and marked "Locked". */
   lockedFields?: string[];
+  /** New contract: apply the type's default values (Settings > Field rules) when the type is chosen. */
+  applyTypeDefaults?: boolean;
+  /** Show the tag picker (New contract and Edit details when the user may tag). */
+  showTags?: boolean;
 }
 
 const YES_NO = [
@@ -42,19 +48,24 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 /** The contract details form, shared by New contract (step 2) and Edit details. */
-export function ContractForm({ draft, errors, onPatch, suggestions, flat, lockedFields }: ContractFormProps) {
+export function ContractForm({ draft, errors, onPatch, suggestions, flat, lockedFields, applyTypeDefaults, showTags }: ContractFormProps) {
   const onChange = <K extends DraftField>(field: K, value: ContractDraft[K]) => onPatch({ [field]: value } as Partial<ContractDraft>);
   const locked = (field: string) => lockedFields?.includes(field) ?? false;
   const api = useApi();
   const reminderSettings = useReminderSettings();
   const lookups = useLookups();
+  const config = useAppConfig();
+  const typeRules = rulesForType(config.fieldRules, draft.typeId);
+  /** A field the contract type makes required (Settings > Field rules) is not marked optional. */
+  const ruleRequired = (field: string) => (typeRules?.required as string[] | undefined)?.includes(field) ?? false;
+  const extraFields = fieldsForType(config.customFields, draft.typeId);
   const listId = useId();
   const groupId = useId();
 
   const supplierQuery = useDebounced(draft.counterpartyName.trim(), 200);
   const suppliers = useQuery({ queryKey: qk.suppliers(supplierQuery), queryFn: () => api.getSuppliers(supplierQuery), staleTime: 60_000 });
 
-  const users = lookups.users.map((u) => ({ value: u.id, label: u.name }));
+  const users = lookups.users.filter((u) => u.isActive !== false || [draft.ownerId, draft.delegateId, draft.responsibleId].includes(u.id)).map((u) => ({ value: u.id, label: u.name }));
   const refs = (list: { id: string; name: string }[]) => list.map((x) => ({ value: x.id, label: x.name }));
 
   /** Label tag and accept button for a field that carries an AI suggestion. */
@@ -97,7 +108,7 @@ export function ContractForm({ draft, errors, onPatch, suggestions, flat, locked
   const text = (field: 'title' | 'noticePeriodDays' | 'renewalMonths' | 'annualValue' | 'totalValue' | 'paymentTerms' | 'priceAdjustment' | 'governingLaw' | 'liabilityCap' | 'exclusivity', label: string, opts: { optional?: boolean; hint?: string; numeric?: boolean; full?: boolean; placeholder?: string } = {}) => {
     const s = ai(field, label);
     return (
-      <Field label={label} optional={opts.optional} error={errors[field]} hint={opts.hint} tag={s.tag} after={s.after} className={opts.full ? 'form-grid__full' : undefined}>
+      <Field label={label} optional={opts.optional && !ruleRequired(field)} error={errors[field]} hint={opts.hint} tag={s.tag} after={s.after} className={opts.full ? 'form-grid__full' : undefined}>
         {(p) => <TextInput {...p} suggested={s.suggested} disabled={locked(field)} inputMode={opts.numeric ? 'decimal' : undefined} placeholder={opts.placeholder} value={draft[field]} onChange={(e) => onChange(field, e.target.value)} />}
       </Field>
     );
@@ -106,7 +117,7 @@ export function ContractForm({ draft, errors, onPatch, suggestions, flat, locked
   const select = (field: 'typeId' | 'entityId' | 'departmentId' | 'ownerId' | 'delegateId' | 'responsibleId' | 'currency', label: string, options: { value: string; label: string }[], opts: { optional?: boolean; placeholder?: string } = {}) => {
     const s = ai(field, label);
     return (
-      <Field label={label} optional={opts.optional} error={errors[field]} tag={s.tag} after={s.after}>
+      <Field label={label} optional={opts.optional && !ruleRequired(field)} error={errors[field]} tag={s.tag} after={s.after}>
         {(p) => <Select {...p} suggested={s.suggested} disabled={locked(field)} value={draft[field]} onChange={(e) => onChange(field, e.target.value)} options={options} placeholder={opts.placeholder ?? (opts.optional ? 'None' : 'Choose')} />}
       </Field>
     );
@@ -177,9 +188,34 @@ export function ContractForm({ draft, errors, onPatch, suggestions, flat, locked
           <option key={s.id} value={s.name} />
         ))}
       </datalist>
-      {select('typeId', 'Contract type', refs(lookups.contractTypes))}
-      {select('entityId', 'Legal entity', refs(lookups.entities))}
-      {select('departmentId', 'Department', refs(lookups.departments))}
+      <Field label="Contract type" error={errors.typeId} tag={ai('typeId', 'Contract type').tag} after={ai('typeId', 'Contract type').after}>
+        {(p) => (
+          <Select
+            {...p}
+            suggested={ai('typeId', 'Contract type').suggested}
+            disabled={locked('typeId')}
+            value={draft.typeId}
+            placeholder="Choose"
+            options={refs(lookups.contractTypes.filter((t) => t.isActive !== false || t.id === draft.typeId))}
+            onChange={(e) => {
+              const typeId = e.target.value;
+              const patch: Partial<ContractDraft> = { typeId };
+              // Defaults for the type fill only fields the user has not filled in.
+              const d = applyTypeDefaults ? rulesForType(config.fieldRules, typeId)?.defaults : undefined;
+              if (d) {
+                if (d.currency && (draft.currency === 'DKK' || !draft.currency)) patch.currency = d.currency;
+                if (d.noticePeriodDays !== null && !draft.noticePeriodDays) patch.noticePeriodDays = String(d.noticePeriodDays);
+                if (d.reminderRecipient && draft.reminderRecipient === 'Owner') patch.reminderRecipient = d.reminderRecipient;
+                if (d.autoRenew !== null && draft.autoRenew === null) patch.autoRenew = d.autoRenew;
+                if (d.renewalMonths !== null && !draft.renewalMonths) patch.renewalMonths = String(d.renewalMonths);
+              }
+              onPatch(patch);
+            }}
+          />
+        )}
+      </Field>
+      {select('entityId', 'Legal entity', refs(lookups.entities.filter((x) => x.isActive !== false || x.id === draft.entityId)))}
+      {select('departmentId', 'Department', refs(lookups.departments.filter((x) => x.isActive !== false || x.id === draft.departmentId)))}
 
       <h2 className="form-section">People</h2>
       {select('ownerId', 'Owner', users)}
@@ -229,9 +265,23 @@ export function ContractForm({ draft, errors, onPatch, suggestions, flat, locked
       {date('priceAdjustmentDate', 'Next price adjustment', { optional: true })}
       {text('liabilityCap', 'Liability cap', { optional: true, placeholder: '12 months of fees' })}
       {text('exclusivity', 'Exclusivity', { optional: true, placeholder: 'None' })}
-      <Field label="Summary" optional error={errors.summary} className="form-grid__full" hint="A few sentences on what the contract is about.">
+      <Field label="Summary" optional={!ruleRequired('summary')} error={errors.summary} className="form-grid__full" hint="A few sentences on what the contract is about.">
         {(p) => <Textarea {...p} rows={3} value={draft.summary} onChange={(e) => onChange('summary', e.target.value)} />}
       </Field>
+
+      {extraFields.length > 0 ? (
+        <>
+          <h2 className="form-section">Additional details</h2>
+          {extraFields.map((def) => (
+            <CustomFieldInput key={def.id} def={def} value={draft.customFields[def.key]} error={errors[`customFields.${def.key}`]} currency={draft.currency || 'DKK'} onChange={(v) => onPatch({ customFields: { ...draft.customFields, [def.key]: v } })} />
+          ))}
+        </>
+      ) : null}
+      {showTags && config.tags.length > 0 ? (
+        <div className="form-grid__full">
+          <TagPicker tags={config.tags} value={draft.tagIds} onChange={(tagIds) => onPatch({ tagIds })} />
+        </div>
+      ) : null}
     </div>
   );
 }

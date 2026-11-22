@@ -2,7 +2,8 @@
 // Required to save (docs/BUILD_BRIEF.md section 4): title, type, counterparty, entity, department,
 // owner, reminderRecipient, startDate, endDate-or-openEnded, noticePeriodDays, autoRenew, currency,
 // annualValue or totalValue, changeOfControl.
-import type { ContractFields, ContractInput, ReminderRecipient } from '../api/types';
+import type { ContractFields, ContractInput, CustomFieldDef, CustomFieldValue, FieldRules, ReminderRecipient } from '../api/types';
+import { rulesForType, validateCustomFields, validateStandardRules } from './customFields';
 import { isIsoDate } from './dates';
 import { toDkk } from './format';
 
@@ -35,10 +36,21 @@ export interface ContractDraft {
   exclusivity: string;
   changeOfControl: boolean | null;
   summary: string;
+  /** Release 3: admin-defined fields (by key) and tags. */
+  customFields: Record<string, CustomFieldValue>;
+  tagIds: string[];
 }
 
 export type DraftField = keyof ContractDraft;
-export type DraftErrors = Partial<Record<DraftField, string>>;
+/** Custom-field errors are keyed `customFields.<key>`, as the API returns them. */
+export type DraftErrors = Partial<Record<DraftField | `customFields.${string}`, string>>;
+
+/** Release 3 rules that depend on admin settings. `enforceRequired` is true on create and while a draft. */
+export interface DraftRules {
+  customFields: CustomFieldDef[];
+  fieldRules: FieldRules;
+  enforceRequired: boolean;
+}
 
 export function emptyDraft(defaults: Partial<ContractDraft> = {}): ContractDraft {
   return {
@@ -69,6 +81,8 @@ export function emptyDraft(defaults: Partial<ContractDraft> = {}): ContractDraft
     exclusivity: '',
     changeOfControl: null,
     summary: '',
+    customFields: {},
+    tagIds: [],
     ...defaults,
   };
 }
@@ -93,7 +107,7 @@ export function parseWhole(text: string): number | null {
  * Validates the form. `pendingSuggestions` are fields that still hold an AI suggestion the
  * user has neither accepted nor changed; each one blocks saving.
  */
-export function validateDraft(d: ContractDraft, pendingSuggestions: Iterable<string> = []): DraftErrors {
+export function validateDraft(d: ContractDraft, pendingSuggestions: Iterable<string> = [], rules?: DraftRules): DraftErrors {
   const e: DraftErrors = {};
   const req = (field: DraftField, message: string) => {
     const v = d[field];
@@ -145,6 +159,27 @@ export function validateDraft(d: ContractDraft, pendingSuggestions: Iterable<str
   for (const field of pendingSuggestions) {
     if (field in d && !e[field as DraftField]) e[field as DraftField] = 'Accept or change the suggestion';
   }
+
+  if (rules && d.typeId) {
+    Object.assign(e, validateCustomFields(rules.customFields, d.typeId, d.customFields, rules.enforceRequired));
+    if (rules.enforceRequired) {
+      const std = validateStandardRules(rulesForType(rules.fieldRules, d.typeId), {
+        delegateId: d.delegateId,
+        responsibleId: d.responsibleId,
+        endDate: d.endDate,
+        openEnded: d.openEnded,
+        annualValue: d.annualValue,
+        totalValue: d.totalValue,
+        paymentTerms: d.paymentTerms,
+        priceAdjustment: d.priceAdjustment,
+        governingLaw: d.governingLaw,
+        liabilityCap: d.liabilityCap,
+        exclusivity: d.exclusivity,
+        summary: d.summary,
+      });
+      for (const [k, v] of Object.entries(std)) if (!e[k as DraftField]) e[k as DraftField] = v;
+    }
+  }
   return e;
 }
 
@@ -184,13 +219,15 @@ export function draftToInput(d: ContractDraft): ContractInput {
     exclusivity: orNull(d.exclusivity),
     changeOfControl: d.changeOfControl === true,
     summary: orNull(d.summary),
+    customFields: Object.fromEntries(Object.entries(d.customFields).filter(([, v]) => !(v === null || v === '' || (Array.isArray(v) && v.length === 0)))),
+    tagIds: d.tagIds,
   };
 }
 
 const str = (n: number | null): string => (n === null ? '' : String(n));
 
 /** Loads an existing contract into the form (edit details). */
-export function fieldsToDraft(c: Omit<ContractFields, 'changeOfControl'> & { changeOfControl: boolean | null }): ContractDraft {
+export function fieldsToDraft(c: Omit<ContractFields, 'changeOfControl'> & { changeOfControl: boolean | null; customFields?: Record<string, CustomFieldValue>; tags?: { id: string }[] }): ContractDraft {
   return {
     title: c.title,
     counterpartyName: c.counterpartyName,
@@ -219,6 +256,8 @@ export function fieldsToDraft(c: Omit<ContractFields, 'changeOfControl'> & { cha
     exclusivity: c.exclusivity ?? '',
     changeOfControl: c.changeOfControl,
     summary: c.summary ?? '',
+    customFields: { ...(c.customFields ?? {}) },
+    tagIds: (c.tags ?? []).map((t) => t.id),
   };
 }
 

@@ -17,7 +17,11 @@ const Record = lazy(() => import('./pages/record/Record').then((m) => ({ default
 const NewContract = lazy(() => import('./pages/newcontract/NewContract').then((m) => ({ default: m.NewContract })));
 const Approvals = lazy(() => import('./pages/Approvals').then((m) => ({ default: m.Approvals })));
 const Renewals = lazy(() => import('./pages/renewals/Renewals').then((m) => ({ default: m.Renewals })));
-const Overview = lazy(() => import('./pages/Overview').then((m) => ({ default: m.Overview })));
+const Overview = lazy(() => import('./pages/overview/Overview').then((m) => ({ default: m.Overview })));
+const Search = lazy(() => import('./pages/search/Search').then((m) => ({ default: m.Search })));
+const PersonPage = lazy(() => import('./pages/search/People').then((m) => ({ default: m.PersonPage })));
+const CounterpartyPage = lazy(() => import('./pages/search/People').then((m) => ({ default: m.CounterpartyPage })));
+const Preferences = lazy(() => import('./pages/Preferences').then((m) => ({ default: m.Preferences })));
 const Settings = lazy(() => import('./pages/settings/Settings').then((m) => ({ default: m.Settings })));
 
 function Splash() {
@@ -265,6 +269,10 @@ export function App() {
               <Route path="/approvals" element={<Approvals />} />
               <Route path="/renewals" element={<Renewals />} />
               <Route path="/overview" element={<Overview />} />
+              <Route path="/search" element={<Search />} />
+              <Route path="/people/:id" element={<PersonPage />} />
+              <Route path="/counterparties/:id" element={<CounterpartyPage />} />
+              <Route path="/preferences" element={<Preferences />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/settings/:section" element={<Settings />} />
               <Route path="*" element={<NotFound />} />

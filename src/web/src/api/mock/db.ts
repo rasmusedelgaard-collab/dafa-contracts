@@ -14,7 +14,28 @@ import type {
   RenewalDecision,
   RetentionAction,
   Role,
-  Supplier,
+  AppSettings,
+  ContractRole,
+  Counterparty,
+  Currency,
+  CustomFieldDef,
+  CustomFieldValue,
+  DataRoomExport,
+  DataRoomInput,
+  FieldRules,
+  ImportKind,
+  ImportResult,
+  ImportSession,
+  JobInfo,
+  NamedRefV3,
+  NotificationEvent,
+  NotificationSettings,
+  RecordSource,
+  SavedView,
+  SyncRun,
+  SyncSource,
+  TagColor,
+  UserPreferences,
 } from '../types';
 
 export interface UserRec {
@@ -28,6 +49,11 @@ export interface UserRec {
   departmentIds: Id[];
   managedEntityIds: Id[];
   isGroupManagement: boolean;
+  /** Release 3 */
+  isActive: boolean;
+  source: RecordSource;
+  externalId: string | null;
+  lastSignInAt: string | null;
 }
 
 export interface ContractRec extends Omit<ContractFields, 'changeOfControl'> {
@@ -48,6 +74,9 @@ export interface ContractRec extends Omit<ContractFields, 'changeOfControl'> {
   createdBy: Id;
   approvedAt: string | null;
   deviations: Deviation[];
+  /** Release 3 */
+  tagIds: Id[];
+  customFields: Record<string, CustomFieldValue>;
 }
 
 export interface LinkRec {
@@ -80,6 +109,8 @@ export interface DocumentRec {
   uploadedAt: string;
   /** Uploaded bytes. Seeded documents have none and are generated on download. */
   blob: Blob | null;
+  /** Release 3: extracted text for search (generated for seeded documents). */
+  text: string;
 }
 
 export interface StepRec {
@@ -118,6 +149,8 @@ export interface AuditRec {
   action: string;
   contractId: Id | null;
   text: string;
+  /** Release 3: key-term changes, for version comparison (display values). */
+  changes?: { field: string; from: string | null; to: string | null }[];
 }
 
 export interface OutboxRec {
@@ -169,13 +202,70 @@ export interface HolidayCoverRec {
   to: string;
 }
 
+export interface EntityRec extends NamedRef {
+  country: string;
+  currency: string;
+  isActive: boolean;
+}
+
+export type CounterpartyRec = Omit<Counterparty, 'contractCount'>;
+
+export interface TagRec {
+  id: Id;
+  name: string;
+  color: TagColor;
+  description: string | null;
+}
+
+export interface CommentRec {
+  id: Id;
+  contractId: Id;
+  authorId: Id;
+  body: string;
+  mentionIds: Id[];
+  createdAt: string;
+  editedAt: string | null;
+}
+
+export interface NotificationRec {
+  id: Id;
+  userId: Id;
+  event: NotificationEvent;
+  title: string;
+  body: string;
+  contractId: Id | null;
+  link: string | null;
+  actorId: Id | null;
+  createdAt: string;
+  readAt: string | null;
+}
+
+export type ViewRec = Omit<SavedView, 'ownerName' | 'canEdit'>;
+
+export interface ImportSessionRec extends ImportSession {
+  rows: string[][];
+  used: boolean;
+}
+
+export interface DataRoomRec extends Omit<DataRoomExport, 'createdBy'> {
+  createdById: Id;
+  input: DataRoomInput;
+  blob: Blob | null;
+}
+
+export interface SyncSourceRec extends Omit<SyncSource, 'lastRun' | 'nextRunAt'> {
+  runs: SyncRun[];
+}
+
 export interface Db {
-  entities: NamedRef[];
-  departments: NamedRef[];
-  contractTypes: NamedRef[];
+  entities: EntityRec[];
+  departments: NamedRefV3[];
+  contractTypes: NamedRefV3[];
+  /** Active currency codes (kept in step with `currencyTable`). */
   currencies: string[];
   users: UserRec[];
-  suppliers: Supplier[];
+  /** Counterparty master data (release 3); `supplierId` on contracts points here. */
+  suppliers: CounterpartyRec[];
   contracts: ContractRec[];
   links: LinkRec[];
   obligations: ObligationRec[];
@@ -196,7 +286,29 @@ export interface Db {
   /** Recently opened contract ids per user, newest first. */
   recent: Record<Id, Id[]>;
   nextContractSeq: number;
+
+  // ----- Release 3 -----
+  currencyTable: Currency[];
+  tags: TagRec[];
+  watchers: { contractId: Id; userId: Id }[];
+  comments: CommentRec[];
+  notifications: NotificationRec[];
+  preferences: Record<Id, UserPreferences>;
+  views: ViewRec[];
+  dataRoom: DataRoomRec[];
+  customFields: CustomFieldDef[];
+  fieldRules: FieldRules;
+  importSessions: ImportSessionRec[];
+  importHistory: ImportResult[];
+  syncSources: SyncSourceRec[];
+  notificationSettings: NotificationSettings;
+  jobs: JobInfo[];
+  appSettings: AppSettings;
+  /** Simulated rows each sync source returns (by source id), and which sync connections exist. */
+  syncConnections: { name: string; kind: 'Sql' | 'PowerBi'; description: string }[];
 }
+
+export type { ImportKind, ContractRole };
 
 /** Deterministic GUID-shaped id for seeded rows, so tests and deep links are stable. */
 export function seedId(group: number, n: number): Id {

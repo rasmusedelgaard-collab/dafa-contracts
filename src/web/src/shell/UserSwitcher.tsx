@@ -83,6 +83,12 @@ export function UserSwitcher({ onClose }: { onClose: () => void }) {
               Settings
             </Link>
           ) : null}
+          <Link to="/preferences" className="btn btn--secondary btn--md" onClick={onClose}>
+            My settings
+          </Link>
+          <Link to="/search" className="btn btn--secondary btn--md" onClick={onClose}>
+            Search
+          </Link>
         </div>
       ) : null}
     </Modal>

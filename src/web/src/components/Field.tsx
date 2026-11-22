@@ -61,7 +61,7 @@ export function TextInput({ suggested, className, ...rest }: InputHTMLAttributes
   return <input type="text" className={stateClass('input', rest['aria-invalid'], suggested, className)} {...rest} />;
 }
 
-export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement> & { ref?: React.Ref<HTMLTextAreaElement> }) {
   return <textarea className={stateClass('textarea', rest['aria-invalid'], false, className)} {...rest} />;
 }
 

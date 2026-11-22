@@ -125,9 +125,9 @@ Setup guide for the test site: `docs/DEPLOY_TEST.md`.
 - Free plan: no automatic backups, archived after 6 months without use, HTTPS enabled by
   support on request. Nothing on the test site is worth backing up; it can be rebuilt from the
   repository at any time.
-- The database schema is created with `EnsureCreated` (no migrations yet). After a change to
-  the data model, the test database has to be emptied (drop the tables or recreate the
-  database in the Control Panel) and the app restarted so it is recreated and reseeded.
+- The database schema is created with `EnsureCreated` and, from release 3, upgraded in place at
+  start-up by the schema upgrader (see "Database schema upgrades" below). Emptying the test
+  database is only the fallback when the upgrader reports an error.
 - Sign-in cookies do not survive an app restart or deployment unless the API persists its Data
   Protection keys. monsterasp.net recommends the `private/keys` folder next to `wwwroot`
   (`Path.Combine(ContentRootPath, "..", "private", "keys")`). Open follow-up for the backend.
@@ -135,6 +135,73 @@ Setup guide for the test site: `docs/DEPLOY_TEST.md`.
   that folder so they survive a deploy. Moving the local store to the host's `private` folder
   would be cleaner (open follow-up for the backend).
 - Logs: Control Panel > website > Logs. Start/stop/restart: website > Overview.
+
+## 4a. Database schema upgrades (release 3)
+
+There are still no EF Core migrations (adding them safely needs a compiler run against both
+providers). Instead the app runs an idempotent, versioned upgrader on every start
+(`src/api/Dafa.Contracts.Infrastructure/Data/SchemaUpgrader.cs`, called by `DatabaseInitializer`
+right after `EnsureCreated`):
+
+- Table `SchemaVersion` (`Version`, `Description`, `AppliedAt`), outside the EF model, records the
+  steps that have run. A step that is recorded is not run again.
+- Each step lists tables to create, columns to add and tables whose indexes must exist. The DDL is
+  generated from the EF Core relational model of the current provider (store types, nullability,
+  keys, index names and filters), so it is exactly what `EnsureCreated` would create, on SQL Server
+  and on Sqlite.
+- Every statement is guarded: `INFORMATION_SCHEMA` / `sys.indexes` on SQL Server, `sqlite_master`
+  / `pragma_table_info` on Sqlite. New NOT NULL columns on existing tables get a default
+  (`0`, empty text, the empty Guid, `0001-01-01`; `LegalEntities.IsActive` defaults to 1).
+- Steps only add; nothing is ever dropped or rewritten. A failing table or column statement stops
+  the start (logged); a failing index (for example duplicates in old data under a new unique
+  index) is logged as a warning and the app runs without that index.
+- After the steps, the upgrader compares the database with the model and logs `Schema drift:`
+  for anything still missing (a forgotten step).
+
+Steps: 1 = phase 2 baseline (concurrency `Version` columns, `LastRenewedDeadline`, reminder
+`TermKey`/`Attempts`, unique indexes); 2 = release 3 tables and columns.
+
+Adding a schema change in a later release: change the model, then append a new step to
+`SchemaUpgrader.Steps` that lists the new tables, the new columns (nullable, or with a default
+the upgrader knows; add a `DefaultOverrides` entry when 0/empty is wrong) and the tables whose
+indexes changed. Never edit a released step. Renames and type changes are not supported by the
+upgrader: do them as add-new-column + copy + stop-using-old, or move to EF migrations first.
+Tested on Sqlite (`Release3Tests.SchemaUpgrader_*`: an old database is upgraded and a second run
+does nothing). The SQL Server path is only desk-checked until the first deployment.
+
+## 4b. Release 3 operations
+
+Background jobs (Settings > Jobs, `GET/PUT admin/jobs`): `Reminders`, `Obligations`,
+`ContractEnd`, `Digest`, `CounterpartySync` (supplier master source + due sync sources),
+`DirectorySync`, `UploadCleanup` (old intake uploads, expired import sessions, and the search text
+backfill of 100 documents per run), `DataRoomCleanup`. Each has its own schedule (Off / Hourly /
+Daily at HH:mm / Weekly on a day at HH:mm, Europe/Copenhagen) and a recorded last run. The hosted
+service checks every `Jobs:TickMinutes` (default 5) which jobs are due. `POST admin/jobs/{key}/run`
+runs one now; `POST admin/jobs/run` still runs the release 2 set in one go.
+
+Sync sources (Settings > Imports and sync): admin-defined Power BI or SQL queries that feed the
+import pipeline. No secret is stored in the database or accepted by the API:
+
+- SQL: the source names a connection configured on the server:
+  `Sync:Connections:<name>:Kind` = `Sql`, `Sync:Connections:<name>:ConnectionString` (or
+  `ConnectionStrings:<name>`), optional `:Description`. The query must start with SELECT or WITH;
+  it runs inside a transaction that is rolled back, with a 60 s timeout. The app's own `Default`
+  connection is refused.
+- Power BI: `Sync:Connections:<name>:Kind` = `PowerBi` (for the list), token from
+  `Suppliers:PowerBi:TenantId` / `ClientId` / `ClientSecret`, or the managed identity
+  (`Suppliers:PowerBi:UseManagedIdentity=true`, optional `Suppliers:PowerBi:ManagedIdentityClientId`),
+  else the `AzureAd:*` app registration. The app registration needs access to the workspace.
+- `Sync:Provider` = `Demo` (default; test site) returns generated rows for any source and lists
+  two demo connections (`DemoErp`, `DemoPowerBi`); `Live` runs the real queries.
+
+Data room exports: zips are written to `DataRoom:LocalPath` (default `App_Data/dataroom`), kept 7
+days, then deleted by `DataRoomCleanup`. Limits: 5000 documents or 2 GB per export. Built
+synchronously in the request (the API answers 202 with status Ready or Failed).
+
+Document search: text is extracted at upload with the bounded analyzer extractor (PDF, Word,
+text; scans and images have no text) and stored in `DocumentTexts` (max 400,000 characters per
+document, lower-cased copy for search). Search uses contains-matching in SQL over that table,
+scoped to visible contracts, capped at 1000 matching documents per query.
 
 ## 5. Moving from test to production
 

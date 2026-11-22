@@ -19,6 +19,11 @@ public class LegalEntity
     public Guid Id { get; set; }
     public string Name { get; set; } = "";
     public int SortOrder { get; set; }
+    /// <summary>Release 3: ISO country code or name, editable in admin.</summary>
+    public string? Country { get; set; }
+    /// <summary>Release 3: functional currency of the entity.</summary>
+    public string? Currency { get; set; }
+    public bool IsActive { get; set; } = true;
 }
 
 public class Department
@@ -50,6 +55,9 @@ public class AppUser
     public bool IsGroupManagement { get; set; }
     public GroupFunction GroupFunction { get; set; } = GroupFunction.None;
     public bool IsActive { get; set; } = true;
+    /// <summary>Release 3: Manual, Import, Seed, Entra. Null on older rows (Seed, or Entra when ExternalId is set).</summary>
+    public string? Source { get; set; }
+    public DateTime? LastSignInAt { get; set; }
 }
 
 public class UserDepartment
@@ -82,6 +90,16 @@ public class Supplier
     public string? Country { get; set; }
     public string? VatNo { get; set; }
     public bool IsActive { get; set; } = true;
+    /// <summary>Release 3: set when this supplier was merged into another one (and deactivated).</summary>
+    public Guid? MergedIntoId { get; set; }
+    /// <summary>Release 3 (counterparty master): kind, contact data, where the record came from.</summary>
+    public CounterpartyKind Kind { get; set; } = CounterpartyKind.Supplier;
+    public string? City { get; set; }
+    public string? Email { get; set; }
+    public string? Phone { get; set; }
+    /// <summary>Manual, Import, PowerBi, Sql, Seed. Null on rows from before release 3 (= Seed/PowerBi sync).</summary>
+    public string? Source { get; set; }
+    public DateTime? UpdatedAt { get; set; }
 }
 
 public class Contract : IVersioned
@@ -89,6 +107,8 @@ public class Contract : IVersioned
     public Guid Id { get; set; }
     public Guid Version { get; set; }
     public string ContractNo { get; set; } = "";
+    /// <summary>Release 3: id of the contract in a legacy register or source system (import match key).</summary>
+    public string? ExternalRef { get; set; }
     public string Title { get; set; } = "";
     public Guid TypeId { get; set; }
     public Guid? SupplierId { get; set; }
@@ -283,6 +303,8 @@ public class AuditEvent
     public string Action { get; set; } = "";
     public Guid? ContractId { get; set; }
     public string Text { get; set; } = "";
+    /// <summary>Release 3: structured details (for contract updates: JSON array of field changes).</summary>
+    public string? DataJson { get; set; }
 }
 
 public class OutboxMessage
@@ -297,6 +319,8 @@ public class OutboxMessage
     public Guid? ContractId { get; set; }
     /// <summary>Set by providers that really deliver (Graph mail). Null in Outbox mode.</summary>
     public DateTime? DeliveredAt { get; set; }
+    /// <summary>Release 3: Mail (null on older rows) or Teams (stub: Teams messages are only recorded here).</summary>
+    public string? Channel { get; set; }
 }
 
 public class ReminderSettings

@@ -20,6 +20,8 @@ public static class DependencyInjection
     ///   Notifications:Provider  Outbox (default) | Graph
     ///   Directory:Provider      Seeded (default) | Graph
     ///   Signature:Provider      None (default) | DocuSign
+    ///   Sync:Provider           Demo (default) | Live           release 3 sync sources
+    ///   DataRoom:LocalPath      App_Data/dataroom (default)     release 3 data room zips
     /// </summary>
     public static IServiceCollection AddDafaInfrastructure(this IServiceCollection services, IConfiguration configuration, string contentRootPath)
     {
@@ -88,14 +90,41 @@ public static class DependencyInjection
             services.AddScoped<ISupplierSource, SeedSupplierSource>();
         }
 
+        // The mail channel; INotifier itself is Core's NotificationDispatcher (settings, preferences, in-app).
         if (Is(configuration, "Notifications:Provider", "Graph"))
         {
-            services.AddScoped<INotifier, GraphMailNotifier>();
+            services.AddScoped<IMailChannel, GraphMailNotifier>();
         }
         else
         {
-            services.AddScoped<INotifier, OutboxNotifier>();
+            services.AddScoped<IMailChannel, OutboxNotifier>();
         }
+
+        // Release 3 providers.
+        services.AddSingleton<ITabularFileReader, TabularFileReader>();
+        services.AddSingleton<IDocumentTextExtractor, DocumentTextExtractor>();
+        if (Is(configuration, "Sync:Provider", "Live"))
+        {
+            services.AddScoped<ISyncSourceReader, LiveSyncSourceReader>();
+        }
+        else
+        {
+            services.AddScoped<ISyncSourceReader, DemoSyncSourceReader>();
+        }
+        services.AddSingleton<IExportStorage>(serviceProvider =>
+        {
+            var config = serviceProvider.GetRequiredService<IConfiguration>();
+            var path = config["DataRoom:LocalPath"];
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                path = Path.Combine(contentRootPath, "App_Data", "dataroom");
+            }
+            else if (!Path.IsPathRooted(path))
+            {
+                path = Path.Combine(contentRootPath, path);
+            }
+            return new LocalExportStorage(path);
+        });
 
         if (Is(configuration, "Directory:Provider", "Graph"))
         {

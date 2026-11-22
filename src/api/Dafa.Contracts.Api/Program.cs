@@ -25,6 +25,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddDafaCore();
 builder.Services.AddDafaInfrastructure(configuration, environment.ContentRootPath);
 builder.Services.AddScoped<ICurrentUser, HttpCurrentUser>();
+builder.Services.AddSingleton(new AppLinks { BaseUrl = configuration["App:BaseUrl"] ?? "" });
 builder.Services.AddScoped<IClaimsTransformation, AppUserClaimsTransformation>();
 
 var dataProtectionWarning = builder.Services.AddDafaDataProtection(configuration, environment);
@@ -51,7 +52,12 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
 builder.Services
-    .AddControllers()
+    .AddControllers(options =>
+    {
+        // Release 3 DTOs mirror the frontend types with non-nullable strings and lists; the services
+        // validate them and answer 400 with field names, so MVC must not add implicit [Required]s.
+        options.SuppressImplicitRequiredAttributeForNonNullableReferenceTypes = true;
+    })
     .AddJsonOptions(options =>
     {
         // camelCase is the default; enums go out and come in as strings.

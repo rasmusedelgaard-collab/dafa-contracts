@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError } from '../../api/api';
-import { permissions, qk, useApi, useInvalidateContracts, useLookups, useMe, useReminderSettings, useScope } from '../../app/context';
+import { permissions, qk, useApi, useAppConfig, useInvalidateContracts, useLookups, useMe, useReminderSettings, useScope } from '../../app/context';
 import type { ContractDetail, ExtractResult, LinkKind, ObligationInput, Template } from '../../api/types';
 import { Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Field, Icon, Pill, Select, Skeleton, TextInput, useToast } from '../../components';
 import { Deviations, RoutePreview } from '../../features/Approval';
@@ -310,6 +310,8 @@ export function NewContract() {
   const [params] = useSearchParams();
   const headingRef = useRef<HTMLDivElement>(null);
 
+  const config = useAppConfig();
+  const rules = { customFields: config.customFields, fieldRules: config.fieldRules, enforceRequired: true };
   const [step, setStep] = useState(0);
   const [source, setSource] = useState<Source | null>(null);
   const [draft, setDraft] = useState<ContractDraft>(() =>
@@ -365,7 +367,7 @@ export function NewContract() {
       nextPending = p;
       setPending(p);
     }
-    if (tried) setErrors(validateDraft(next, nextPending));
+    if (tried) setErrors(validateDraft(next, nextPending, rules));
   };
 
   const accept = (fields: Iterable<string>) => {
@@ -376,7 +378,7 @@ export function NewContract() {
     }
     setPending(p);
     setAccepted(a);
-    if (tried) setErrors(validateDraft(draft, p));
+    if (tried) setErrors(validateDraft(draft, p, rules));
   };
 
   const pickTemplate = (template: Template) => {
@@ -389,7 +391,7 @@ export function NewContract() {
 
   const validateDetails = (): boolean => {
     setTried(true);
-    const found = validateDraft(draft, pending);
+    const found = validateDraft(draft, pending, rules);
     setErrors(found);
     if (!hasErrors(found)) return true;
     const n = Object.keys(found).length;
@@ -650,7 +652,7 @@ export function NewContract() {
               ) : null}
 
               <Card>
-                <ContractForm draft={draft} errors={errors} onPatch={change} suggestions={source?.kind === 'upload' ? { pending, accepted, onAccept: (f) => accept([f]) } : undefined} />
+                <ContractForm applyTypeDefaults showTags draft={draft} errors={errors} onPatch={change} suggestions={source?.kind === 'upload' ? { pending, accepted, onAccept: (f) => accept([f]) } : undefined} />
               </Card>
               <div className="row-flex" style={{ justifyContent: 'flex-end' }}>
                 <Button variant="secondary" onClick={next} disabled={busy}>

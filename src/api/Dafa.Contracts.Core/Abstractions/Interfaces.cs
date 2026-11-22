@@ -33,6 +33,9 @@ public sealed class UtcClock : IClock
         return TimeZoneInfo.Utc;
     }
 
+    /// <summary>Europe/Copenhagen (or UTC when the host does not know it); used for schedules.</summary>
+    public static TimeZoneInfo BusinessTimeZone => BusinessZone;
+
     public DateTime UtcNow => DateTime.UtcNow;
     public DateOnly Today => DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BusinessZone));
 }
@@ -112,7 +115,76 @@ public interface ISupplierSource
     Task<IReadOnlyList<SupplierRecord>> GetSuppliersAsync(CancellationToken cancellationToken = default);
 }
 
-public sealed record Notification(Guid RecipientId, string Kind, string Subject, string Body, Guid? ContractId);
+/// <summary>
+/// A notification to one natural recipient. Release 3: <paramref name="Data"/> carries extra
+/// template values (deadline, days, step.role, comment, ...); the dispatcher adds the contract's.
+/// </summary>
+public sealed record Notification(Guid RecipientId, string Kind, string Subject, string Body, Guid? ContractId, IReadOnlyDictionary<string, string>? Data = null);
+
+/// <summary>
+/// Release 3: the delivery channel for e-mail (Outbox in test mode, Graph mail in production).
+/// INotifier is the NotificationDispatcher, which applies the notification settings and
+/// preferences and then hands e-mails to this channel.
+/// </summary>
+public interface IMailChannel
+{
+    Task<bool> SendAsync(Notification notification, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Release 3: where data room zips are kept (local folder in every mode).</summary>
+public interface IExportStorage
+{
+    Task<Stream> CreateAsync(string key, CancellationToken cancellationToken = default);
+    Task<Stream?> OpenReadAsync(string key, CancellationToken cancellationToken = default);
+    Task DeleteAsync(string key, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Release 3: plain text of a stored document, for search (bounded, never throws for a bad file).</summary>
+public interface IDocumentTextExtractor
+{
+    Task<DocumentTextResult> ExtractAsync(string fileName, byte[] content, CancellationToken cancellationToken = default);
+}
+
+public sealed record DocumentTextResult(string Text, string? Note);
+
+/// <summary>Release 3: reads the first worksheet of an .xlsx or a .csv file into rows of text.</summary>
+public interface ITabularFileReader
+{
+    TabularData Read(string fileName, byte[] content);
+}
+
+public sealed class TabularData
+{
+    public List<string> Columns { get; set; } = new();
+    public List<string[]> Rows { get; set; } = new();
+}
+
+/// <summary>Release 3: runs a sync source query (Power BI DAX or SQL) and returns rows of text.</summary>
+public interface ISyncSourceReader
+{
+    /// <summary>Connection references known on the server (Sync:Connections:*), never with secrets.</summary>
+    IReadOnlyList<(string Name, string Kind, string Description)> GetConnections();
+    Task<TabularData> ReadAsync(SyncQuery query, int maxRows, CancellationToken cancellationToken = default);
+}
+
+public sealed class SyncQuery
+{
+    public string Kind { get; set; } = "";
+    /// <summary>counterparties, users or contracts: used by the demo reader to pick demo rows.</summary>
+    public string Target { get; set; } = "";
+    public string? WorkspaceId { get; set; }
+    public string? DatasetId { get; set; }
+    public string? DaxQuery { get; set; }
+    public string? Table { get; set; }
+    public string? ConnectionName { get; set; }
+    public string? SqlQuery { get; set; }
+}
+
+/// <summary>Release 3: links in notifications (App:BaseUrl).</summary>
+public sealed class AppLinks
+{
+    public string BaseUrl { get; set; } = "";
+}
 
 /// <summary>
 /// Sends or queues a notification. Implementations add rows to the current unit of work and

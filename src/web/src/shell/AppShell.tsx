@@ -1,10 +1,11 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { apiMode } from '../api';
-import { accessLabel, permissions, qk, useApi, useLookups, useMe, useScope } from '../app/context';
+import { accessLabel, permissions, qk, useApi, useAppConfig, useLookups, useMe, useScope } from '../app/context';
 import { Avatar, ButtonLink, Icon, Select, Skeleton, type IconName } from '../components';
 import { GlobalSearch } from './GlobalSearch';
+import { NotificationBell } from './NotificationBell';
 import { UserSwitcher } from './UserSwitcher';
 
 interface NavItem {
@@ -83,6 +84,7 @@ function TopBar({ onUser }: { onUser: () => void }) {
         placeholder="All entities"
         options={lookups.entities.map((e) => ({ value: e.id, label: e.name }))}
       />
+      <NotificationBell />
       {/* Pages add their own actions here, beside "New contract" (the register's Export). */}
       <div id="topbar-actions" className="topbar__actions" />
       {permissions(me).canCreate ? (
@@ -116,6 +118,34 @@ function TabBar({ items }: { items: NavItem[] }) {
   );
 }
 
+const STARTED = 'dafa.started';
+
+/**
+ * Once per browser session: open the user's landing page (personal setting, else the role
+ * default from General settings) and apply their default entity scope when the link has none.
+ */
+function useStartPreferences() {
+  const config = useAppConfig();
+  const scope = useScope();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const done = useRef(false);
+  useEffect(() => {
+    if (done.current || !config.loaded) return;
+    done.current = true;
+    let started = false;
+    try {
+      started = sessionStorage.getItem(STARTED) === '1';
+      sessionStorage.setItem(STARTED, '1');
+    } catch {
+      /* storage unavailable */
+    }
+    if (started) return;
+    if (config.defaultEntityId && !scope.entityId) scope.setEntityId(config.defaultEntityId);
+    if (location.pathname === '/' && config.landingPage !== 'home') navigate(`/${config.landingPage}`, { replace: true });
+  }, [config.loaded, config.defaultEntityId, config.landingPage, scope, navigate, location.pathname]);
+}
+
 /** Sidebar + top bar + routed page; the sidebar becomes a bottom tab bar under 720px. */
 export function AppShell() {
   const me = useMe();
@@ -136,12 +166,16 @@ export function AppShell() {
     mainRef.current?.focus({ preventScroll: true });
   }, [location.pathname]);
 
+  useStartPreferences();
+
   const work: NavItem[] = [
     { to: '/', label: 'My work', icon: 'home', badge: counts.tasks, end: true },
     { to: '/contracts', label: 'Contracts', icon: 'doc' },
     { to: '/renewals', label: 'Renewals', icon: 'calendar' },
     { to: '/approvals', label: 'Approvals', icon: 'check', badge: counts.approvals },
   ];
+  const tabs = work;
+  const workNav: NavItem[] = [...work, { to: '/search', label: 'Search', icon: 'search' }];
   const manage: NavItem[] = [
     ...(perms.canSeeOverview ? [{ to: '/overview', label: 'Overview', icon: 'chart' as const }] : []),
     ...(perms.canSeeSettings ? [{ to: '/settings', label: 'Settings', icon: 'gear' as const }] : []),
@@ -152,7 +186,7 @@ export function AppShell() {
       <a href="#main-content" className="skip-link" onClick={(e) => { e.preventDefault(); mainRef.current?.focus(); }}>
         Skip to content
       </a>
-      <Sidebar work={work} manage={manage} onUser={() => setSwitching(true)} />
+      <Sidebar work={workNav} manage={manage} onUser={() => setSwitching(true)} />
       <div className="main">
         <TopBar onUser={() => setSwitching(true)} />
         <main ref={mainRef} id="main-content" tabIndex={-1} style={{ outline: 'none' }}>
@@ -168,7 +202,7 @@ export function AppShell() {
           </Suspense>
         </main>
       </div>
-      <TabBar items={work} />
+      <TabBar items={tabs} />
       {switching ? <UserSwitcher onClose={() => setSwitching(false)} /> : null}
     </div>
   );

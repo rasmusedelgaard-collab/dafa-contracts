@@ -259,9 +259,12 @@ describe('phase 2 contract additions', () => {
     expect((await problem(seed.uploadDocument(rec.id, new File(['x'], 'Signed copy.pdf'), 'Main'))).status).toBe(200);
   });
 
-  it('overview is refused for users who are not management or admin', async () => {
-    expect((await problem(as(USER.emm).getOverview())).status).toBe(403);
-    expect((await problem(as(USER.jon).getOverview())).status).toBe(403);
+  it('overview is open to every user, scoped to what they can see (release 3)', async () => {
+    const emm = await as(USER.emm).getOverview();
+    const ras = await as(USER.ras).getOverview();
+    expect(emm.activeContracts).toBeGreaterThan(0);
+    expect(emm.activeContracts).toBeLessThan(ras.activeContracts);
+    expect((await problem(as(USER.jon).getOverview())).status).toBe(200);
     expect((await as(USER.ann).getOverview()).activeContracts).toBeGreaterThan(0);
     expect((await as(USER.pet).getOverview()).activeContracts).toBeGreaterThan(0);
   });

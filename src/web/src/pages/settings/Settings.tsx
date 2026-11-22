@@ -8,23 +8,41 @@ import { plural } from '../../lib/format';
 import { NoAccess, NotFound } from '../NotFound';
 import { ApprovalRules } from './ApprovalRules';
 import { AuditLog, Outbox } from './Logs';
-import { ContractTypes, Departments, LegalEntities } from './NamedLists';
+import { ContractTypes, Departments } from './NamedLists';
+import { Counterparties } from './Counterparties';
+import { CustomFields, FieldRulesAdmin } from './Fields';
+import { Imports } from './Imports';
+import { CurrenciesAdmin, LegalEntitiesAdmin, TagsAdmin } from './Reference';
+import { SyncSources } from './Sync';
+import { GeneralAdmin, JobsAdmin, NotificationsAdmin } from './System';
+import { UsersAdmin } from './Users';
 import { HolidayCover, Reminders, Retention } from './Policies';
 import { Templates } from './Templates';
 
 const SECTIONS: { id: string; label: string; group: string; render: () => ReactNode }[] = [
-  { id: 'entities', label: 'Legal entities', group: 'Organization', render: () => <LegalEntities /> },
+  { id: 'entities', label: 'Legal entities', group: 'Organization', render: () => <LegalEntitiesAdmin /> },
   { id: 'departments', label: 'Departments', group: 'Organization', render: () => <Departments /> },
   { id: 'contract-types', label: 'Contract types', group: 'Organization', render: () => <ContractTypes /> },
+  { id: 'users', label: 'Users and access', group: 'Organization', render: () => <UsersAdmin /> },
+  { id: 'currencies', label: 'Currencies', group: 'Organization', render: () => <CurrenciesAdmin /> },
+  { id: 'tags', label: 'Tags', group: 'Organization', render: () => <TagsAdmin /> },
+  { id: 'counterparties', label: 'Counterparties', group: 'Data', render: () => <Counterparties /> },
+  { id: 'imports', label: 'Imports', group: 'Data', render: () => <Imports /> },
+  { id: 'sync', label: 'Sync sources', group: 'Data', render: () => <SyncSources /> },
+  { id: 'custom-fields', label: 'Custom fields', group: 'Data', render: () => <CustomFields /> },
+  { id: 'field-rules', label: 'Field rules', group: 'Data', render: () => <FieldRulesAdmin /> },
   { id: 'approval-rules', label: 'Approval rules', group: 'Rules', render: () => <ApprovalRules /> },
   { id: 'reminders', label: 'Reminders', group: 'Rules', render: () => <Reminders /> },
+  { id: 'notifications', label: 'Notifications', group: 'Rules', render: () => <NotificationsAdmin /> },
   { id: 'retention', label: 'Retention', group: 'Rules', render: () => <Retention /> },
   { id: 'templates', label: 'Templates', group: 'Rules', render: () => <Templates /> },
   { id: 'holiday-cover', label: 'Holiday cover', group: 'Rules', render: () => <HolidayCover /> },
-  { id: 'audit', label: 'Audit log', group: 'Logs', render: () => <AuditLog /> },
-  { id: 'outbox', label: 'Notifications outbox', group: 'Logs', render: () => <Outbox /> },
+  { id: 'general', label: 'General', group: 'System', render: () => <GeneralAdmin /> },
+  { id: 'jobs', label: 'Jobs', group: 'System', render: () => <JobsAdmin /> },
+  { id: 'audit', label: 'Audit log', group: 'System', render: () => <AuditLog /> },
+  { id: 'outbox', label: 'Notifications outbox', group: 'System', render: () => <Outbox /> },
 ];
-const GROUPS = ['Organization', 'Rules', 'Logs'];
+const GROUPS = ['Organization', 'Data', 'Rules', 'System'];
 
 function RunJobs() {
   const api = useApi();
@@ -62,7 +80,7 @@ export function Settings() {
       <div className="page-head">
         <div className="page-head__text">
           <h1 className="h1">Settings</h1>
-          <span className="page-sub">Administration of reference data, rules and logs</span>
+          <span className="page-sub">Organization, master data, rules and system settings</span>
         </div>
         <div className="spacer" />
         <RunJobs />

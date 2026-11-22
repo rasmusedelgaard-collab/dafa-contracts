@@ -29,6 +29,28 @@ public interface IAppDbContext
     DbSet<ReminderSettings> ReminderSettings { get; }
     DbSet<PendingUpload> PendingUploads { get; }
 
+    // Release 3
+    DbSet<DocumentText> DocumentTexts { get; }
+    DbSet<CustomFieldDefinition> CustomFieldDefinitions { get; }
+    DbSet<CustomFieldValue> CustomFieldValues { get; }
+    DbSet<ContractTypeFieldRule> FieldRules { get; }
+    DbSet<CurrencyDefinition> Currencies { get; }
+    DbSet<Tag> Tags { get; }
+    DbSet<ContractTag> ContractTags { get; }
+    DbSet<ImportFile> ImportFiles { get; }
+    DbSet<ImportRun> ImportRuns { get; }
+    DbSet<SyncSource> SyncSources { get; }
+    DbSet<NotificationSetting> NotificationSettings { get; }
+    DbSet<ReminderSchedule> ReminderSchedules { get; }
+    DbSet<JobSchedule> JobSchedules { get; }
+    DbSet<AppSetting> AppSettings { get; }
+    DbSet<SavedView> SavedViews { get; }
+    DbSet<ContractWatcher> ContractWatchers { get; }
+    DbSet<ContractComment> ContractComments { get; }
+    DbSet<InAppNotification> Notifications { get; }
+    DbSet<UserPreference> UserPreferences { get; }
+    DbSet<DataRoomExport> DataRoomExports { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>

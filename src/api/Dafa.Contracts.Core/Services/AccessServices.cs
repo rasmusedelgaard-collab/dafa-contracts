@@ -72,11 +72,23 @@ public class ContractAccessService : IContractAccessService
             return query;
         }
 
+        var approvalContractIds = await GetApprovalContractIdsAsync(profile.UserId, cancellationToken);
+        return ApplyFilter(query, profile, approvalContractIds);
+    }
+
+    /// <summary>
+    /// The access filter for any user profile (the same SQL as FilterAsync). Used by FilterAsync for
+    /// the signed-in user and by administration ("effective access") for another user.
+    /// </summary>
+    public static IQueryable<Contract> ApplyFilter(IQueryable<Contract> query, AccessProfile profile, List<Guid> approvalContractIds)
+    {
+        if (ContractAccessRules.SeesAll(profile))
+        {
+            return query;
+        }
         var userId = profile.UserId;
         var departmentIds = profile.DepartmentIds.ToList();
         var entityIds = profile.ManagedEntityIds.ToList();
-        var approvalContractIds = await GetApprovalContractIdsAsync(userId, cancellationToken);
-
         return query.Where(c =>
             departmentIds.Contains(c.DepartmentId)
             || entityIds.Contains(c.EntityId)
@@ -84,6 +96,33 @@ public class ContractAccessService : IContractAccessService
             || c.DelegateId == userId
             || c.ResponsibleId == userId
             || approvalContractIds.Contains(c.Id));
+    }
+
+    /// <summary>Contracts on which the user holds a Pending approval step (read access while the step is open).</summary>
+    public static Task<List<Guid>> LoadApprovalContractIdsAsync(IAppDbContext db, Guid userId, CancellationToken cancellationToken = default)
+    {
+        return db.ApprovalSteps.AsNoTracking()
+            .Where(s => s.ApproverId == userId && s.Status == ApprovalStepStatus.Pending)
+            .Select(s => s.ContractId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+    }
+
+    /// <summary>Whether another user (not the signed-in one) may read a contract. Used before notifying people.</summary>
+    public static async Task<bool> CanUserReadAsync(IAppDbContext db, Guid userId, Contract contract, CancellationToken cancellationToken = default)
+    {
+        var profile = await AccessProfileLoader.LoadAsync(db, userId, cancellationToken);
+        if (profile is null)
+        {
+            return false;
+        }
+        if (ContractAccessRules.CanRead(profile, contract))
+        {
+            return true;
+        }
+        var contractId = contract.Id;
+        return await db.ApprovalSteps.AsNoTracking()
+            .AnyAsync(s => s.ApproverId == userId && s.ContractId == contractId && s.Status == ApprovalStepStatus.Pending, cancellationToken);
     }
 
     public async Task<bool> CanReadAsync(Contract contract, CancellationToken cancellationToken = default)
@@ -140,8 +179,34 @@ public class AuditService
 
     public const string ContractViewed = "contract.viewed";
 
+    /// <summary>
+    /// Release 3: actions that notify a contract's watchers (status changes, renewal decisions,
+    /// details updated, documents uploaded, comments added).
+    /// </summary>
+    public static readonly HashSet<string> WatchedActions = new(StringComparer.Ordinal)
+    {
+        "contract.updated", "contract.signed", "contract.expired", "contract.terminated",
+        "approval.started", "approval.completed", "approval.rejected",
+        "renewal.decided", "renewal.renewed", "renewal.automatic",
+        "document.uploaded", "comment.added", "contract.reassigned", "import.contract-updated"
+    };
+
+    private readonly HashSet<Guid> _watchersNotified = new();
+
+    /// <summary>Records an audit event with structured data (DataJson).</summary>
+    public AuditEvent Record(string action, string text, Guid? contractId, string? dataJson)
+    {
+        var auditEvent = Record(action, text, contractId);
+        auditEvent.DataJson = dataJson;
+        return auditEvent;
+    }
+
     public AuditEvent Record(string action, string text, Guid? contractId = null)
     {
+        if (contractId is not null && WatchedActions.Contains(action))
+        {
+            NotifyWatchers(contractId.Value, text);
+        }
         var auditEvent = new AuditEvent
         {
             Id = Guid.NewGuid(),
@@ -155,29 +220,83 @@ public class AuditService
         _db.AuditEvents.Add(auditEvent);
         return auditEvent;
     }
-}
 
-/// <summary>Small reference tables loaded once per request and joined in memory.</summary>
-public sealed class ReferenceData
-{
-    public Dictionary<Guid, string> Entities { get; private set; } = new();
-    public Dictionary<Guid, string> Departments { get; private set; } = new();
-    public Dictionary<Guid, string> Types { get; private set; } = new();
-    public Dictionary<Guid, AppUser> Users { get; private set; } = new();
-
-    public static async Task<ReferenceData> LoadAsync(IAppDbContext db, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// In-app WatchedContractChanged notifications to the contract's watchers (not the actor), at
+    /// most once per contract and unit of work. Synchronous on purpose: Record is synchronous and is
+    /// called from many places. Respects the event's settings (enabled, InApp channel, templates)
+    /// and the watcher's preferences. Mail for watched contracts goes through the digest. A failure
+    /// here never stops the audited action.
+    /// </summary>
+    private void NotifyWatchers(Guid contractId, string text)
     {
-        var data = new ReferenceData();
-        data.Entities = (await db.LegalEntities.AsNoTracking().ToListAsync(cancellationToken)).ToDictionary(e => e.Id, e => e.Name);
-        data.Departments = (await db.Departments.AsNoTracking().ToListAsync(cancellationToken)).ToDictionary(d => d.Id, d => d.Name);
-        data.Types = (await db.ContractTypes.AsNoTracking().ToListAsync(cancellationToken)).ToDictionary(t => t.Id, t => t.Name);
-        data.Users = (await db.Users.AsNoTracking().ToListAsync(cancellationToken)).ToDictionary(u => u.Id, u => u);
-        return data;
+        if (!_watchersNotified.Add(contractId))
+        {
+            return;
+        }
+        try
+        {
+            var actorId = _currentUser.UserId;
+            var watchers = _db.ContractWatchers.AsNoTracking()
+                .Where(w => w.ContractId == contractId)
+                .Select(w => w.UserId)
+                .ToList()
+                .Where(id => id != actorId)
+                .ToList();
+            if (watchers.Count == 0)
+            {
+                return;
+            }
+            var setting = _db.NotificationSettings.AsNoTracking().FirstOrDefault(n => n.EventType == NotificationCatalog.WatchedContractChanged);
+            if (setting is not null && (!setting.Enabled || !NotificationRouting.SplitList(setting.Channels).Contains("InApp")))
+            {
+                return;
+            }
+            var contract = _db.Contracts.Local.FirstOrDefault(c => c.Id == contractId)
+                ?? _db.Contracts.AsNoTracking().FirstOrDefault(c => c.Id == contractId);
+            if (contract is null)
+            {
+                return;
+            }
+            var actor = string.IsNullOrWhiteSpace(_currentUser.UserName) ? "System" : _currentUser.UserName!;
+            var values = new Dictionary<string, string>
+            {
+                ["contract.title"] = contract.Title,
+                ["contract.no"] = contract.ContractNo,
+                ["contract.counterparty"] = contract.CounterpartyName,
+                ["contract.url"] = "/contracts/" + contract.Id,
+                ["contract.entity"] = "",
+                ["actor.name"] = actor,
+                ["app.name"] = "DAFA Contracts",
+                ["comment"] = text
+            };
+            var preferences = _db.UserPreferences.AsNoTracking().Where(p => watchers.Contains(p.UserId)).ToList();
+            foreach (var watcherId in watchers)
+            {
+                var preference = preferences.FirstOrDefault(p => p.UserId == watcherId);
+                if (!PreferenceReader.Allows(preference, NotificationCatalog.WatchedContractChanged, "InApp"))
+                {
+                    continue;
+                }
+                var title = setting?.SubjectTemplate is null ? contract.Title + " was updated" : NotificationCatalog.Render(setting.SubjectTemplate, values);
+                var body = setting?.BodyTemplate is null ? actor + ": " + text : NotificationCatalog.Render(setting.BodyTemplate, values);
+                _db.Notifications.Add(new InAppNotification
+                {
+                    Id = Guid.NewGuid(),
+                    UserId = watcherId,
+                    Event = NotificationCatalog.WatchedContractChanged,
+                    Title = title.Length > 400 ? title.Substring(0, 400) : title,
+                    Body = body,
+                    ContractId = contract.Id,
+                    Link = "/contracts/" + contract.Id,
+                    ActorName = actor,
+                    CreatedAt = _clock.UtcNow
+                });
+            }
+        }
+        catch (Exception)
+        {
+            // Notifications are best effort; the audited change must go through.
+        }
     }
-
-    public string Entity(Guid id) => Entities.TryGetValue(id, out var name) ? name : "";
-    public string Department(Guid id) => Departments.TryGetValue(id, out var name) ? name : "";
-    public string Type(Guid id) => Types.TryGetValue(id, out var name) ? name : "";
-    public string UserName(Guid? id) => id is not null && Users.TryGetValue(id.Value, out var user) ? user.Name : "";
-    public string UserInitials(Guid? id) => id is not null && Users.TryGetValue(id.Value, out var user) ? user.Initials : "";
 }

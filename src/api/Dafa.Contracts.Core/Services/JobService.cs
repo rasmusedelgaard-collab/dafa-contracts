@@ -146,6 +146,7 @@ public class JobService
             else if (contract.AutoRenew && contract.RenewalMonths is > 0 && contract.RenewalDecision != RenewalDecision.LetExpire)
             {
                 contract.LastRenewedDeadline = ContractCalculations.NoticeDeadline(contract);
+                var endBefore = contract.EndDate.Value;
                 var guard = 0;
                 while (contract.EndDate.Value < today && guard < 120)
                 {
@@ -161,7 +162,12 @@ public class JobService
                 await NoticeCycle.RemoveAsync(_db, contract.Id, cancellationToken);
                 result.ContractsRenewed++;
                 _audit.Record("renewal.automatic",
-                    "Renewed automatically; new end date " + contract.EndDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), contract.Id);
+                    "Renewed automatically; new end date " + contract.EndDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), contract.Id,
+                    ContractChanges.ToJson(new[]
+                    {
+                        new FieldChange("endDate", "End date", endBefore.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                            contract.EndDate.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))
+                    }));
             }
             else
             {
@@ -241,8 +247,8 @@ public class JobService
     {
         var today = _clock.Today;
         var culture = CultureInfo.InvariantCulture;
-        var settings = await ReminderSettingsReader.GetAsync(_db, cancellationToken);
-        var noticeDays = settings.GetNoticeDays();
+        // Release 3: a contract type can have its own reminder schedule.
+        var settingsFor = await ReminderSettingsReader.GetResolverAsync(_db, cancellationToken);
 
         var contracts = await _db.Contracts.AsNoTracking()
             .Where(c => c.Status == ContractStatus.Active)
@@ -256,6 +262,8 @@ public class JobService
 
         foreach (var contract in contracts)
         {
+            var settings = settingsFor(contract.TypeId);
+            var noticeDays = settings.GetNoticeDays();
             // Open-ended contracts have no notice deadline; they get a yearly review reminder instead (M5).
             var anniversary = ContractCalculations.DueAnnualReview(contract, today);
             if (anniversary is not null)
@@ -343,7 +351,7 @@ public class JobService
     {
         var today = _clock.Today;
         var culture = CultureInfo.InvariantCulture;
-        var settings = await ReminderSettingsReader.GetAsync(_db, cancellationToken);
+        var settingsFor = await ReminderSettingsReader.GetResolverAsync(_db, cancellationToken);
 
         var obligations = await _db.Obligations.AsNoTracking()
             .Where(o => o.Status == ObligationStatus.Open && o.DueDate != null)
@@ -367,12 +375,12 @@ public class JobService
         foreach (var obligation in obligations)
         {
             var due = obligation.DueDate!.Value;
-            if (today < due.AddDays(-settings.ObligationDays))
+            if (!contracts.TryGetValue(obligation.ContractId, out var contract)
+                || contract.Status == ContractStatus.Expired || contract.Status == ContractStatus.Terminated)
             {
                 continue;
             }
-            if (!contracts.TryGetValue(obligation.ContractId, out var contract)
-                || contract.Status == ContractStatus.Expired || contract.Status == ContractStatus.Terminated)
+            if (today < due.AddDays(-settingsFor(contract.TypeId).ObligationDays))
             {
                 continue;
             }
@@ -451,7 +459,7 @@ public class JobService
         return changed;
     }
 
-    private async Task PurgePendingUploadsAsync(CancellationToken cancellationToken)
+    public async Task PurgePendingUploadsAsync(CancellationToken cancellationToken = default)
     {
         var cutoff = _clock.UtcNow.AddDays(-7);
         // Only the ids are read: the rows hold the file content (up to 25 MB each).
