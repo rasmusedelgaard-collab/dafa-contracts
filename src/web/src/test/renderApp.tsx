@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
+import { RouterProbe } from './RouterProbe';
 import { App } from '../App';
 import type { Api } from '../api/api';
 import { ApiProvider } from '../app/context';
@@ -10,6 +11,8 @@ import { USER } from '../api/mock/seed';
 import { ToastProvider } from '../components';
 
 export const TODAY = '2026-11-22';
+
+export { router, urlParams } from './router';
 
 /** Renders the whole app at `path` against any Api implementation. */
 export function renderWith(api: Api, path: string): void {
@@ -21,6 +24,7 @@ export function renderWith(api: Api, path: string): void {
         <ToastProvider>
           <MemoryRouter initialEntries={[path]}>
             <App />
+            <RouterProbe />
           </MemoryRouter>
         </ToastProvider>
       </ApiProvider>

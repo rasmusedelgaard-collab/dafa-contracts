@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { apiMode } from '../../api';
-import { qk, useApi, useAppConfig, useLookups, useMe, useScope, permissions } from '../../app/context';
+import { qk, useApi, useAppConfig, useLookups, useMe, permissions } from '../../app/context';
 import { VALUE_BANDS, type Bucket, type ContractFilter, type ContractStatus, type DateField, type DueDiligenceItem, type OverviewAnalytics } from '../../api/types';
 import { Button, Card, ChipSelect, EmptyState, ErrorState, Field, Icon, Segmented, Skeleton, SkeletonRows, StatusDot, Table, TextInput, useToast } from '../../components';
 import { BarList, Columns, dkk, KpiTile, ScoreList, StackedColumns, type StackColumn } from '../../features/charts';
@@ -130,7 +130,6 @@ export function Overview() {
   const me = useMe();
   const lookups = useLookups();
   const config = useAppConfig();
-  const scope = useScope();
   const toast = useToast();
   const budget = useColumnBudget();
   const [params, setParams] = useSearchParams();
@@ -149,13 +148,13 @@ export function Overview() {
     const p = filterToParams(next, params);
     p.delete('page');
     setParams(p, { replace });
-    if ('entityId' in patch) scope.adopt(typeof next.entityId === 'string' ? next.entityId : '');
   };
+  /** Breadcrumb remove and Clear all. The URL is the only state: the entity scope in the top bar follows it. */
   const setFilter = (next: ContractFilter) => {
     const p = filterToParams(next, params);
     p.delete('page');
     setParams(p);
-    scope.adopt(typeof next.entityId === 'string' ? next.entityId : '');
+    if (!next.from && !next.to) setCustomDates(false);
   };
 
   const analytics = useQuery({ queryKey: qk.analytics({ ...filter, dd }), queryFn: () => api.getOverviewAnalytics(filter, dd), placeholderData: keepPreviousData });
@@ -240,15 +239,15 @@ export function Overview() {
       </div>
 
       <div className="toolbar toolbar--chips filterbar" role="group" aria-label="Filters">
-        <ChipSelect label="Entity" options={refs(lookups.entities)} value={single(filter.entityId)} onChange={(v) => drill({ entityId: v || undefined }, true)} />
-        <ChipSelect label="Department" options={refs(lookups.departments)} value={single(filter.departmentId)} onChange={(v) => drill({ departmentId: v || undefined }, true)} />
-        <ChipSelect label="Type" options={refs(lookups.contractTypes)} value={single(filter.typeId)} onChange={(v) => drill({ typeId: v || undefined }, true)} />
-        <ChipSelect label="Status" options={ALL_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))} value={single(filter.status as string | string[] | undefined)} onChange={(v) => drill({ status: (v || undefined) as ContractStatus | undefined }, true)} />
-        <label className={`chip chip--input${cpId ? ' chip--on' : ''}`}>
+        <ChipSelect label="Entity" options={refs(lookups.entities)} value={filter.entityId} onChange={(v) => drill({ entityId: v || undefined }, true)} />
+        <ChipSelect label="Department" options={refs(lookups.departments)} value={filter.departmentId} onChange={(v) => drill({ departmentId: v || undefined }, true)} />
+        <ChipSelect label="Type" options={refs(lookups.contractTypes)} value={filter.typeId} onChange={(v) => drill({ typeId: v || undefined }, true)} />
+        <ChipSelect label="Status" options={ALL_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))} value={filter.status} onChange={(v) => drill({ status: (v || undefined) as ContractStatus | undefined }, true)} />
+        <label className={`chip chip--input${filter.counterpartyId ? ' chip--on' : ''}`}>
           <span className="sr-only">Counterparty</span>
           <input
             list="overview-counterparties"
-            placeholder={cpPage.data && cpId ? cpPage.data.counterparty.name : 'Counterparty: All'}
+            placeholder={cpPage.data && cpId ? cpPage.data.counterparty.name : Array.isArray(filter.counterpartyId) ? `Counterparty: ${filter.counterpartyId.length} selected` : filter.counterpartyId ? 'Counterparty: selected' : 'Counterparty: All'}
             value={cpText}
             onChange={(e) => {
               const v = e.target.value;
@@ -265,9 +264,14 @@ export function Overview() {
               <option key={c.id} value={c.name} />
             ))}
           </datalist>
+          {filter.counterpartyId ? (
+            <button type="button" className="chip__clear" aria-label="Clear counterparty filter" onClick={() => { setCpText(''); drill({ counterpartyId: undefined }, true); }}>
+              <Icon name="x" size={12} stroke={2.6} />
+            </button>
+          ) : null}
         </label>
-        <ChipSelect label="Owner" options={lookups.users.filter((u) => u.isActive !== false).map((u) => ({ value: u.id, label: u.name }))} value={single(filter.ownerId)} onChange={(v) => drill({ ownerId: v || undefined }, true)} />
-        <ChipSelect label="Value" options={VALUE_BANDS.map((b) => ({ value: b.key, label: b.label }))} value={single(filter.valueBand as string | string[] | undefined)} onChange={(v) => drill({ valueBand: (v || undefined) as never }, true)} />
+        <ChipSelect label="Owner" options={lookups.users.filter((u) => u.isActive !== false).map((u) => ({ value: u.id, label: u.name }))} value={filter.ownerId} onChange={(v) => drill({ ownerId: v || undefined }, true)} />
+        <ChipSelect label="Value" options={VALUE_BANDS.map((b) => ({ value: b.key, label: b.label }))} value={filter.valueBand} onChange={(v) => drill({ valueBand: (v || undefined) as never }, true)} />
         <ChipSelect
           label="Dates"
           allLabel="Any"

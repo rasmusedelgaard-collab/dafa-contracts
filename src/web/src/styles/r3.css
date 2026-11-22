@@ -109,6 +109,22 @@
 .chip--input.chip--on input::placeholder {
   color: var(--primary);
 }
+.chip__clear {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-right: -8px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--primary);
+  cursor: pointer;
+}
+.chip__clear:hover {
+  background: var(--tint);
+}
 .check--chip {
   height: 36px;
   padding: 0 14px;

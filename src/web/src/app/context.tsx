@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Api } from '../api/api';
 import type { AppConfig, Lookups, Me, ReminderSettings } from '../api/types';
@@ -203,67 +203,76 @@ export function accessLabel(me: Me, lookups: Lookups): string {
   return me.roles.includes('Approver') ? 'Approver' : 'Reader';
 }
 
-// ----- Entity scope (top bar select; the register's entity filter) -----
+// ----- Entity scope (top bar select; the register's and Overview's entity filter) -----
 interface Scope {
+  /** The one legal entity in `?entity=`, or '' (none, or several from a link or saved view). */
   entityId: string;
+  /** Every `?entity=` value (a link or saved view can name several). */
+  entityIds: string[];
+  /** Sets or clears (`''`) the scope by writing the URL; every `entity` parameter is replaced. */
   setEntityId: (id: string) => void;
-  /** Takes over a value the page has already written to the URL (Overview drill-downs), without writing again. */
-  adopt: (id: string) => void;
 }
 const ScopeContext = createContext<Scope | null>(null);
 
+/** The `entity` values in a query string, without empty ones. */
+export function entityParams(params: URLSearchParams): string[] {
+  return params.getAll('entity').filter((v) => v !== '');
+}
+
 /**
- * The entity scope lives in the URL (`?entity=<id>`), so a reload or a shared link shows the
- * same list. It is carried along when the user moves between pages (see `ScopeLink` users:
- * the shell re-applies it on navigation).
+ * The entity scope lives in the URL (`?entity=<id>`), so a reload or a shared link shows the same
+ * list, and the URL is the only place it is kept: removing the parameter (a breadcrumb, Clear
+ * all, a select set back to All, the browser's back button) removes the scope.
+ *
+ * Navigation inside the app drops the query string, so the scope is carried over to the next
+ * page: the last value seen on a page is remembered together with that page's path, and put back
+ * only when the user arrives on a different path without one. (Release 3 kept a second copy in
+ * component state and wrote it back whenever the parameter went missing, also on the same page,
+ * so an entity filter on Overview could not be removed: owner's bug report, 2026-11-22.)
  */
 export function ScopeProvider({ children }: { children: ReactNode }) {
   const [params, setParams] = useSearchParams();
-  const fromUrl = params.get('entity') ?? '';
-  const [entityId, setLocal] = useState(fromUrl);
-  // The URL wins when it names an entity (deep link, back/forward).
-  const [seen, setSeen] = useState(fromUrl);
-  if (fromUrl !== seen) {
-    setSeen(fromUrl);
-    if (fromUrl) setLocal(fromUrl);
-  }
-  // Navigation inside the app drops the query string; put the scope back so a reload keeps it.
-  const missing = !!entityId && !fromUrl;
+  const { pathname } = useLocation();
+  const fromUrl = entityParams(params);
+  const key = fromUrl.join(',');
+  const [seen, setSeen] = useState({ path: pathname, key });
+  const samePage = seen.path === pathname;
+  // Same page: follow the URL, also when the parameter is removed. Another page: take over what it
+  // names, or carry the remembered scope over (below) when it names nothing.
+  if (samePage ? seen.key !== key : key !== '' || seen.key === '') setSeen({ path: pathname, key });
+  const carry = !samePage && key === '' ? seen.key : '';
   useEffect(() => {
-    if (!missing) return;
+    if (!carry) return;
     setParams(
       (prev) => {
         const next = new URLSearchParams(prev);
-        next.set('entity', entityId);
+        next.delete('entity');
+        for (const id of carry.split(',')) next.append('entity', id);
         return next;
       },
       { replace: true },
     );
-  }, [missing, entityId, setParams]);
-  const value = useMemo(
-    () => ({
-      entityId,
-      adopt: (id: string) => {
-        setLocal(id);
-        setSeen(id);
-      },
+  }, [carry, setParams]);
+  const current = carry || key;
+  const value = useMemo(() => {
+    const entityIds = current ? current.split(',') : [];
+    return {
+      entityId: entityIds.length === 1 ? (entityIds[0] ?? '') : '',
+      entityIds,
       setEntityId: (id: string) => {
-        setLocal(id);
-        setSeen(id);
         setParams(
           (prev) => {
             const next = new URLSearchParams(prev);
+            next.delete('entity');
             if (id) next.set('entity', id);
-            else next.delete('entity');
             next.delete('page');
             return next;
           },
           { replace: true },
         );
       },
-    }),
-    [entityId, setParams],
-  );
+    };
+  }, [current, setParams]);
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>;
 }
 

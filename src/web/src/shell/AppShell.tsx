@@ -68,6 +68,9 @@ function Sidebar({ work, manage, onUser }: { work: NavItem[]; manage: NavItem[];
   );
 }
 
+/** Top-bar scope value while a link or saved view names several legal entities. */
+const SEVERAL = '\u0000several';
+
 function TopBar({ onUser }: { onUser: () => void }) {
   const me = useMe();
   const lookups = useLookups();
@@ -79,10 +82,10 @@ function TopBar({ onUser }: { onUser: () => void }) {
       <Select
         className="scope-select"
         aria-label="Legal entity scope"
-        value={scope.entityId}
-        onChange={(e) => scope.setEntityId(e.target.value)}
+        value={scope.entityIds.length > 1 ? SEVERAL : scope.entityId}
+        onChange={(e) => (e.target.value === SEVERAL ? undefined : scope.setEntityId(e.target.value))}
         placeholder="All entities"
-        options={lookups.entities.map((e) => ({ value: e.id, label: e.name }))}
+        options={[...(scope.entityIds.length > 1 ? [{ value: SEVERAL, label: `${scope.entityIds.length} legal entities` }] : []), ...lookups.entities.map((e) => ({ value: e.id, label: e.name }))]}
       />
       <NotificationBell />
       {/* Pages add their own actions here, beside "New contract" (the register's Export). */}
@@ -141,9 +144,11 @@ function useStartPreferences() {
       /* storage unavailable */
     }
     if (started) return;
-    if (config.defaultEntityId && !scope.entityId) scope.setEntityId(config.defaultEntityId);
-    if (location.pathname === '/' && config.landingPage !== 'home') navigate(`/${config.landingPage}`, { replace: true });
-  }, [config.loaded, config.defaultEntityId, config.landingPage, scope, navigate, location.pathname]);
+    // The scope lives only in the URL, so the landing page navigation must carry it itself.
+    const entity = config.defaultEntityId && scope.entityIds.length === 0 ? config.defaultEntityId : null;
+    if (location.pathname === '/' && config.landingPage !== 'home') navigate(`/${config.landingPage}${entity ? `?entity=${encodeURIComponent(entity)}` : location.search}`, { replace: true });
+    else if (entity) scope.setEntityId(entity);
+  }, [config.loaded, config.defaultEntityId, config.landingPage, scope, navigate, location.pathname, location.search]);
 }
 
 /** Sidebar + top bar + routed page; the sidebar becomes a bottom tab bar under 720px. */

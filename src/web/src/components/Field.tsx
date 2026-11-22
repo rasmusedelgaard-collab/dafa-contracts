@@ -90,11 +90,27 @@ export function Select({ options, placeholder, suggested, className, ...rest }: 
   );
 }
 
-/** Pill-shaped filter select: "Entity: All". */
-export function ChipSelect({ label, allLabel = 'All', options, value, onChange }: { label: string; allLabel?: string; options: SelectOption[]; value: string; onChange: (value: string) => void }) {
+/** Value of the hidden option a ChipSelect shows when a link or saved view selected several values. */
+const MANY = '\u0000many';
+
+/**
+ * Pill-shaped filter select: "Entity: All". `value` may be a list (a link or saved view can repeat
+ * a parameter): one value selects it, several show "<label>: N selected", and "All" (`''`) can
+ * always be chosen to remove the filter.
+ */
+export function ChipSelect({ label, allLabel = 'All', options, value, onChange }: { label: string; allLabel?: string; options: SelectOption[]; value: string | string[] | undefined; onChange: (value: string) => void }) {
+  const values = (Array.isArray(value) ? value : value ? [value] : []).filter((v) => v !== '');
+  // Several values, or one the options do not list (an inactive owner, an old link): still shown as a filter.
+  const many = values.length > 1 || (values.length === 1 && !options.some((o) => o.value === values[0]));
+  const current = many ? MANY : (values[0] ?? '');
   return (
-    <select className={`chip${value ? ' chip--on' : ''}`} aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
+    <select className={`chip${current ? ' chip--on' : ''}`} aria-label={label} value={current} onChange={(e) => (e.target.value === MANY ? undefined : onChange(e.target.value))}>
       <option value="">{`${label}: ${allLabel}`}</option>
+      {many ? (
+        <option value={MANY} disabled>
+          {`${label}: ${values.length} selected`}
+        </option>
+      ) : null}
       {options.map((o) => (
         <option key={o.value} value={o.value}>
           {o.label}

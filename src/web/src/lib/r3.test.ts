@@ -39,6 +39,32 @@ describe('drill-down state in the URL', () => {
     expect(chips[2]?.without).toEqual({ departmentId: 'd1', ownerId: 'u1', missingData: true });
   });
 
+  it('removing any chip removes its URL parameters completely and never leaves an empty or placeholder value', () => {
+    const f = parseFilter(
+      new URLSearchParams('entity=e1&entity=e2&department=d1&department=d2&type=t1&status=Active&counterparty=c1&owner=u1&band=1to5m&tag=g1&dateField=end&from=2027-01-01&to=2027-12-31&notice=30&missing=true&cf.riskLevel=High&cf.soleSupplier=true&q=gasket&sort=-value'),
+    );
+    const chips = chipsOf(f, lookups);
+    expect(chips).toHaveLength(16);
+    for (const chip of chips) {
+      const params = filterToParams(chip.without, new URLSearchParams('sort=-value'));
+      for (const [k, v] of params) {
+        expect(v, `${chip.id}: ${k}`).not.toBe('');
+        expect(['undefined', 'null', 'NaN'], `${chip.id}: ${k}`).not.toContain(v);
+      }
+      // Exactly one fewer value (two/three for a date range), the rest untouched.
+      expect(parseFilter(params)).toEqual(chip.without);
+    }
+    const all = chips.reduce((acc, c) => chipsOf(acc, lookups).find((x) => x.id === c.id)?.without ?? acc, f);
+    expect(all).toEqual({});
+    expect([...filterToParams(all, new URLSearchParams('sort=-value')).keys()]).toEqual(['sort']);
+  });
+
+  it('an emptied custom field is dropped from the filter, not kept as an empty value', () => {
+    expect(applyDrill({ cf: { riskLevel: 'High', soleSupplier: 'true' } }, { cf: { riskLevel: '' } })).toEqual({ cf: { soleSupplier: 'true' } });
+    expect(applyDrill({ cf: { riskLevel: 'High' } }, { cf: { riskLevel: '' } })).toEqual({});
+    expect(filterToParams({ cf: { a: '' } }).toString()).toBe('');
+  });
+
   it('labels quarters and open ranges', () => {
     expect(rangeLabel('end', '2027-04-01', '2027-06-30')).toBe('End date in Q2 2027');
     expect(rangeLabel('start', '2027-01-15', undefined)).toBe('Start date from 15 Jan 2027');

@@ -78,7 +78,12 @@ export function applyDrill(filter: ContractFilter, patch: Partial<ContractFilter
     else if (k === 'cf') next.cf = { ...(filter.cf ?? {}), ...(v as Record<string, string>) };
     else next[k] = v;
   }
-  if (next.cf && Object.values(next.cf as Record<string, string>).every((x) => !x)) delete next.cf;
+  // An emptied custom field is removed, not sent as `cf.<key>=` (the API would filter on an empty value).
+  if (next.cf) {
+    const cf = Object.fromEntries(Object.entries(next.cf as Record<string, string | undefined>).filter(([, x]) => x !== undefined && x !== null && x !== ''));
+    if (Object.keys(cf).length) next.cf = cf;
+    else delete next.cf;
+  }
   // A date range belongs to its date field.
   if (!next.from && !next.to) delete next.dateField;
   return next as ContractFilter;

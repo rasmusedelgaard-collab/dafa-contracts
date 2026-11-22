@@ -14,7 +14,9 @@
 //
 // Release 3 adds a second journey per width (`journeyR3`): Overview drill-down as two users with
 // different totals, search finds another owner's document, and (desktop) an admin imports a
-// supplier CSV and adds a custom field that then appears in New contract.
+// supplier CSV and adds a custom field that then appears in New contract. It also adds a legal-entity
+// filter on Overview through the filter bar and through a chart drill-down and removes each with
+// the breadcrumb and with Clear all; the totals must return to the unfiltered values.
 //
 // Chrome: `CHROME_PATH`, else an installed Chrome/Chromium found in the usual places.
 // Screenshots: set `E2E_SHOTS=<folder>` to save one per step.
@@ -324,6 +326,51 @@ async function journeyR3(browser, baseUrl, width, height) {
     await shot('overview-cfo-drilled');
     await crumbs.getByRole('button', { name: `Remove ${deptName}` }).click();
     await crumbs.waitFor({ state: 'detached' });
+
+    // 1b. A legal-entity filter can be removed again (owner's bug report): added in the filter bar
+    // and by a chart drill-down, removed with the breadcrumb and with Clear all; the totals must
+    // return to the unfiltered values and stay there (nothing may put `?entity=` back).
+    const entitySelect = page.getByRole('combobox', { name: 'Entity', exact: true });
+    const entityOption = await entitySelect.locator('option').nth(1).getAttribute('value');
+    const entityBars = page.getByRole('list', { name: 'Annual value by legal entity' });
+    const adders = {
+      'the filter bar': async () => entitySelect.selectOption(entityOption),
+      'a chart drill-down': async () => entityBars.getByRole('button').first().click(),
+    };
+    const removers = {
+      'the breadcrumb': async () => crumbs.getByRole('button', { name: /^Remove / }).first().click(),
+      'Clear all': async () => crumbs.getByRole('button', { name: 'Clear all' }).click(),
+    };
+    for (const [added, add] of Object.entries(adders)) {
+      for (const [removed, remove] of Object.entries(removers)) {
+        await add();
+        await crumbs.waitFor();
+        await page.waitForFunction((n) => {
+          const t = [...document.querySelectorAll('.kpi')].find((k) => k.querySelector('.kpi__label')?.textContent === 'Contracts');
+          return t && Number(t.querySelector('.kpi__value')?.textContent) < n;
+        }, cfoCount);
+        const entityCount = Number(await kpi('Contracts'));
+        check(new URL(page.url()).searchParams.has('entity'), `Adding an entity with ${added} did not put it in the URL.`);
+        await remove();
+        await crumbs.waitFor({ state: 'detached' });
+        await page.waitForFunction(
+          ([n, v]) => {
+            const val = (label) => [...document.querySelectorAll('.kpi')].find((k) => k.querySelector('.kpi__label')?.textContent === label)?.querySelector('.kpi__value')?.textContent;
+            return Number(val('Contracts')) === n && val('Annual value') === v && !document.querySelector('.overview [aria-busy="true"]');
+          },
+          [cfoCount, cfoValue],
+        );
+        // Wait a moment: the release 3 bug wrote the entity back into the URL right after removal.
+        await page.waitForTimeout(400);
+        check(!new URL(page.url()).searchParams.has('entity'), `The entity came back in the URL after removing it with ${removed} (added with ${added}).`);
+        check(!(await crumbs.count()), `The entity breadcrumb came back after removing it with ${removed} (added with ${added}).`);
+        check((await entitySelect.inputValue()) === '', `The Entity filter still shows a value after removing it with ${removed}.`);
+        check(Number(await kpi('Contracts')) === cfoCount && (await kpi('Annual value')) === cfoValue, `Totals did not return to ${cfoCount} / ${cfoValue} after removing the entity with ${removed}.`);
+        if (!phone) check((await visible(page.getByRole('combobox', { name: 'Legal entity scope' })).inputValue()) === '', `The top-bar entity scope still shows an entity after removing it with ${removed}.`);
+        log(`entity added with ${added} (${entityCount} contracts), removed with ${removed}: back to ${cfoCount} contracts, ${cfoValue}`);
+      }
+    }
+    await shot('overview-entity-removed');
 
     // 2. The same page as a reader shows only her scope (different totals).
     await switchTo('Emma Nygaard');

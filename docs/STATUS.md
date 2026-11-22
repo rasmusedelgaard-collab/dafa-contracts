@@ -495,3 +495,24 @@ Fixed after looking: KPI row wrapping at 1440, list-header layout, register cont
 - Overview's counterparty filter is a type-ahead over the first 20 matches; the register has no counterparty chip (it accepts `counterparty=` from links).
 - Tooltips on chart marks are CSS hover/focus tooltips; on touch devices the value is in the accessible label and the list, not in a tap tooltip.
 - No screen-reader pass, no Firefox/Safari/real phone run; `e2e:demo` is still not in CI.
+
+## Frontend fix: filters can be removed again (2026-11-22)
+
+Scope: `src/web`, this section. `src/api` not touched.
+
+Owner's report: "If I add an entity to the overview, I cannot remove it from the filters again."
+
+**Root cause.** The top-bar entity scope (`ScopeProvider`, `app/context.tsx`) kept its own copy of `?entity=` in component state and had an effect that wrote that copy back into the URL whenever the parameter was missing. Overview's entity filter is the same `entity` parameter. React Router applies URL changes in a transition, so when a removal cleared the copy (`adopt('')`), the next render still saw the old URL and re-adopted the entity; when the URL change landed, the effect put `?entity=` back. Every removal path for the entity (breadcrumb, Clear all, filter bar "All", top bar "All entities", browser back) was undone, on Overview, the register and the search page.
+
+**Fix.** The URL is now the only state for the scope: `ScopeProvider` reads `entity` from the URL; it only remembers the last value per path and carries it over when the user moves to a *different* page without one. `adopt` is gone; `setEntityId` only writes the URL. The register reads every filter from the URL (repeated parameters included) and its entity select writes `entity` in the same update as the rest. `ChipSelect` takes a list: several values (or one the options do not list, e.g. an inactive owner) show "<label>: N selected" and "All" can always be chosen. The top bar shows "N legal entities" for several. Overview's counterparty chip has a clear button; removing a custom date range resets the Dates control; an emptied custom field is dropped from the filter (never sent as `cf.<key>=`). The landing-page redirect carries the default entity in its URL.
+
+**Backend check (not changed).** `ContractFilterParser`: absent or empty id/date/number/boolean parameters are "no filter" (empty entries are skipped), so removal never 400s. One gap: an empty custom-field value (`cf.riskLevel=` in a query, or `"cf": {"riskLevel": null}`/`""` in the data-room JSON) is kept as a filter on `""` and matches nothing. The frontend never sends one (`qs` drops empty values, `applyDrill` drops empty `cf` keys); the backend should ideally skip blank `cf.*` values too.
+
+| Command | Result |
+|---|---|
+| `npm run lint` | exit 0, no warnings |
+| `npm test` | exit 0, 15 files, 292 tests (new `pages/filters.test.tsx` 40: every entity add/remove path, each filter type by chip and Clear all, repeated parameters, register and search; 2 new in `lib/r3.test.ts`) |
+| `npm run build`, `VITE_API_MODE=real npm run build`, `npm run build:demo` | exit 0; no `mockApi` chunk in the real build |
+| `npm run e2e:demo` | exit 0 at 390 and 1440 px, motion on; new: entity added with the filter bar and with a chart drill-down, removed with the breadcrumb and with Clear all, totals back to 44 contracts / DKK 60.7m |
+
+Note: filter-bar selects replace the history entry (as before); browser back undoes chart/tile drill-downs, which push.
