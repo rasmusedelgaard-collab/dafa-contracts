@@ -8,7 +8,7 @@ namespace Dafa.Contracts.Api.Controllers;
 [Route("api/contracts")]
 public class ContractsController : ApiControllerBase
 {
-    private const long MaxDocumentBytes = 50L * 1024 * 1024;
+    private const long MaxDocumentBytes = FileTypeRules.MaxDocumentBytes;
 
     private readonly ContractQueryService _queries;
     private readonly ContractCommandService _commands;
@@ -84,7 +84,7 @@ public class ContractsController : ApiControllerBase
     }
 
     [HttpPost("{id:guid}/documents")]
-    [RequestSizeLimit(60L * 1024 * 1024)]
+    [RequestSizeLimit(30L * 1024 * 1024)]
     public async Task<ActionResult<ContractDetailDto>> UploadDocument(Guid id, IFormFile? file, [FromForm] string? kind, CancellationToken cancellationToken)
     {
         if (file is null || file.Length == 0)
@@ -93,7 +93,7 @@ public class ContractsController : ApiControllerBase
         }
         if (file.Length > MaxDocumentBytes)
         {
-            throw new InputValidationException("file", "The file is larger than 50 MB.");
+            throw new InputValidationException("file", "The file is larger than 25 MB.");
         }
         await using (var stream = file.OpenReadStream())
         {

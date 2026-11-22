@@ -8,10 +8,33 @@ public interface IClock
     DateOnly Today { get; }
 }
 
+/// <summary>
+/// Timestamps are UTC. "Today" (notice deadlines, reminders, expiry) is the calendar date in the
+/// business time zone, Europe/Copenhagen, so a deadline does not move at 01:00 or 02:00 at night.
+/// Falls back to the UTC date when the host does not know the time zone.
+/// </summary>
 public sealed class UtcClock : IClock
 {
+    private static readonly TimeZoneInfo BusinessZone = FindBusinessZone();
+
+    private static TimeZoneInfo FindBusinessZone()
+    {
+        foreach (var id in new[] { "Europe/Copenhagen", "Romance Standard Time" })
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(id);
+            }
+            catch (Exception)
+            {
+                // Not known on this host; try the next name.
+            }
+        }
+        return TimeZoneInfo.Utc;
+    }
+
     public DateTime UtcNow => DateTime.UtcNow;
-    public DateOnly Today => DateOnly.FromDateTime(DateTime.UtcNow);
+    public DateOnly Today => DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, BusinessZone));
 }
 
 /// <summary>The signed-in user. Outside a web request (jobs, seeding) UserId is null.</summary>
@@ -73,6 +96,8 @@ public sealed class ContractAnalysis
     public List<FieldSuggestion> Suggestions { get; set; } = new();
     public string Summary { get; set; } = "";
     public List<Deviation> Deviations { get; set; } = new();
+    /// <summary>Set when the file could not be read within the extraction limits; there are then no suggestions.</summary>
+    public string? Note { get; set; }
 }
 
 public interface IContractAnalyzer
@@ -91,11 +116,12 @@ public sealed record Notification(Guid RecipientId, string Kind, string Subject,
 
 /// <summary>
 /// Sends or queues a notification. Implementations add rows to the current unit of work and
-/// leave SaveChanges to the caller.
+/// leave SaveChanges to the caller. Returns false when delivery was attempted and failed
+/// (Graph mail); queueing in the outbox counts as success.
 /// </summary>
 public interface INotifier
 {
-    Task SendAsync(Notification notification, CancellationToken cancellationToken = default);
+    Task<bool> SendAsync(Notification notification, CancellationToken cancellationToken = default);
 }
 
 public interface IDirectoryService

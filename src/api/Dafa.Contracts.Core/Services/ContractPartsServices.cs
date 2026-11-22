@@ -60,9 +60,16 @@ public class ObligationService
         if (input.FrequencyMonths is not null && input.DueDate is null)
             ContractValidator.Add(errors, "dueDate", "A recurring obligation needs a first due date.");
 
+        if (input.Status is not null && !Enum.IsDefined(typeof(ObligationStatus), input.Status.Value))
+            ContractValidator.Add(errors, "status", "Unknown status.");
+
         var responsibleId = input.ResponsibleId ?? contract.ResponsibleId ?? contract.OwnerId;
-        if (!await _db.Users.AnyAsync(u => u.Id == responsibleId && u.IsActive, cancellationToken))
+        var responsible = await AccessProfileLoader.LoadAsync(_db, responsibleId, cancellationToken);
+        if (responsible is null)
             ContractValidator.Add(errors, "responsibleId", "Unknown or inactive user.");
+        else if (!ContractAccessRules.CanRead(responsible, contract))
+            ContractValidator.Add(errors, "responsibleId",
+                "This user cannot see the contract, so they could not complete the obligation. Choose someone with access, or make them responsible on the contract first.");
 
         if (errors.Count > 0)
         {
@@ -193,15 +200,20 @@ public class LinkService
         }
         var to = await _access.GetReadableAsync(toId, false, cancellationToken);
         var kind = input.Kind.Value;
+        if (!Enum.IsDefined(typeof(LinkKind), kind))
+        {
+            throw new InputValidationException("kind", "Choose the kind of link.");
+        }
         var fromId = from.Id;
         var exists = await _db.ContractLinks.AnyAsync(l => l.FromId == fromId && l.ToId == toId && l.Kind == kind, cancellationToken);
         if (exists)
         {
-            throw new ConflictException("This link already exists.");
+            throw new ConflictException("This link already exists.", ProblemTypes.Duplicate);
         }
         var link = new ContractLink { Id = Guid.NewGuid(), FromId = from.Id, ToId = to.Id, Kind = kind };
         _db.ContractLinks.Add(link);
-        _audit.Record("link.created", "Linked to " + to.ContractNo + " (" + kind + ")", from.Id);
+        // The other contract's number is left out: readers of this contract may not be allowed to see it.
+        _audit.Record("link.created", "Linked to another contract (" + kind + ")", from.Id);
         await _db.SaveChangesAsync(cancellationToken);
         return new LinkDto { Id = link.Id, ContractId = to.Id, Title = to.Title, Kind = kind.ToString(), Direction = "out" };
     }
@@ -256,14 +268,55 @@ public class DocumentService
         {
             throw new InputValidationException("kind", "Unknown document kind.");
         }
+        if (!Enum.IsDefined(typeof(DocumentKind), documentKind))
+        {
+            throw new InputValidationException("kind", "Unknown document kind.");
+        }
         if (documentKind == DocumentKind.ApprovalLog)
         {
             throw new InputValidationException("kind", "Approval logs are created by the system.");
         }
 
-        var document = await _writer.AddAsync(contract, fileName, documentKind, content, profile.UserId, cancellationToken);
-        _audit.Record("document.uploaded", "Uploaded " + document.Name + " (v" + document.Version + ")", contract.Id);
-        await _db.SaveChangesAsync(cancellationToken);
+        // M6: size, allowlisted type and matching content.
+        var name = DocumentWriter.SafeFileName(fileName);
+        var bytes = await ReadLimitedAsync(content, FileTypeRules.MaxDocumentBytes, cancellationToken);
+        FileTypeRules.Validate(name, bytes);
+
+        // The main document is what was approved. From submission on, only an administrator may
+        // add a Main document or a new version of an existing one.
+        var replacesMain = false;
+        if (ApprovedTerms.AppliesTo(contract.Status))
+        {
+            var contractKey = contract.Id;
+            var sameNameIsMain = await _db.Documents.AsNoTracking()
+                .AnyAsync(d => d.ContractId == contractKey && d.Name == name && d.Kind == DocumentKind.Main, cancellationToken);
+            replacesMain = documentKind == DocumentKind.Main || sameNameIsMain;
+            if (replacesMain && !profile.IsAdmin)
+            {
+                throw new ConflictException(
+                    "The main document is locked once the contract is submitted for approval. Upload the file as an amendment or appendix under another name, or ask an administrator.",
+                    ProblemTypes.LockedFields);
+            }
+        }
+
+        var document = await _writer.AddAsync(contract, name, documentKind, bytes, profile.UserId, cancellationToken);
+        _audit.Record("document.uploaded", "Uploaded " + document.Name + " (v" + document.Version + ", " + document.Kind + ")", contract.Id);
+        if (replacesMain)
+        {
+            _audit.Record("contract.approved-terms-changed",
+                "Administrator added main document " + document.Name + " (v" + document.Version + ") after submission (status " + contract.Status + ").",
+                contract.Id);
+        }
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            // The unique index on (contract, name, version): the same name was uploaded at the same moment.
+            _db.DiscardChanges();
+            throw new ConflictException("A file with the same name was uploaded at the same time. Try again.", ProblemTypes.Stale);
+        }
         return new DocumentDto
         {
             Id = document.Id,
@@ -274,6 +327,26 @@ public class DocumentService
             UploadedAt = document.UploadedAt,
             UploadedBy = profile.Name
         };
+    }
+
+    private static async Task<byte[]> ReadLimitedAsync(Stream content, long maxBytes, CancellationToken cancellationToken)
+    {
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        while (true)
+        {
+            var read = await content.ReadAsync(chunk.AsMemory(0, chunk.Length), cancellationToken);
+            if (read <= 0)
+            {
+                break;
+            }
+            if (buffer.Length + read > maxBytes)
+            {
+                throw new InputValidationException("file", "The file is larger than 25 MB.");
+            }
+            buffer.Write(chunk, 0, read);
+        }
+        return buffer.ToArray();
     }
 
     public async Task<DocumentContent> OpenAsync(Guid documentId, CancellationToken cancellationToken = default)
@@ -336,6 +409,17 @@ public class IntakeService
         {
             throw new InputValidationException("file", "Upload a PDF or a Word document (.docx).");
         }
+        if (content.Length > 0 && content.LongLength <= MaxUploadBytes && !FileTypeRules.ContentMatches(name, content))
+        {
+            throw new InputValidationException("file", "The content of the file does not match its file type.");
+        }
+        var creatorId = profile.UserId;
+        var pending = await _db.PendingUploads.CountAsync(u => u.CreatedById == creatorId, cancellationToken);
+        if (pending >= ContractCommandService.MaxPendingUploadsPerUser)
+        {
+            throw new InputValidationException("file",
+                "You have too many uploaded files that are not attached to a contract yet. Finish or discard a draft first; unused uploads are removed after 7 days.");
+        }
         if (content.Length == 0)
         {
             throw new InputValidationException("file", "The file is empty.");
@@ -369,7 +453,8 @@ public class IntakeService
             Pages = analysis.Pages,
             Suggestions = analysis.Suggestions,
             Summary = analysis.Summary,
-            Deviations = analysis.Deviations
+            Deviations = analysis.Deviations,
+            Note = analysis.Note
         };
     }
 

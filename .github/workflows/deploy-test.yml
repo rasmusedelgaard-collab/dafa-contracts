@@ -6,7 +6,9 @@ name: Deploy test
 #   https://help.monsterasp.net/websites/deploy/command-line
 # Step-by-step instructions for setting this up: docs/DEPLOY_TEST.md
 #
-# TEST DATA ONLY. The site runs with Auth:Mode=Dev (no real authentication).
+# TEST DATA ONLY. The site runs with Auth:Mode=Dev (no real authentication) behind a shared
+# access code (secret MONSTERASP_DEV_ACCESS_CODE). The API refuses to start in Dev mode outside
+# the Development environment without a code of at least 12 characters.
 #
 # Note: GitHub only starts `workflow_run` and shows the "Run workflow" button for workflow
 # files that exist on the default branch (main).
@@ -45,6 +47,7 @@ jobs:
       WEBDEPLOY_USERNAME: ${{ secrets.MONSTERASP_WEBDEPLOY_USERNAME }}
       WEBDEPLOY_PASSWORD: ${{ secrets.MONSTERASP_WEBDEPLOY_PASSWORD }}
       DB_CONNECTION_STRING: ${{ secrets.MONSTERASP_DB_CONNECTION_STRING }}
+      DEV_ACCESS_CODE: ${{ secrets.MONSTERASP_DEV_ACCESS_CODE }}
       SITE_URL: ${{ vars.MONSTERASP_SITE_URL }}
       # monsterasp.net's documented msdeploy command uses -allowUntrusted. Set the repository
       # variable MONSTERASP_ALLOW_UNTRUSTED_CERT to 'false' to require a trusted certificate.
@@ -60,9 +63,21 @@ jobs:
             MONSTERASP_WEBDEPLOY_USERNAME   = $env:WEBDEPLOY_USERNAME
             MONSTERASP_WEBDEPLOY_PASSWORD   = $env:WEBDEPLOY_PASSWORD
             MONSTERASP_DB_CONNECTION_STRING = $env:DB_CONNECTION_STRING
+            MONSTERASP_DEV_ACCESS_CODE      = $env:DEV_ACCESS_CODE
           }
           $missing = @($required.Keys | Where-Object { [string]::IsNullOrWhiteSpace($required[$_]) })
-          if ($missing.Count -gt 0) {
+          $codeTooShort = (-not [string]::IsNullOrWhiteSpace($env:DEV_ACCESS_CODE)) -and ($env:DEV_ACCESS_CODE.Trim().Length -lt 12)
+          if ($codeTooShort) {
+            Write-Host "::notice title=Deploy skipped::MONSTERASP_DEV_ACCESS_CODE is shorter than 12 characters. The app would refuse to start, so nothing was deployed. See docs/DEPLOY_TEST.md."
+            @(
+              '## Deploy skipped'
+              ''
+              'Nothing was deployed because the repository secret `MONSTERASP_DEV_ACCESS_CODE` is shorter than 12 characters. The app refuses to start with a shorter access code.'
+              ''
+              'Replace it under **Settings > Secrets and variables > Actions** with a code of at least 12 characters, then run this workflow again. Step-by-step guide: `docs/DEPLOY_TEST.md`.'
+            ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            "configured=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } elseif ($missing.Count -gt 0) {
             $list = $missing -join ', '
             Write-Host "::notice title=Deploy skipped::Repository secrets not set: $list. Nothing was deployed. See docs/DEPLOY_TEST.md."
             @(
@@ -151,21 +166,19 @@ jobs:
             if ($existing -is [hashtable]) { $settings = $existing }
           }
 
-          # The connection string is written under the common key names so the deploy does not
-          # depend on which one the API reads (see the backend section of docs/STATUS.md).
+          # Only keys the API reads (see "Configuration keys" in docs/STATUS.md). The provider keys
+          # (Documents, Analyzer, Suppliers, Notifications, Directory, Signature) keep their
+          # test-mode defaults from appsettings.json. Demo data is opt-in and is switched on here.
           $overrides = @{
-            Auth              = @{ Mode = 'Dev' }
-            Database          = @{ Provider = 'SqlServer'; ConnectionString = $env:DB_CONNECTION_STRING }
-            ConnectionStrings = @{ Default = $env:DB_CONNECTION_STRING; DefaultConnection = $env:DB_CONNECTION_STRING }
-            Storage           = @{ Mode = 'Local' }
-            Ai                = @{ Mode = 'Heuristic' }
-            Suppliers         = @{ Mode = 'Seed' }
-            Notifications     = @{ Mode = 'Outbox' }
+            Auth              = @{ Mode = 'Dev'; Dev = @{ AccessCode = $env:DEV_ACCESS_CODE.Trim() } }
+            Database          = @{ Provider = 'SqlServer' }
+            ConnectionStrings = @{ Default = $env:DB_CONNECTION_STRING }
             Seed              = @{ DemoData = $true }
           }
           Merge-Hashtable $settings $overrides
 
           $settings | ConvertTo-Json -Depth 20 | Set-Content -Path $path -Encoding utf8NoBOM
+          Write-Host "::add-mask::$($env:DEV_ACCESS_CODE.Trim())"
           Write-Host "Wrote $path (keys: $(($settings.Keys | Sort-Object) -join ', '))."
 
       - name: Locate Web Deploy (msdeploy.exe)
@@ -204,7 +217,7 @@ jobs:
 
       # Same arguments as monsterasp.net's documented command, plus:
       #  -enableRule:AppOffline  takes the app offline during the sync so files are not locked;
-      #  -skip ... App_Data      keeps files uploaded on the test site (Storage:Mode=Local) across deploys;
+      #  -skip ... App_Data      keeps files uploaded on the test site (Documents:Provider=Local) across deploys;
       #  -retryAttempts          rides out short network errors.
       # Run with cmd (as in the vendor's .bat example) because msdeploy's quoting is unreliable from PowerShell.
       - name: Deploy with Web Deploy
@@ -268,7 +281,7 @@ jobs:
             ''
             "- CI run: ``$($env:CI_RUN_ID)``"
             "- Commit: ``$($env:CI_SHA)``"
-            '- Mode: `Auth:Mode=Dev`, `Database:Provider=SqlServer`, `Seed:DemoData=true`'
+            '- Mode: `Auth:Mode=Dev` with the shared access code, `Database:Provider=SqlServer`, `Seed:DemoData=true`'
             ''
-            '**Test data only.** Dev sign-in has no real authentication - never upload real contracts to this site.'
+            '**Test data only.** Dev sign-in is protected only by the shared access code - never upload real contracts to this site.'
           ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8

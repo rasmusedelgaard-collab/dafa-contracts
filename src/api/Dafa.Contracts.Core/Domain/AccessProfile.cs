@@ -49,10 +49,13 @@ public static class ContractAccessRules
         return profile.HasRole(AppRole.ContractOwner) && IsOnContract(profile, contract);
     }
 
-    /// <summary>People on the contract or an admin, on an active contract that has an end date.</summary>
+    /// <summary>
+    /// People on the contract or an admin, on an active contract. An open-ended contract
+    /// (no end date) only accepts the decision GiveNotice.
+    /// </summary>
     public static bool CanDecideRenewal(AccessProfile profile, Contract contract)
     {
-        if (contract.Status != ContractStatus.Active || contract.EndDate is null)
+        if (contract.Status != ContractStatus.Active)
         {
             return false;
         }

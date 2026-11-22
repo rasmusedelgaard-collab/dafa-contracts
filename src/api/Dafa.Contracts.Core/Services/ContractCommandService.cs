@@ -1,3 +1,4 @@
+using System.Globalization;
 using Dafa.Contracts.Core.Abstractions;
 using Dafa.Contracts.Core.Common;
 using Dafa.Contracts.Core.Domain;
@@ -18,6 +19,8 @@ public static class ContractValidator
         if (input.TypeId is null) Add(errors, "typeId", "Contract type is required.");
         if (input.SupplierId is null && string.IsNullOrWhiteSpace(input.CounterpartyName))
             Add(errors, "counterpartyName", "Counterparty is required: pick a supplier or enter a name.");
+        else if (input.CounterpartyName is not null && input.CounterpartyName.Trim().Length > 300)
+            Add(errors, "counterpartyName", "Counterparty can be at most 300 characters.");
         if (input.EntityId is null) Add(errors, "entityId", "Legal entity is required.");
         if (input.DepartmentId is null) Add(errors, "departmentId", "Department is required.");
         if (input.OwnerId is null) Add(errors, "ownerId", "Owner is required.");
@@ -96,8 +99,183 @@ public static class ContractValidator
     }
 }
 
+/// <summary>
+/// H1: once a contract has left Draft, the terms the approval was based on are locked.
+/// Only an administrator may change them, and every such change is audited field by field.
+/// </summary>
+public static class ApprovedTerms
+{
+    public const string LockedMessage =
+        "Approved terms are locked. Register an amendment as a linked contract, or ask an administrator.";
+
+    /// <summary>Request field names (camelCase) that are locked after approval; sent to the UI as lockedFields.</summary>
+    public static readonly string[] LockedFields =
+    {
+        "title", "typeId", "supplierId", "counterpartyName", "entityId", "departmentId",
+        "startDate", "endDate", "openEnded", "noticePeriodDays", "autoRenew", "renewalMonths",
+        "annualValue", "totalValue", "currency", "liabilityCap", "exclusivity", "changeOfControl",
+        "governingLaw", "priceAdjustment", "priceAdjustmentDate"
+    };
+
+    public static bool IsLockedField(string field) => Array.IndexOf(LockedFields, field) >= 0;
+
+    /// <summary>True from the moment the contract is submitted: everything except Draft.</summary>
+    public static bool AppliesTo(ContractStatus status) => status != ContractStatus.Draft;
+
+    private static bool Filled(string? value) => !string.IsNullOrWhiteSpace(value);
+
+    /// <summary>
+    /// True when a locked field holds a value on the stored contract. An empty locked field is
+    /// missing data: someone with edit rights may fill it in once, after which it is locked like
+    /// the rest. Fields that cannot be empty (type, entity, department, dates, auto-renew) always
+    /// count as filled; an open-ended contract (no end date) is a value, not a gap.
+    /// The two value fields go together: once either annual or total value is set, both are
+    /// locked, because the approval is based on the larger of the two and filling in the other
+    /// one could raise it.
+    /// </summary>
+    public static bool HasValue(Contract contract, string field)
+    {
+        switch (field)
+        {
+            case "title": return Filled(contract.Title);
+            case "counterpartyName": return Filled(contract.CounterpartyName);
+            case "supplierId": return contract.SupplierId is not null;
+            case "noticePeriodDays": return contract.NoticePeriodDays is not null;
+            case "renewalMonths": return contract.RenewalMonths is not null;
+            case "annualValue":
+            case "totalValue": return contract.AnnualValue is not null || contract.TotalValue is not null;
+            case "currency": return Filled(contract.Currency);
+            case "liabilityCap": return Filled(contract.LiabilityCap);
+            case "exclusivity": return Filled(contract.Exclusivity);
+            case "governingLaw": return Filled(contract.GoverningLaw);
+            case "priceAdjustment": return Filled(contract.PriceAdjustment);
+            case "priceAdjustmentDate": return contract.PriceAdjustmentDate is not null;
+            case "changeOfControl": return contract.ChangeOfControl is not null;
+            default: return true;
+        }
+    }
+
+    /// <summary>
+    /// The fields a user may not change on this contract right now: for a non-administrator on a
+    /// contract that has left Draft, the locked fields that currently have a value.
+    /// </summary>
+    public static List<string> LockedFieldsFor(AccessProfile profile, Contract contract)
+    {
+        if (profile.IsAdmin || !AppliesTo(contract.Status))
+        {
+            return new List<string>();
+        }
+        return LockedFields.Where(field => HasValue(contract, field)).ToList();
+    }
+}
+
+public sealed record FieldChange(string Field, string Label, string Old, string New);
+
+/// <summary>Compares a stored contract with the values an update would give it.</summary>
+public static class ContractChanges
+{
+    private const string Empty = "(empty)";
+
+    private static string Text(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return Empty;
+        }
+        var text = value.Trim().Replace("\r", " ").Replace("\n", " ");
+        return text.Length > 80 ? text.Substring(0, 80) + "..." : text;
+    }
+
+    private static string Date(DateOnly? value) =>
+        value is null ? Empty : value.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    private static string Number(decimal? value) =>
+        value is null ? Empty : value.Value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static string Whole(int? value) =>
+        value is null ? Empty : value.Value.ToString(CultureInfo.InvariantCulture);
+
+    private static string YesNo(bool? value) => value is null ? Empty : (value.Value ? "Yes" : "No");
+
+    private static string Name(string name) => string.IsNullOrWhiteSpace(name) ? "(unknown)" : name;
+
+    private static void Add(List<FieldChange> changes, string field, string label, bool same, string oldText, string newText)
+    {
+        if (!same)
+        {
+            changes.Add(new FieldChange(field, label, oldText, newText));
+        }
+    }
+
+    public static List<FieldChange> Diff(
+        Contract current, Contract proposed, ReferenceData reference, IReadOnlyDictionary<Guid, string> supplierNames)
+    {
+        string Supplier(Guid? id) =>
+            id is null ? Empty : (supplierNames.TryGetValue(id.Value, out var name) ? name : id.Value.ToString());
+        string User(Guid? id) => id is null ? Empty : Name(reference.UserName(id));
+
+        var changes = new List<FieldChange>();
+        Add(changes, "title", "Title", current.Title == proposed.Title, Text(current.Title), Text(proposed.Title));
+        Add(changes, "typeId", "Type", current.TypeId == proposed.TypeId, Name(reference.Type(current.TypeId)), Name(reference.Type(proposed.TypeId)));
+        Add(changes, "supplierId", "Supplier", current.SupplierId == proposed.SupplierId, Supplier(current.SupplierId), Supplier(proposed.SupplierId));
+        Add(changes, "counterpartyName", "Counterparty", current.CounterpartyName == proposed.CounterpartyName, Text(current.CounterpartyName), Text(proposed.CounterpartyName));
+        Add(changes, "entityId", "Legal entity", current.EntityId == proposed.EntityId, Name(reference.Entity(current.EntityId)), Name(reference.Entity(proposed.EntityId)));
+        Add(changes, "departmentId", "Department", current.DepartmentId == proposed.DepartmentId, Name(reference.Department(current.DepartmentId)), Name(reference.Department(proposed.DepartmentId)));
+        Add(changes, "ownerId", "Owner", current.OwnerId == proposed.OwnerId, User(current.OwnerId), User(proposed.OwnerId));
+        Add(changes, "delegateId", "Delegate", current.DelegateId == proposed.DelegateId, User(current.DelegateId), User(proposed.DelegateId));
+        Add(changes, "responsibleId", "Responsible", current.ResponsibleId == proposed.ResponsibleId, User(current.ResponsibleId), User(proposed.ResponsibleId));
+        Add(changes, "reminderRecipient", "Reminder recipient", current.ReminderRecipient == proposed.ReminderRecipient, current.ReminderRecipient.ToString(), proposed.ReminderRecipient.ToString());
+        Add(changes, "startDate", "Start date", current.StartDate == proposed.StartDate, Date(current.StartDate), Date(proposed.StartDate));
+        Add(changes, "endDate", "End date", current.EndDate == proposed.EndDate,
+            current.EndDate is null ? "open-ended" : Date(current.EndDate), proposed.EndDate is null ? "open-ended" : Date(proposed.EndDate));
+        Add(changes, "noticePeriodDays", "Notice period (days)", current.NoticePeriodDays == proposed.NoticePeriodDays, Whole(current.NoticePeriodDays), Whole(proposed.NoticePeriodDays));
+        Add(changes, "autoRenew", "Auto-renew", current.AutoRenew == proposed.AutoRenew, YesNo(current.AutoRenew), YesNo(proposed.AutoRenew));
+        Add(changes, "renewalMonths", "Renewal period (months)", current.RenewalMonths == proposed.RenewalMonths, Whole(current.RenewalMonths), Whole(proposed.RenewalMonths));
+        Add(changes, "annualValue", "Annual value", current.AnnualValue == proposed.AnnualValue, Number(current.AnnualValue), Number(proposed.AnnualValue));
+        Add(changes, "totalValue", "Total value", current.TotalValue == proposed.TotalValue, Number(current.TotalValue), Number(proposed.TotalValue));
+        Add(changes, "currency", "Currency", current.Currency == proposed.Currency, Text(current.Currency), Text(proposed.Currency));
+        Add(changes, "paymentTerms", "Payment terms", current.PaymentTerms == proposed.PaymentTerms, Text(current.PaymentTerms), Text(proposed.PaymentTerms));
+        Add(changes, "priceAdjustment", "Price adjustment", current.PriceAdjustment == proposed.PriceAdjustment, Text(current.PriceAdjustment), Text(proposed.PriceAdjustment));
+        Add(changes, "priceAdjustmentDate", "Price adjustment date", current.PriceAdjustmentDate == proposed.PriceAdjustmentDate, Date(current.PriceAdjustmentDate), Date(proposed.PriceAdjustmentDate));
+        Add(changes, "governingLaw", "Governing law", current.GoverningLaw == proposed.GoverningLaw, Text(current.GoverningLaw), Text(proposed.GoverningLaw));
+        Add(changes, "liabilityCap", "Liability cap", current.LiabilityCap == proposed.LiabilityCap, Text(current.LiabilityCap), Text(proposed.LiabilityCap));
+        Add(changes, "exclusivity", "Exclusivity", current.Exclusivity == proposed.Exclusivity, Text(current.Exclusivity), Text(proposed.Exclusivity));
+        Add(changes, "changeOfControl", "Change of control", current.ChangeOfControl == proposed.ChangeOfControl, YesNo(current.ChangeOfControl), YesNo(proposed.ChangeOfControl));
+        Add(changes, "summary", "Summary", current.Summary == proposed.Summary, Text(current.Summary), Text(proposed.Summary));
+        return changes;
+    }
+
+    /// <summary>"Title: "A" -> "B"; End date: "2027-03-31" -> "2028-03-31"".</summary>
+    public static string Describe(IEnumerable<FieldChange> changes) =>
+        string.Join("; ", changes.Select(c => c.Label + ": \"" + c.Old + "\" -> \"" + c.New + "\""));
+}
+
+/// <summary>Reminder rows that belong to one notice deadline (Notice{days} and Escalation).</summary>
+public static class NoticeCycle
+{
+    /// <summary>
+    /// Removes the sent and unsent notice and escalation rows of a contract, so the reminder cycle
+    /// starts over for a new notice deadline. Adds to the unit of work; the caller saves.
+    /// </summary>
+    public static async Task<int> RemoveAsync(IAppDbContext db, Guid contractId, CancellationToken cancellationToken = default)
+    {
+        var rows = await db.Reminders
+            .Where(r => r.ContractId == contractId && r.ObligationId == null)
+            .ToListAsync(cancellationToken);
+        var cycle = rows.Where(r => ContractCalculations.IsNoticeCycleKind(r.Kind)).ToList();
+        if (cycle.Count > 0)
+        {
+            db.Reminders.RemoveRange(cycle);
+        }
+        return cycle.Count;
+    }
+}
+
 public class ContractCommandService
 {
+    /// <summary>Pending intake uploads one user may have at a time (they are stored in the database).</summary>
+    public const int MaxPendingUploadsPerUser = 20;
+
     private readonly IAppDbContext _db;
     private readonly ICurrentUser _currentUser;
     private readonly IContractAccessService _access;
@@ -273,18 +451,46 @@ public class ContractCommandService
             _db.PendingUploads.Remove(upload);
         }
 
-        _audit.Record("contract.created", "Created draft " + contract.ContractNo, contract.Id);
-        try
+        var created = _audit.Record("contract.created", "Created draft " + contract.ContractNo, contract.Id);
+        for (var attempt = 1; ; attempt++)
         {
-            await _db.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateException)
-        {
-            // Most likely two drafts were given the same number at the same time; take the next one once.
-            contract.ContractNo = await NextContractNoAsync(cancellationToken);
-            await _db.SaveChangesAsync(cancellationToken);
+            try
+            {
+                await _db.SaveChangesAsync(cancellationToken);
+                break;
+            }
+            catch (DbUpdateException) when (attempt < 5)
+            {
+                // Retry only when the number was taken by a draft created at the same time.
+                var number = contract.ContractNo;
+                var id = contract.Id;
+                var taken = await _db.Contracts.AsNoTracking().AnyAsync(c => c.ContractNo == number && c.Id != id, cancellationToken);
+                if (!taken)
+                {
+                    throw;
+                }
+                contract.ContractNo = await NextContractNoAsync(cancellationToken);
+                created.Text = "Created draft " + contract.ContractNo;
+            }
         }
         return contract.Id;
+    }
+
+    private async Task<Dictionary<Guid, string>> SupplierNamesAsync(Guid? first, Guid? second, CancellationToken cancellationToken)
+    {
+        var ids = new List<Guid>();
+        if (first is not null) ids.Add(first.Value);
+        if (second is not null && !ids.Contains(second.Value)) ids.Add(second.Value);
+        var names = new Dictionary<Guid, string>();
+        foreach (var id in ids)
+        {
+            var name = await _db.Suppliers.AsNoTracking().Where(s => s.Id == id).Select(s => s.Name).FirstOrDefaultAsync(cancellationToken);
+            if (name is not null)
+            {
+                names[id] = name;
+            }
+        }
+        return names;
     }
 
     public async Task UpdateAsync(Guid contractId, ContractInput input, CancellationToken cancellationToken = default)
@@ -294,11 +500,97 @@ public class ContractCommandService
         {
             throw new ConflictException("The contract is in approval and cannot be changed until the approval is finished.");
         }
+        var profile = await _currentUser.GetProfileAsync(cancellationToken);
         var supplierName = await ValidateAsync(input, cancellationToken);
+
+        // Work out what would change on a scratch copy first, so a refused update leaves the tracked row untouched.
+        var proposed = new Contract();
+        Apply(input, proposed, supplierName);
+        var reference = await ReferenceData.LoadAsync(_db, cancellationToken);
+        var supplierNames = await SupplierNamesAsync(contract.SupplierId, proposed.SupplierId, cancellationToken);
+        var changes = ContractChanges.Diff(contract, proposed, reference, supplierNames);
+        var termsLocked = ApprovedTerms.AppliesTo(contract.Status);
+        // Changes to approved terms that already had a value, and first-time completion of empty ones.
+        var lockedChanges = new List<FieldChange>();
+        var completedFields = new List<FieldChange>();
+        if (termsLocked)
+        {
+            foreach (var change in changes.Where(c => ApprovedTerms.IsLockedField(c.Field)))
+            {
+                if (ApprovedTerms.HasValue(contract, change.Field))
+                {
+                    lockedChanges.Add(change);
+                }
+                else
+                {
+                    completedFields.Add(change);
+                }
+            }
+        }
+        if (lockedChanges.Count > 0 && !profile.IsAdmin)
+        {
+            throw new ConflictException(
+                ApprovedTerms.LockedMessage + " Locked: " + string.Join(", ", lockedChanges.Select(c => c.Label)) + ".",
+                ProblemTypes.LockedFields);
+        }
+
+        var oldDeadline = ContractCalculations.NoticeDeadline(contract);
         Apply(input, contract, supplierName);
         contract.UpdatedAt = _clock.UtcNow;
-        _audit.Record("contract.updated", "Updated contract details", contract.Id);
+
+        if (changes.Count == 0)
+        {
+            _audit.Record("contract.updated", "Saved contract details without changes", contract.Id);
+        }
+        else
+        {
+            _audit.Record("contract.updated", "Updated contract details. " + ContractChanges.Describe(changes), contract.Id);
+        }
+        if (lockedChanges.Count > 0)
+        {
+            _audit.Record("contract.approved-terms-changed",
+                "Administrator changed approved terms (status " + contract.Status + "). " + ContractChanges.Describe(lockedChanges),
+                contract.Id);
+        }
+        if (completedFields.Count > 0)
+        {
+            _audit.Record("contract.missing-data-completed",
+                "Completed missing data after approval (status " + contract.Status + "); these fields are now locked. "
+                    + ContractChanges.Describe(completedFields),
+                contract.Id);
+        }
+
+        // H2: a new notice deadline is a new reminder cycle.
+        var newDeadline = ContractCalculations.NoticeDeadline(contract);
+        if (oldDeadline != newDeadline)
+        {
+            await ResetNoticeCycleAsync(contract, oldDeadline, newDeadline, cancellationToken);
+        }
         await _db.SaveChangesAsync(cancellationToken);
+    }
+
+    private static string DeadlineText(DateOnly? deadline) =>
+        deadline is null ? "none" : deadline.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// Removes the reminder rows of the old notice deadline and clears a renewal decision that was
+    /// made for it, so reminders and the escalation run again for the new deadline. A recorded
+    /// notice (status NoticeGiven) is kept: the contract still ends.
+    /// </summary>
+    private async Task ResetNoticeCycleAsync(Contract contract, DateOnly? oldDeadline, DateOnly? newDeadline, CancellationToken cancellationToken)
+    {
+        var removed = await NoticeCycle.RemoveAsync(_db, contract.Id, cancellationToken);
+        var text = "Notice deadline changed from " + DeadlineText(oldDeadline) + " to " + DeadlineText(newDeadline)
+            + "; the reminder cycle starts over (" + removed + " earlier reminders removed)";
+        if (contract.Status == ContractStatus.Active && contract.RenewalDecision is not null)
+        {
+            text += "; the renewal decision " + contract.RenewalDecision + " for the old deadline was cleared";
+            contract.RenewalDecision = null;
+            contract.RenewalDecidedById = null;
+            contract.RenewalDecidedAt = null;
+            contract.RenewalComment = null;
+        }
+        _audit.Record("reminders.reset", text + ".", contract.Id);
     }
 
     public async Task SubmitAsync(Guid contractId, CancellationToken cancellationToken = default)
@@ -323,7 +615,17 @@ public class ContractCommandService
         contract.Status = ContractStatus.InApproval;
         contract.UpdatedAt = _clock.UtcNow;
         _audit.Record("approval.started", "Submitted for approval (rule: " + instance.RuleName + ")", contract.Id);
-        await _db.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            // A second submit at the same moment: the contract's concurrency token or the
+            // one-pending-approval index stopped this one. Nothing of it was saved.
+            _db.DiscardChanges();
+            throw new ConflictException("The contract was changed or submitted by someone else at the same time. Reload and try again.", ProblemTypes.Stale);
+        }
     }
 
     public async Task SignAsync(Guid contractId, SignInput input, CancellationToken cancellationToken = default)
@@ -353,28 +655,89 @@ public class ContractCommandService
         {
             throw new ForbiddenException("Only the owner, delegate, responsible or an administrator can record a renewal decision.");
         }
-        if (contract.Status != ContractStatus.Active || contract.EndDate is null)
+        if (contract.Status != ContractStatus.Active)
         {
-            throw new ConflictException("A renewal decision can only be recorded on an active contract with an end date.");
+            throw new ConflictException("A renewal decision can only be recorded on an active contract.");
         }
-        if (input.Decision is null)
+        if (input.Decision is null || !Enum.IsDefined(typeof(RenewalDecision), input.Decision.Value))
         {
             throw new InputValidationException("decision", "Choose a decision.");
         }
 
         var decision = input.Decision.Value;
+        var today = _clock.Today;
+        var now = _clock.UtcNow;
+        var culture = CultureInfo.InvariantCulture;
         if ((decision == RenewalDecision.GiveNotice || decision == RenewalDecision.LetExpire) && string.IsNullOrWhiteSpace(input.Comment))
         {
             throw new InputValidationException("comment", "A comment is required when giving notice or letting the contract expire.");
         }
-        var rolled = RenewalRules.Apply(contract, decision, profile.UserId, _clock.UtcNow, input.Comment);
+
+        if (contract.EndDate is null)
+        {
+            // M5: an open-ended contract has nothing to renew, but notice can be given at any time.
+            if (decision != RenewalDecision.GiveNotice)
+            {
+                throw new ConflictException("An open-ended contract has no renewal to decide. Record 'Give notice' to end it.");
+            }
+            var noticeDays = Math.Max(0, contract.NoticePeriodDays ?? 0);
+            contract.EndDate = today.AddDays(noticeDays);
+            RenewalRules.Apply(contract, decision, profile.UserId, now, input.Comment);
+            _audit.Record("renewal.decided",
+                "Notice given on an open-ended contract; it ends on " + contract.EndDate.Value.ToString("yyyy-MM-dd", culture)
+                    + " (" + noticeDays + " days' notice) - " + input.Comment!.Trim(),
+                contract.Id);
+            await _db.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        if (decision == RenewalDecision.LetExpire && contract.AutoRenew)
+        {
+            throw new InputValidationException("decision",
+                "This contract renews automatically, so it cannot be left to expire. Give notice instead.");
+        }
+
+        DateOnly? newEndDate = null;
+        if (decision == RenewalDecision.Renew)
+        {
+            // M4: one renewal per term, and not before the reminder cycle of that term has started.
+            var deadline = ContractCalculations.NoticeDeadline(contract)!.Value;
+            if (contract.LastRenewedDeadline == deadline)
+            {
+                throw new ConflictException("This term has already been renewed.");
+            }
+            var settings = await ReminderSettingsReader.GetAsync(_db, cancellationToken);
+            if (!ContractCalculations.IsInRenewalWindow(deadline, today, settings.GetNoticeDays()))
+            {
+                throw new ConflictException(
+                    "It is too early to renew this term. A renewal can be recorded from the first reminder before the notice deadline ("
+                        + deadline.ToString("yyyy-MM-dd", culture) + ").");
+            }
+            if (input.NewEndDate is not null)
+            {
+                if (input.NewEndDate.Value <= contract.EndDate.Value)
+                {
+                    throw new InputValidationException("newEndDate", "The new end date must be after the current end date.");
+                }
+                newEndDate = input.NewEndDate;
+            }
+            else if (!(contract.AutoRenew && contract.RenewalMonths is > 0))
+            {
+                throw new InputValidationException("newEndDate", "Enter the end date of the new term.");
+            }
+        }
+
+        var rolled = RenewalRules.Apply(contract, decision, profile.UserId, now, input.Comment, newEndDate);
         if (rolled)
         {
             // New term: the reminder cycle starts over.
-            var id = contract.Id;
-            var old = await _db.Reminders.Where(r => r.ContractId == id && r.ObligationId == null).ToListAsync(cancellationToken);
-            _db.Reminders.RemoveRange(old);
-            _audit.Record("renewal.renewed", "Renewed; new end date " + contract.EndDate!.Value.ToString("yyyy-MM-dd"), contract.Id);
+            await NoticeCycle.RemoveAsync(_db, contract.Id, cancellationToken);
+            var text = "Renewed; new end date " + contract.EndDate!.Value.ToString("yyyy-MM-dd", culture);
+            if (!string.IsNullOrWhiteSpace(input.Comment))
+            {
+                text += " - " + input.Comment.Trim();
+            }
+            _audit.Record("renewal.renewed", text, contract.Id);
         }
         else
         {

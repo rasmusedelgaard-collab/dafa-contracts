@@ -64,8 +64,11 @@ public sealed class GraphDirectoryService : IDirectoryService
                 continue;
             }
 
+            // Link by e-mail only to a row that has no directory id yet: a reused address must not
+            // inherit the roles and memberships of its previous holder.
             var user = users.FirstOrDefault(u => u.ExternalId == externalId)
-                ?? users.FirstOrDefault(u => string.Equals(u.Email, email, StringComparison.OrdinalIgnoreCase));
+                ?? users.FirstOrDefault(u => string.IsNullOrEmpty(u.ExternalId)
+                    && string.Equals(u.Email, email, StringComparison.OrdinalIgnoreCase));
             if (user is null)
             {
                 if (!enabled)

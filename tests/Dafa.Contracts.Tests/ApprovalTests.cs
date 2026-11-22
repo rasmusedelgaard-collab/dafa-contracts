@@ -72,10 +72,13 @@ public class ApprovalRuleMatcherTests
     }
 
     [Fact]
-    public void Value_IsTotalWhenSet_OtherwiseAnnual_ConvertedToDkk()
+    public void Value_IsTheLargerOfTotalAndAnnual_ConvertedToDkk()
     {
         Assert.Equal(2_000_000m, ApprovalRuleMatcher.ValueDkk(500_000m, 2_000_000m, "DKK"));
-        Assert.Equal(300_000m, ApprovalRuleMatcher.ValueDkk(500_000m, 300_000m, "DKK"));
+        // M3: a small total value cannot hide a larger annual value.
+        Assert.Equal(500_000m, ApprovalRuleMatcher.ValueDkk(500_000m, 300_000m, "DKK"));
+        Assert.Equal(50_000_000m, ApprovalRuleMatcher.ValueDkk(50_000_000m, 1m, "DKK"));
+        Assert.Equal(300_000m, ApprovalRuleMatcher.ValueDkk(null, 300_000m, "DKK"));
         Assert.Equal(7_460_000m, ApprovalRuleMatcher.ValueDkk(1_000_000m, null, "EUR"));
         Assert.Equal(0m, ApprovalRuleMatcher.ValueDkk(null, null, "DKK"));
     }

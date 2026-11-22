@@ -1,4 +1,5 @@
 using Dafa.Contracts.Api.Auth;
+using Dafa.Contracts.Api.Hosting;
 using Dafa.Contracts.Core.Abstractions;
 using Dafa.Contracts.Core.Domain;
 using Dafa.Contracts.Core.Dtos;
@@ -115,11 +116,13 @@ public class DevController : ControllerBase
 
     private readonly IAppDbContext _db;
     private readonly AuthSettings _auth;
+    private readonly AccessCodeThrottle _throttle;
 
-    public DevController(IAppDbContext db, AuthSettings auth)
+    public DevController(IAppDbContext db, AuthSettings auth, AccessCodeThrottle throttle)
     {
         _db = db;
         _auth = auth;
+        _throttle = throttle;
     }
 
     [HttpGet("config")]
@@ -128,21 +131,39 @@ public class DevController : ControllerBase
         return new DevConfigDto { AuthMode = _auth.Mode, AccessCodeRequired = _auth.AccessCodeRequired };
     }
 
+    private string ClientKey() => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
     /// <summary>
-    /// True when no access code is configured, when the caller already has a session (the code was
-    /// checked at login), or when the supplied code matches.
+    /// Null when the caller may use the dev endpoints: no access code is configured, the caller has a
+    /// session for a known, active user (the code was checked at login; a deactivated or unknown
+    /// user's cookie does not count, M10), or the supplied code matches. Otherwise the 401 or 429
+    /// answer. Wrong codes are counted per client address (L6).
     /// </summary>
-    private bool HasAccess(string? suppliedCode)
+    private ObjectResult? CheckAccess(string? suppliedCode, string missingDetail)
     {
         if (!_auth.AccessCodeRequired)
         {
-            return true;
+            return null;
         }
-        if (User.Identity?.IsAuthenticated == true)
+        if (User.FindFirst(AppClaims.AppUserId) is not null)
         {
-            return true;
+            return null;
         }
-        return _auth.AccessCodeMatches(suppliedCode);
+        var client = ClientKey();
+        if (_throttle.IsBlocked(client))
+        {
+            return Problem(statusCode: StatusCodes.Status429TooManyRequests, title: "Too many attempts",
+                detail: "Too many wrong access codes. Wait 10 minutes and try again.");
+        }
+        if (_auth.AccessCodeMatches(suppliedCode))
+        {
+            return null;
+        }
+        if (!string.IsNullOrEmpty(suppliedCode))
+        {
+            _throttle.RecordFailure(client);
+        }
+        return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "Access code required", detail: missingDetail);
     }
 
     [HttpGet("users")]
@@ -153,10 +174,10 @@ public class DevController : ControllerBase
             return NotFound();
         }
         var header = Request.Headers[AccessCodeHeader].ToString();
-        if (!HasAccess(header))
+        var denied = CheckAccess(header, "Enter the access code for this test site.");
+        if (denied is not null)
         {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "Access code required",
-                detail: "Enter the access code for this test site.");
+            return denied;
         }
 
         var users = await _db.Users.AsNoTracking().Where(u => u.IsActive).ToListAsync(cancellationToken);
@@ -212,10 +233,10 @@ public class DevController : ControllerBase
             return NotFound();
         }
         var supplied = string.IsNullOrEmpty(input.AccessCode) ? Request.Headers[AccessCodeHeader].ToString() : input.AccessCode;
-        if (!HasAccess(supplied))
+        var denied = CheckAccess(supplied, "The access code is missing or wrong.");
+        if (denied is not null)
         {
-            return Problem(statusCode: StatusCodes.Status401Unauthorized, title: "Access code required",
-                detail: "The access code is missing or wrong.");
+            return denied;
         }
         if (input.UserId is null)
         {
@@ -232,6 +253,7 @@ public class DevController : ControllerBase
             new[]
             {
                 new Claim(AppClaims.DevUserId, user.Id.ToString()),
+                new Claim(AppClaims.DevCodeStamp, _auth.AccessCodeStamp()),
                 new Claim(ClaimTypes.Name, user.Name)
             },
             CookieAuthenticationDefaults.AuthenticationScheme);

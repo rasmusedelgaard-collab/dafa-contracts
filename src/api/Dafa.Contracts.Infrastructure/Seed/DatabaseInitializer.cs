@@ -42,9 +42,10 @@ public class DatabaseInitializer
         EnsureSqliteFolder();
         await _db.Database.EnsureCreatedAsync(cancellationToken);
         await SeedReferenceDataAsync(cancellationToken);
-        // Demo users and contracts are for the test environment only: never with Entra sign-in.
-        var entraMode = string.Equals((_configuration["Auth:Mode"] ?? "").Trim(), "Entra", StringComparison.OrdinalIgnoreCase);
-        if (_configuration.GetValue<bool>("Seed:DemoData") && !entraMode)
+        // Demo users and contracts are for the test environment only. Off unless Seed:DemoData=true
+        // is set explicitly, and only with Dev sign-in: never with Entra, never with an unknown mode.
+        var devMode = string.Equals((_configuration["Auth:Mode"] ?? "").Trim(), "Dev", StringComparison.OrdinalIgnoreCase);
+        if (_configuration.GetValue("Seed:DemoData", false) && devMode)
         {
             await SeedDemoUsersAsync(cancellationToken);
             await SeedDemoContractsAsync(cancellationToken);
@@ -155,7 +156,10 @@ public class DatabaseInitializer
                 Stage(1, ApproverKind.DepartmentHead, ApproverKind.Legal),
                 Stage(2, ApproverKind.EntityManager),
                 Stage(3, ApproverKind.GroupCFO, ApproverKind.GroupCEO)));
-            _db.ApprovalRules.Add(Rule("NDA", null, null, 10, SeedIds.ContractType(SeedNames.TypeNda),
+            // Type rules need a maximum value, otherwise labelling a large contract "NDA" would skip the
+            // value bands (M3). With the cap, type + band is more specific than a band alone, and an
+            // "NDA" of DKK 1m or more falls through to the bands.
+            _db.ApprovalRules.Add(Rule("NDA", null, 1_000_000m, 10, SeedIds.ContractType(SeedNames.TypeNda),
                 Stage(1, ApproverKind.Legal)));
             _db.ApprovalRules.Add(Rule("Corporate", null, null, 10, SeedIds.ContractType(SeedNames.TypeCorporate),
                 Stage(1, ApproverKind.Legal, ApproverKind.GroupCFO),
@@ -635,10 +639,12 @@ public class DatabaseInitializer
         // Waiting in stage 1 (department head not assigned -> administrator), stage 2 entity manager.
         await StartApprovalAsync("freight-se", cancellationToken);
 
-        // Two parallel approvers in stage 1; the department head has approved, Legal is still open.
+        // Two parallel approvers in stage 1; the department head slot has approved, Legal is still open.
+        // Jonas is head of Purchasing but owns this contract, so the engine gave his slot to the
+        // entity manager (separation of duties).
         var tpeSteps = await StartApprovalAsync("tpe", cancellationToken);
-        var jonasId = SeedIds.User("jonas");
-        var approvedStep = tpeSteps.FirstOrDefault(s => s.StageOrder == 1 && s.ApproverId == jonasId);
+        var legalId = SeedIds.User("sofie");
+        var approvedStep = tpeSteps.FirstOrDefault(s => s.StageOrder == 1 && s.ApproverId != legalId);
         if (approvedStep is not null)
         {
             approvedStep.Status = ApprovalStepStatus.Approved;

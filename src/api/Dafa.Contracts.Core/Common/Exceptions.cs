@@ -11,6 +11,29 @@ public class AppException : Exception
 
     public int StatusCode { get; }
     public string Title { get; }
+
+    /// <summary>RFC 7807 "type" of the problem response, when the client needs to tell cases apart. Null = not set.</summary>
+    public string? ProblemType { get; protected set; }
+}
+
+/// <summary>
+/// The "type" values of 409 responses, so the UI can tell "somebody else changed this, reload"
+/// from a business rule that will not go away by retrying.
+/// </summary>
+public static class ProblemTypes
+{
+    /// <summary>The data was changed by someone else after it was read (optimistic concurrency). Reload and retry.</summary>
+    public const string Stale = "urn:dafa:problem:stale";
+    /// <summary>No approval rule matches the contract, or the matching rule has no stages.</summary>
+    public const string NoApprovalRule = "urn:dafa:problem:no-approval-rule";
+    /// <summary>No approver independent of the owner and the submitter could be found for a stage.</summary>
+    public const string NoApprover = "urn:dafa:problem:no-approver";
+    /// <summary>An approved term or the main document is locked for this user.</summary>
+    public const string LockedFields = "urn:dafa:problem:locked-fields";
+    /// <summary>The same thing already exists (for example an identical link).</summary>
+    public const string Duplicate = "urn:dafa:problem:duplicate";
+    /// <summary>The action is not possible in the current state (status, closed approval, term already renewed, ...).</summary>
+    public const string InvalidState = "urn:dafa:problem:invalid-state";
 }
 
 public class NotFoundException : AppException
@@ -30,7 +53,12 @@ public class UnauthorizedException : AppException
 
 public class ConflictException : AppException
 {
-    public ConflictException(string message) : base(409, "Conflict", message) { }
+    public ConflictException(string message) : this(message, ProblemTypes.InvalidState) { }
+
+    public ConflictException(string message, string problemType) : base(409, "Conflict", message)
+    {
+        ProblemType = problemType;
+    }
 }
 
 public class InputValidationException : AppException

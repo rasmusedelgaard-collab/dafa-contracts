@@ -12,11 +12,10 @@ namespace Dafa.Contracts.Infrastructure.Providers;
 /// <summary>TEST MODE (Analyzer:Provider=Heuristic). Text extraction plus regex/keyword rules; no external calls.</summary>
 public sealed class HeuristicContractAnalyzer : IContractAnalyzer
 {
-    public Task<ContractAnalysis> AnalyzeAsync(string fileName, byte[] content, CancellationToken cancellationToken = default)
+    public async Task<ContractAnalysis> AnalyzeAsync(string fileName, byte[] content, CancellationToken cancellationToken = default)
     {
-        var extracted = TextExtractor.Extract(fileName, content);
-        var analysis = HeuristicExtraction.Analyze(extracted.Text, fileName, extracted.Pages);
-        return Task.FromResult(analysis);
+        var extracted = await TextExtractor.ExtractAsync(fileName, content, cancellationToken);
+        return TextExtractor.ToAnalysis(extracted, fileName);
     }
 }
 
@@ -54,8 +53,8 @@ public sealed class AzureOpenAiContractAnalyzer : IContractAnalyzer
 
     public async Task<ContractAnalysis> AnalyzeAsync(string fileName, byte[] content, CancellationToken cancellationToken = default)
     {
-        var extracted = TextExtractor.Extract(fileName, content);
-        var fallback = HeuristicExtraction.Analyze(extracted.Text, fileName, extracted.Pages);
+        var extracted = await TextExtractor.ExtractAsync(fileName, content, cancellationToken);
+        var fallback = TextExtractor.ToAnalysis(extracted, fileName);
         if (string.IsNullOrWhiteSpace(extracted.Text))
         {
             return fallback;
@@ -114,7 +113,8 @@ public sealed class AzureOpenAiContractAnalyzer : IContractAnalyzer
                     .Where(s => !string.IsNullOrWhiteSpace(s.Field) && !string.IsNullOrWhiteSpace(s.Value))
                     .ToList(),
                 Summary = string.IsNullOrWhiteSpace(answer.Summary) ? fallback.Summary : answer.Summary!,
-                Deviations = answer.Deviations ?? fallback.Deviations
+                Deviations = answer.Deviations ?? fallback.Deviations,
+                Note = fallback.Note
             };
         }
         catch (OperationCanceledException)

@@ -43,9 +43,10 @@ public class OutboxNotifier : INotifier
         return message;
     }
 
-    public virtual async Task SendAsync(Notification notification, CancellationToken cancellationToken = default)
+    public virtual async Task<bool> SendAsync(Notification notification, CancellationToken cancellationToken = default)
     {
         await AddToOutboxAsync(notification, cancellationToken);
+        return true;
     }
 }
 
@@ -73,12 +74,14 @@ public sealed class GraphMailNotifier : OutboxNotifier
         _logger = logger;
     }
 
-    public override async Task SendAsync(Notification notification, CancellationToken cancellationToken = default)
+    /// <summary>Returns false when the mail could not be sent, so the reminder job tries again later.</summary>
+    public override async Task<bool> SendAsync(Notification notification, CancellationToken cancellationToken = default)
     {
         var message = await AddToOutboxAsync(notification, cancellationToken);
         if (string.IsNullOrWhiteSpace(message.RecipientEmail))
         {
-            return;
+            // Nobody to send to; retrying would not help.
+            return true;
         }
 
         try
@@ -121,6 +124,7 @@ public sealed class GraphMailNotifier : OutboxNotifier
             using var response = await client.SendAsync(request, cancellationToken);
             response.EnsureSuccessStatusCode();
             message.DeliveredAt = Clock.UtcNow;
+            return true;
         }
         catch (OperationCanceledException)
         {
@@ -130,6 +134,7 @@ public sealed class GraphMailNotifier : OutboxNotifier
         {
             // The outbox row stays without DeliveredAt so the failure is visible in admin.
             _logger.LogError(ex, "Sending mail to {Recipient} failed", message.RecipientEmail);
+            return false;
         }
     }
 }

@@ -30,4 +30,10 @@ public interface IAppDbContext
     DbSet<PendingUpload> PendingUploads { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Forgets every tracked entity and pending change. Used after a failed save (concurrency
+    /// conflict, unique index) before the operation is retried from freshly loaded rows.
+    /// </summary>
+    void DiscardChanges();
 }

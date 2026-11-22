@@ -157,3 +157,132 @@ Behaviour to check on the first real run: SQL Server `EnsureCreated` against the
 - Uploads are buffered in memory and pending intake uploads are stored in the database (25 MB limit; cleaned after 7 days).
 - Moving a contract to another entity or department does not move its stored files.
 - Under IIS in-process hosting, uploads above about 28 MB are rejected by the IIS request limit unless `web.config` raises it.
+
+## Frontend phase 2 (2026-11-22)
+
+Scope: `src/web` only. Not committed.
+
+### How to run (changed)
+```
+cd src/web
+npm run dev          # mock API in the browser, http://localhost:5173
+npm run dev:real     # vite --mode real: proxies /api to http://localhost:5080 (works on Windows; no inline env vars)
+npm run build        # real API mode; the bundle contains no mock code and no seed data
+npm run build:demo   # vite build --mode demo: static demo with the in-browser mock
+npm run lint
+npm test
+```
+The API mode follows the Vite mode (`real`, `demo`, `production`) in `vite.config.ts`; `VITE_API_MODE` still overrides it. No `.env.*` files are used, because the root `.gitignore` ignores them. `VITE_MOCK_ACCESS_CODE=<code> npm run dev` makes the mock ask for an access code.
+
+### Results of the last run here
+- `npm run lint`: clean. `npm test`: 171 tests in 10 files pass. `npm run build` and `npm run build:demo`: succeed.
+- Real build: no file in `dist/assets` contains the seed strings "Nordpolymer", "rubber compounds", `createSeed` or "Sample data" (grep). Demo build: the mock is its own chunk (`mockApi-*.js`, about 74 kB).
+- Bundle (real mode): entry 251 kB (78 kB gzip), shared components 95 kB, and one chunk per lazy route (Settings 45 kB, Record 24 kB, New contract 23 kB, Renewals 9 kB, Approvals 8 kB, Overview 6 kB).
+- Headless Chrome on the demo build at 360, 768 and 1440 px, 22 pages each (Home, register, record, record with Edit details open, New contract, Approvals queue and detail, Renewals by entity and by department, Overview, both no-access states, the ten Settings sections): no console errors or warnings and no horizontal page overflow. The timeline and tables scroll inside their own card by design. The check script is not in the repo.
+
+### Built
+- Approvals: queue with waiting time (new today / waiting n days / red from 7 days), decision panel with key-term tiles, "What differs from the DAFA standard" with severity pills, route as cards with avatars grouped per stage ("in parallel"), comment with Approve / Reject (comment required) / Delegate (user picker), link to the contract, empty state. Phone: queue first, then one approval with a back link and a sticky Reject/Approve bar; the tab bar is hidden on that view.
+- Renewals: 12-month timeline, one lane per legal entity or per department (toggle), markers placed by date and colored by urgency, a "today" line, overlapping markers stacked in rows, arrow keys/Home/End between markers, selected-contract card with "Open contract" and "Record decision" (the existing RenewalDialog), list of all deadlines below. Under 720 px the timeline is replaced by the list as cards with a full-width action. Overdue deadlines are red, pinned at the left edge and first in the list. The top-bar entity scope filters the page.
+- Overview: five KPI tiles (links into the register views), annual value by legal entity and contracts by type as plain HTML bar lists, expiring without renewal, change-of-control list, missing-data tile linking to the register's missing view. Users without access get a no-access page and the API is not called; a 403 from the API gives the same page.
+- Settings (admin only, `/settings/<section>`, side navigation; a select under 1000 px): Legal entities (read-only, from lookups), Departments and Contract types (add, rename, delete), Approval rules (create/edit with criteria and ordered stages, role or specific person per approver, move/remove stages; delete; "Which rule applies?" tester on the preview endpoint), Reminders, Retention (one row per contract type, saved together), Templates (upload, download, edit, delete), Holiday cover, Audit log (filter by contract, 50 per page, state in the URL), Notifications outbox, and "Run jobs now". All forms validate before sending and show toasts.
+- Sign-in: `GET dev/config` on start; access-code screen before the demo-user picker when required (code in sessionStorage, re-asked when the API stops accepting it); in Entra mode a 401 from `GET me` redirects to `/api/auth/login?returnUrl=<path>` with a guard against redirect loops (a second 401 within 15 seconds shows a "Sign in" link instead).
+- Mock loaded with a dynamic import only in mock mode; routes other than Home and the register are lazy.
+- Phase 1 gaps: the reminder preview and hint in New contract use `GET reminder-settings`; quick look and the renewal dialog read with `?peek=true`; "Open in SharePoint" unchanged (only with `storeUrl`).
+- Phone layouts: Home tasks and register rows are separate cards with full-width actions; the register gets a sort select because the table header is hidden.
+- Backend contract changes from the project manager, all nine: `X-Requested-With: dafa-contracts` on every request; `changeOfControl` nullable, shown as "Not set"; unknown `missingData` labels shown as they are; overdue renewals; `lockedFields` disables inputs in Edit details with the hint; `newEndDate` for Renew on a fixed-term contract, GiveNotice for open-ended contracts (a "Give notice" button on the record); delegate picker filtered and 400/409 toasts; upload type and 25 MB checks in the document dialog and New contract, Main document replacement hidden for non-admins after approval; 409 on approve/submit refetches and says "This was just updated by someone else." All are mirrored in the mock.
+
+### Stubbed / assumptions
+- Nothing here has run against the real API; the frontend was only read against the backend sources in `src/api`.
+- The mock uses the backend's `ApprovedTerms.LockedFields` list and locks it for non-admins on every contract that is not a Draft.
+- The delegate picker can only filter by role if lookup users carry `roles`, and can only exclude the submitter if the detail carries `submittedById` (both requested in DECISIONS.md). Without them it excludes yourself and the owner, and the API's 400 is shown as a toast.
+- The mock's seeded templates download as .rtf; uploaded ones return the uploaded bytes.
+- With `VITE_MOCK_ACCESS_CODE` set, the mock starts signed out on every reload.
+
+### Known gaps
+- A 409 on submit also covers "no approval rule matches" in the current backend. The toast then reads "This was just updated by someone else." followed by the server's own text, which is misleading for that case. A distinct status or problem `type` for a stale update would fix it.
+- Because locked fields include the notice period, values and change of control, an owner can no longer complete missing data on an imported Active contract; Edit details shows those inputs disabled and only an administrator can fill them in. The "Complete" task on My work still points owners there.
+- Deviations from the designs: see DECISIONS.md (timeline axis, list under the timeline, approver names on the route, Settings layout, phone approval comment field).
+- The Settings dialogs (rule editor, template upload, holiday cover) were exercised in tests but not screenshot-checked at 360 px. Chrome only; no Firefox/Safari run, no screen-reader pass, no automated contrast audit.
+- `:has()` hides the tab bar on the phone approval view; in a browser without it the Reject/Approve bar covers the tab bar instead.
+- Retention saves changed rows one request at a time; if one fails the earlier ones stay saved (the list is refetched).
+- The mock seed still has two in-progress approvals where the department head may also be the contract owner; only the ERP one was corrected to the substitute rule.
+
+## Backend phase 2 (review fixes) (2026-11-22)
+
+Scope: `src/api`, `tests`, `.github/workflows/deploy-test.yml`, `docs/DEPLOY_TEST.md`, `docs/RUNBOOK.md` (configuration keys and rule specificity), this file and `docs/DECISIONS.md`. `src/web` not touched. Not committed.
+
+**Nothing here has been compiled or run.** There is still no .NET SDK in the workspace. Every changed file was read back and desk-checked, and brackets were checked with a script, but the first real compile and test run is the CI `api` job. Expect some compile errors and failing tests on the first run (most likely places are listed below).
+
+**The data model changed** (new columns `Version`, `LastRenewedDeadline`, `TermKey`, `Attempts`; new unique indexes). There are no migrations: the test database must be recreated once before this version is deployed (`docs/DEPLOY_TEST.md`, "After an update that changes the database"). **The deployment now needs a sixth secret, `MONSTERASP_DEV_ACCESS_CODE`** (at least 12 characters); without it the deploy is skipped, and the app itself refuses to start in Dev mode outside Development.
+
+### Findings from docs/REVIEW_BACKEND.md
+
+| Finding | Result | What was done / why not |
+|---|---|---|
+| H1 Approved contract can be changed | Fixed | From submission on, the approval-relevant fields are locked for owners (409 `locked-fields`); administrators may change them; every update audits old and new value per field, administrator changes to approved terms get their own audit event. `lockedFields` on the detail. Draft stays fully editable. Empty locked fields can be filled in once (see frontend requests below). |
+| H2 End date / notice period edit kills reminders | Fixed | When the computed notice deadline changes (edit, Renew, automatic roll-forward) the Notice*/Escalation rows are deleted and a stale decision on an Active contract is cleared, with an audit line. Reminder rows also carry the term. |
+| H3 Sign-in mode fails open | Fixed | Unknown or missing `Auth:Mode` stops startup; Dev outside Development needs an access code of 12+ characters; `Seed:DemoData` defaults to false and never seeds unless the mode is Dev; wrong codes throttled (10 per 10 minutes per address); deploy workflow requires and writes the access code and no longer writes unused keys. |
+| M1 No concurrency control on approvals | Fixed | Guid concurrency token on Contract, ApprovalInstance, ApprovalStep; decisions collide on the instance row and the loser is replayed from fresh rows (stage completion re-evaluated); double decision and double submit are 409; filtered unique index for one pending approval per contract. |
+| M2 No separation of duties | Fixed | Owner and submitter are never approvers (substitute: entity manager, Group CFO, Group CEO, then an administrator; label records it); delegation cannot target owner, submitter or oneself and needs the Approver or Admin role; admin reassignment recorded distinctly; holiday cover never routes to owner or submitter. |
+| M3 Submitter can steer the route | Fixed | Approval value is the larger of total and annual value; seeded NDA rule capped at DKK 1m; specificity documented in the runbook. Not done: rejecting a total below the annual value (not asked for). Existing databases keep their old NDA rule until an administrator edits it. |
+| M4 Renewal decisions | Fixed | Renew once per term (`LastRenewedDeadline`) and only from the first reminder date on; fixed-term Renew requires `newEndDate`; LetExpire on auto-renew is 400. Residual: with a renewal period shorter than the reminder window, two Renew calls one after the other (not simultaneous) can each be valid for consecutive terms. |
+| M5 Open-ended contracts | Fixed | GiveNotice at any time (NoticeGiven, end date = today + notice period); yearly review reminder 60 days before each anniversary. Gap: the planned review date is not shown on the record before it is sent. |
+| M6 Documents: any type, replaceable after approval | Fixed | Allowlist by extension plus content signature, 25 MB, Main upload or new version of a Main document after submission is admin-only, same-name uploads are new versions (unique index, unique store keys, CreateNew), `X-Content-Type-Options: nosniff`. Admin template upload is not covered by the allowlist. |
+| M7 Text extraction without limits | Fixed | Limits on file size, pages (300), characters (400k), decompressed .docx size (measured, not taken from the zip directory) and a 20 second budget; over a limit the result is "no suggestions" with a note. A parser stuck inside one page cannot be killed; the request returns but the thread runs on until it finishes. PdfPig's own memory ceiling on hostile PDFs is still unverified. |
+| M8 Reminder idempotency | Fixed | Unique index (contract, kind, term key); one job run at a time per process; a failed part discards its changes; failed deliveries stay unsent and are retried (max 5). Limit: with two app instances in Graph mode a mail could still go out twice before the second instance's save is refused. |
+| M9 Entra provisioning | Fixed (never run) | Unique index on the object id, race-safe upsert, e-mail linking only onto rows without an object id (also in the Graph directory sync), `Auth:BootstrapAdmins`. Provisioning was kept in the claims transformation rather than moved to OnTokenValidated. Unit-tested on Sqlite; never run against Entra. |
+| M10 Principals without an app user | Fixed | Default authorization policy requires the app-user claim; `suppliers` and `approvals/preview` also load the profile; in Dev mode such a cookie is treated as no session and never replaces the access code. |
+| L1 CSV formula guard | Fixed | Tab and carriage return added. |
+| L2 Enums accept integers | Fixed | String-only enum converter; `Enum.IsDefined` checks where enums come in by other routes. |
+| L3 "Today" is the UTC date | Fixed | Date in Europe/Copenhagen, UTC fallback. Not configurable. |
+| L4 Over-long input | Partially | Counterparty name validated (300); role labels truncated. Other free-text columns are unlimited in the model; not every string was audited. |
+| L5 Contract number retry | Partially | Retries (up to 4) only when the number is really taken, and the audit text follows. Not done: in SharePoint mode the file is still stored before the number is final. |
+| L6 No throttling on the access code | Fixed | In-memory throttle; the cookie carries a fingerprint of the code, so changing the code ends old sessions. Behind a proxy all users may share one address. |
+| L7 Concurrent same-name uploads | Fixed | See M6. A lost race leaves an orphan file in the store. |
+| L8 Audit text shows linked contract number | Fixed | Only the kind is logged. |
+| L9 Pending upload cleanup | Fixed | Deletes by id without loading content; 20 pending uploads per user. |
+| L10 due90 list vs home tile | Fixed | Same rule in both. |
+| L11 Obligation and approval dead ends | Partially | Obligation responsible must be able to read the contract; an approver who is inactive when the stage opens is replaced. Not done: holiday cover for steps that were already delegated or rerouted. |
+| CSRF (needs verification) | Fixed | `X-Requested-With: dafa-contracts` required on every non-GET/HEAD `/api` request. |
+| Parity 4 (LetExpire on auto-renew) | Fixed | 400. |
+| Parity: `RenewalItem` nullability | Fixed | Non-nullable in the DTO. |
+| Needs verification: multi-tenant sign-in, stale Dev cookie after a switch to Entra, claims transformation frequency, IIS request limit, PdfPig on hostile PDFs, SharePoint mode | Not fixed | Cannot be settled without running the system. Upload limit is now 25 MB (below the IIS default), which removes the mismatch in the messages. |
+
+### Requests from frontend phase 2
+
+| Request | Result | Notes |
+|---|---|---|
+| 1. Problem `type` on 409 | Done | `stale`, `no-approval-rule`, `no-approver`, `locked-fields`, `duplicate`, `invalid-state` (list in DECISIONS.md). |
+| 2. `roles` on lookup users, `submittedById` on the detail | Done | |
+| 3. Empty locked fields can be filled in once | Done, with one deviation | `lockedFields` lists only locked fields that have a value. Deviation: `annualValue` and `totalValue` are locked together as soon as either is set, because the approval value is the larger of the two; otherwise an owner could turn an approved 900,000 contract into a 50m one by filling in the empty field (finding H1 again). When both are empty they can be filled in. |
+| 4. Seed: no owner or submitter as approver | Done | The seed starts its approvals through the engine, so the M2 substitution applies; an integration test checks every seeded step. The backend seed has no ERP approval (that is the frontend mock); here the affected ones were the TPE supply agreement and the rejected webshop subscription. |
+| "Contract additions for backend" in DECISIONS.md | Met | The list has 13 entries (the request said 11): dev/config, access code header and body, auth/login, reminder-settings, peek, preview rule id/name, templates multipart and content, X-Requested-With, changeOfControl null and lockedFields with 409, newEndDate, negative daysToNotice with months=13, roles and submittedById, audit by contract. Two things the frontend should know: a throttled access code is 429 (not 401/403), and `.dotx` template uploads were not checked. |
+
+### Tests added (not run)
+`tests/Dafa.Contracts.Tests/ReviewFixTests.cs` (service level) and `ApiSecurityTests.cs` (HTTP), about 125 new test cases (85 test methods): one or more per High and Medium finding, the review's untested access paths (by-id endpoints without access, scoped search/export/home/renewals/overview, cross-user uploadId), CSRF header, deactivated user, access code and throttle over HTTP, Entra mode (dev endpoints 404, no demo seed), Entra provisioning. Changed existing tests: approval value basis, the obligation reminder test (an open-ended contract now also gets a review reminder), and the API test factory (sends the header, several configurations, all host tests in one xUnit collection so they do not run in parallel).
+
+### Most likely to fail compilation or tests
+1. `Providers/TextExtractor.cs`: `OpenSettings.MaxCharactersInPart` and the three-argument `WordprocessingDocument.Open` (Open XML SDK 3.3.0), `Task.WaitAsync`.
+2. `Data/AppDbContext.cs`: the named, filtered unique index `HasIndex(x => x.ContractId, "IX_ApprovalInstances_OnePendingPerContract").HasFilter("[Status] = 0")` next to the plain index on the same column, on both providers; overriding `SaveChanges(bool)` / `SaveChangesAsync(bool, CancellationToken)`.
+3. `tests/.../ApiIntegrationTests.cs`: the `CreateHost` override and several factories with different environment variables; `EntraModeApiTests` boots the host in Entra mode with a placeholder app registration, which has never been done (Microsoft.Identity.Web may reject the placeholder values at startup).
+4. `Controllers/GeneralControllers.cs`: returning `ObjectResult?` from actions typed `ActionResult<T>`.
+5. `Program.cs`: `new JsonStringEnumConverter(null, false)`, the inline `app.Use` overload, `AuthorizationPolicyBuilder.RequireClaim`.
+6. Tests that interleave two requests (`InterleavingClock`) block on a second task inside the first; they assume the Sqlite calls complete synchronously.
+7. Integration tests that depend on demo data details (first Production contract, the EPDM contract's supplier, obligations and links).
+8. Nullable-reference warnings; warnings are not errors.
+
+### Configuration keys (changes to the phase 1 table)
+| Key | Default | Notes |
+|---|---|---|
+| `Auth:Mode` | none (`Dev` only in `appsettings.Development.json`) | must be `Dev` or `Entra`, otherwise the app does not start |
+| `Auth:Dev:AccessCode` | empty | required (12+ characters) for Dev mode outside Development |
+| `Auth:BootstrapAdmins` | empty | Entra mode: e-mail addresses / UPNs that become administrators at sign-in |
+| `Seed:DemoData` | `false` (`true` in Development and on the test site) | only with `Auth:Mode=Dev` |
+
+The deploy workflow now writes only `Auth:Mode`, `Auth:Dev:AccessCode`, `Database:Provider`, `ConnectionStrings:Default` and `Seed:DemoData`.
+
+### Known gaps after this phase
+- Still no migrations; this phase needs a new test database.
+- The throttle and the job lock are per process; nothing is shared between app instances.
+- A rejected or expired contract keeps its documents and approval history; reopening a Draft after rejection unlocks all fields again (by design: it must be re-approved).
+- Moving the lock to "submission" means a rejected contract is the only way back to free editing; there is no "withdraw from approval" action.

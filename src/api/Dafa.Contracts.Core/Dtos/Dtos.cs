@@ -39,6 +39,8 @@ public class LookupUserDto
     public string Name { get; set; } = "";
     public string Initials { get; set; } = "";
     public List<Guid> DepartmentIds { get; set; } = new();
+    /// <summary>Reader, ContractOwner, Approver, Admin. Lets the UI offer only approvers as delegates.</summary>
+    public List<string> Roles { get; set; } = new();
 }
 
 public class LookupsDto
@@ -222,6 +224,15 @@ public class ContractDetailDto : ContractListItemDto
     public List<Deviation> Deviations { get; set; } = new();
     public bool CanEdit { get; set; }
     public bool CanDecideRenewal { get; set; }
+    /// <summary>Who submitted the current or most recent approval; null when the contract was never submitted.</summary>
+    public Guid? SubmittedById { get; set; }
+    /// <summary>
+    /// Names of the request fields this user may not change because the contract is approved
+    /// (camelCase, as in the PUT body): the locked fields that currently have a value. A locked
+    /// field that is still empty is not listed and may be filled in once. Empty in Draft and for
+    /// administrators.
+    /// </summary>
+    public List<string> LockedFields { get; set; } = new();
     public string? StoreUrl { get; set; }
 }
 
@@ -304,8 +315,8 @@ public class RenewalDto
     public Guid EntityId { get; set; }
     public string EntityName { get; set; } = "";
     public string DepartmentName { get; set; } = "";
-    public DateOnly? NoticeDeadline { get; set; }
-    public int? DaysToNotice { get; set; }
+    public DateOnly NoticeDeadline { get; set; }
+    public int DaysToNotice { get; set; }
     public bool AutoRenew { get; set; }
     public decimal? AnnualValue { get; set; }
     public string Currency { get; set; } = "";
@@ -352,6 +363,8 @@ public class ExtractResultDto
     public List<FieldSuggestion> Suggestions { get; set; } = new();
     public string Summary { get; set; } = "";
     public List<Deviation> Deviations { get; set; } = new();
+    /// <summary>Why there are no suggestions, when the file was too large or too slow to read. Usually null.</summary>
+    public string? Note { get; set; }
 }
 
 public class TemplateDto
@@ -429,6 +442,8 @@ public class RenewalDecisionInput
 {
     public RenewalDecision? Decision { get; set; }
     public string? Comment { get; set; }
+    /// <summary>Only for Renew: the end date of the new term. Required unless the contract renews automatically.</summary>
+    public DateOnly? NewEndDate { get; set; }
 }
 
 public class ObligationInput
@@ -592,6 +607,8 @@ public class JobRunResultDto
     public int NoticeReminders { get; set; }
     public int Escalations { get; set; }
     public int ObligationReminders { get; set; }
+    /// <summary>Yearly review reminders for open-ended contracts.</summary>
+    public int AnnualReviewReminders { get; set; }
     public int ContractsRenewed { get; set; }
     public int ContractsEnded { get; set; }
     public int SuppliersSynced { get; set; }

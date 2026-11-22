@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Dafa.Contracts.Core.Domain;
 
 public sealed record LifecycleStep(string Name, DateOnly? Date, string State);
@@ -9,6 +11,73 @@ public static class ContractCalculations
 {
     public const string EscalationKind = "Escalation";
     public const string ObligationKind = "Obligation";
+    public const string AnnualReviewKind = "AnnualReview";
+
+    /// <summary>Open-ended contracts get a review reminder this many days before each anniversary of the start date.</summary>
+    public const int AnnualReviewLeadDays = 60;
+
+    /// <summary>A notification that could not be delivered is retried by the job up to this many times.</summary>
+    public const int MaxReminderAttempts = 5;
+
+    /// <summary>Term key of notice and escalation reminders: the notice deadline they are about.</summary>
+    public static string NoticeTermKey(DateOnly noticeDeadline) =>
+        noticeDeadline.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    public static string AnnualReviewTermKey(DateOnly anniversary) =>
+        anniversary.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    public static string ObligationTermKey(Guid obligationId, DateOnly dueDate) =>
+        obligationId.ToString("N") + "|" + dueDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    /// <summary>True for the reminder kinds that belong to one notice deadline (Notice{days} and Escalation).</summary>
+    public static bool IsNoticeCycleKind(string? kind) =>
+        kind == EscalationKind || (kind is not null && kind.StartsWith("Notice", StringComparison.Ordinal));
+
+    /// <summary>The first anniversary of the start date that is today or later (never the start date itself).</summary>
+    public static DateOnly NextAnniversary(DateOnly startDate, DateOnly today)
+    {
+        var years = Math.Max(1, today.Year - startDate.Year);
+        var anniversary = startDate.AddYears(years);
+        var guard = 0;
+        while (anniversary < today && guard < 200)
+        {
+            years++;
+            anniversary = startDate.AddYears(years);
+            guard++;
+        }
+        return anniversary;
+    }
+
+    /// <summary>
+    /// The anniversary an open-ended, active contract should be reviewed for today, or null when
+    /// none is due: from <see cref="AnnualReviewLeadDays"/> days before the anniversary until the day itself.
+    /// </summary>
+    public static DateOnly? DueAnnualReview(Contract contract, DateOnly today)
+    {
+        if (contract.Status != ContractStatus.Active || contract.EndDate is not null)
+        {
+            return null;
+        }
+        var anniversary = NextAnniversary(contract.StartDate, today);
+        return today >= anniversary.AddDays(-AnnualReviewLeadDays) ? anniversary : null;
+    }
+
+    /// <summary>
+    /// True when a Renew decision may be recorded today: from the first reminder
+    /// (the largest notice offset before the deadline) onwards, also after the deadline.
+    /// </summary>
+    public static bool IsInRenewalWindow(DateOnly noticeDeadline, DateOnly today, IEnumerable<int> noticeDays)
+    {
+        var largest = 0;
+        foreach (var days in noticeDays)
+        {
+            if (days > largest)
+            {
+                largest = days;
+            }
+        }
+        return today >= noticeDeadline.AddDays(-largest);
+    }
 
     public static string NoticeKind(int daysBefore) => "Notice" + daysBefore;
 
@@ -254,17 +323,32 @@ public static class ContractCalculations
 public static class RenewalRules
 {
     /// <summary>
-    /// Returns true when the contract was rolled forward (Renew on an auto-renew contract):
-    /// endDate moves by renewalMonths and the decision is cleared so the next cycle starts clean.
+    /// Returns true when the contract was rolled forward into a new term: Renew with an explicit
+    /// new end date, or Renew on an auto-renew contract (endDate moves by renewalMonths). The
+    /// decision is cleared so the next cycle starts clean, and the renewed term is remembered in
+    /// LastRenewedDeadline. Whether Renew is allowed at all is checked by the caller.
     /// </summary>
-    public static bool Apply(Contract contract, RenewalDecision decision, Guid decidedById, DateTime nowUtc, string? comment)
+    public static bool Apply(
+        Contract contract, RenewalDecision decision, Guid decidedById, DateTime nowUtc, string? comment,
+        DateOnly? newEndDate = null)
     {
-        if (decision == RenewalDecision.Renew
-            && contract.AutoRenew
-            && contract.EndDate is not null
-            && contract.RenewalMonths is > 0)
+        DateOnly? rolledEndDate = null;
+        if (decision == RenewalDecision.Renew && contract.EndDate is not null)
         {
-            contract.EndDate = ContractCalculations.RollForward(contract.EndDate.Value, contract.RenewalMonths.Value);
+            if (newEndDate is not null)
+            {
+                rolledEndDate = newEndDate;
+            }
+            else if (contract.AutoRenew && contract.RenewalMonths is > 0)
+            {
+                rolledEndDate = ContractCalculations.RollForward(contract.EndDate.Value, contract.RenewalMonths.Value);
+            }
+        }
+
+        if (rolledEndDate is not null)
+        {
+            contract.LastRenewedDeadline = ContractCalculations.NoticeDeadline(contract);
+            contract.EndDate = rolledEndDate;
             contract.RenewalDecision = null;
             contract.RenewalDecidedById = null;
             contract.RenewalDecidedAt = null;

@@ -39,6 +39,36 @@ public class AppDbContext : DbContext, IAppDbContext
     public DbSet<ReminderSettings> ReminderSettings => Set<ReminderSettings>();
     public DbSet<PendingUpload> PendingUploads => Set<PendingUpload>();
 
+    public void DiscardChanges()
+    {
+        ChangeTracker.Clear();
+    }
+
+    /// <summary>Gives every new or changed <see cref="IVersioned"/> row a new concurrency token.</summary>
+    private void StampVersions()
+    {
+        foreach (var entry in ChangeTracker.Entries<IVersioned>())
+        {
+            if (entry.State == EntityState.Added || entry.State == EntityState.Modified)
+            {
+                // The original value stays in the WHERE clause of the UPDATE, so a stale copy fails.
+                entry.Entity.Version = Guid.NewGuid();
+            }
+        }
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        StampVersions();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        StampVersions();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -66,6 +96,9 @@ public class AppDbContext : DbContext, IAppDbContext
             e.Property(x => x.Initials).HasMaxLength(8);
             e.Property(x => x.ExternalId).HasMaxLength(100);
             e.HasIndex(x => x.Email);
+            // One user per directory object id. Null (demo and not yet linked users) is not indexed
+            // on SQL Server (EF adds the IS NOT NULL filter) and never clashes on Sqlite.
+            e.HasIndex(x => x.ExternalId).IsUnique();
         });
         modelBuilder.Entity<UserDepartment>(e =>
         {
@@ -99,6 +132,7 @@ public class AppDbContext : DbContext, IAppDbContext
             e.Property(x => x.Currency).HasMaxLength(3);
             e.Property(x => x.AnnualValue).HasPrecision(18, 2);
             e.Property(x => x.TotalValue).HasPrecision(18, 2);
+            e.Property(x => x.Version).IsConcurrencyToken();
             e.HasIndex(x => x.DepartmentId);
             e.HasIndex(x => x.EntityId);
             e.HasIndex(x => x.OwnerId);
@@ -120,7 +154,8 @@ public class AppDbContext : DbContext, IAppDbContext
             e.ToTable("Documents");
             e.Property(x => x.Name).HasMaxLength(260);
             e.Property(x => x.StoreKey).HasMaxLength(1000);
-            e.HasIndex(x => x.ContractId);
+            // Two uploads of the same name can never share a version (and so never one file).
+            e.HasIndex(x => new { x.ContractId, x.Name, x.Version }).IsUnique();
         });
         modelBuilder.Entity<ApprovalRule>(e =>
         {
@@ -132,12 +167,19 @@ public class AppDbContext : DbContext, IAppDbContext
         modelBuilder.Entity<ApprovalInstance>(e =>
         {
             e.ToTable("ApprovalInstances");
+            e.Property(x => x.Version).IsConcurrencyToken();
             e.HasIndex(x => x.ContractId);
+            // At most one open approval per contract. Status is stored as an int; Pending = 0.
+            // The bracket syntax is accepted by both SQL Server and Sqlite.
+            e.HasIndex(x => x.ContractId, "IX_ApprovalInstances_OnePendingPerContract")
+                .IsUnique()
+                .HasFilter("[Status] = 0");
         });
         modelBuilder.Entity<ApprovalStep>(e =>
         {
             e.ToTable("ApprovalSteps");
             e.Property(x => x.RoleLabel).HasMaxLength(300);
+            e.Property(x => x.Version).IsConcurrencyToken();
             e.HasIndex(x => x.InstanceId);
             e.HasIndex(x => x.ApproverId);
         });
@@ -145,7 +187,9 @@ public class AppDbContext : DbContext, IAppDbContext
         {
             e.ToTable("Reminders");
             e.Property(x => x.Kind).HasMaxLength(40);
-            e.HasIndex(x => x.ContractId);
+            e.Property(x => x.TermKey).HasMaxLength(80);
+            // Idempotency in the database: one reminder per contract, kind and term.
+            e.HasIndex(x => new { x.ContractId, x.Kind, x.TermKey }).IsUnique();
         });
         modelBuilder.Entity<RetentionRule>(e =>
         {

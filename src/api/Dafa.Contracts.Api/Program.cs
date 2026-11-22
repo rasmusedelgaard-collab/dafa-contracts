@@ -6,15 +6,20 @@ using Dafa.Contracts.Core.Abstractions;
 using Dafa.Contracts.Infrastructure;
 using Dafa.Contracts.Infrastructure.Seed;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 var configuration = builder.Configuration;
 var environment = builder.Environment;
 
-// Sign-in mode: Dev (default, demo users) or Entra (Microsoft.Identity.Web).
+// Sign-in mode: Dev (demo users) or Entra (Microsoft.Identity.Web). Fails closed (H3): an unknown or
+// missing Auth:Mode stops the app here, and Dev mode outside the Development environment is
+// refused unless a shared access code of at least 12 characters is configured.
 var authSettings = new AuthSettings(AuthModes.Parse(configuration["Auth:Mode"]), configuration["Auth:Dev:AccessCode"]);
+authSettings.EnsureSafeFor(environment.IsDevelopment());
 builder.Services.AddSingleton(authSettings);
+builder.Services.AddSingleton(new AccessCodeThrottle());
 
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddDafaCore();
@@ -32,7 +37,16 @@ else
 {
     builder.Services.AddDevAuth(configuration, environment);
 }
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    // M10: one rule for every endpoint that asks for authorization. A cookie alone is not enough;
+    // the principal must map to a known, active AppUser (the claim is added per request by
+    // AppUserClaimsTransformation). Deactivated or unprovisioned users get 401/403 everywhere.
+    options.DefaultPolicy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .RequireClaim(AppClaims.AppUserId)
+        .Build();
+});
 
 builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
@@ -41,11 +55,12 @@ builder.Services
     .AddJsonOptions(options =>
     {
         // camelCase is the default; enums go out and come in as strings.
-        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        // Numbers are not accepted for enums: {"decision": 7} is a 400, not an approval.
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(null, false));
     });
 builder.Services.Configure<FormOptions>(options =>
 {
-    options.MultipartBodyLengthLimit = 60L * 1024 * 1024;
+    options.MultipartBodyLengthLimit = 30L * 1024 * 1024;
 });
 builder.Services.AddHostedService<JobsHostedService>();
 
@@ -65,6 +80,13 @@ using (var scope = app.Services.CreateScope())
 
 app.UseMiddleware<ApiExceptionMiddleware>();
 app.UseStatusCodePages();
+app.Use(async (context, next) =>
+{
+    // Browsers must not guess a content type for downloaded contract files.
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    await next(context);
+});
+app.UseMiddleware<RequestedWithMiddleware>();
 
 // The SPA build is copied to wwwroot at publish.
 app.UseDefaultFiles();
@@ -72,6 +94,7 @@ app.UseStaticFiles();
 
 app.UseRouting();
 app.UseAuthentication();
+app.UseMiddleware<AppUserGateMiddleware>();
 app.UseAuthorization();
 
 app.MapHealthChecks("/healthz").AllowAnonymous();

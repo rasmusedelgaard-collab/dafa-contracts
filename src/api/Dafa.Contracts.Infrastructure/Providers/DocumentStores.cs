@@ -30,11 +30,12 @@ public sealed class LocalDocumentStore : IDocumentStore
 
     public async Task<StoredDocument> SaveAsync(DocumentLocation location, string fileName, int version, Stream content, CancellationToken cancellationToken = default)
     {
-        var key = location.ContractId.ToString("N") + "/v" + version + "_" + fileName;
+        // A random part in the key and CreateNew: two uploads can never write to the same file.
+        var key = location.ContractId.ToString("N") + "/v" + version + "_" + Guid.NewGuid().ToString("N").Substring(0, 8) + "_" + fileName;
         var path = Resolve(key);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         long size;
-        await using (var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+        await using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
             await content.CopyToAsync(file, cancellationToken);
             size = file.Length;

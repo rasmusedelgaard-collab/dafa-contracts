@@ -95,11 +95,71 @@ public sealed class EmptySupplierSource : ISupplierSource
     }
 }
 
+/// <summary>
+/// A clock that runs an action the first time it is read after being armed. Lets a test slip
+/// another user's request in between the moment a service has loaded its rows and its save.
+/// </summary>
+public sealed class InterleavingClock : IClock
+{
+    private readonly IClock _inner;
+    private Action? _onNextRead;
+
+    public InterleavingClock(IClock inner)
+    {
+        _inner = inner;
+    }
+
+    public void Arm(Action onNextRead)
+    {
+        _onNextRead = onNextRead;
+    }
+
+    public DateTime UtcNow
+    {
+        get
+        {
+            var action = _onNextRead;
+            if (action is not null)
+            {
+                _onNextRead = null;
+                action();
+            }
+            return _inner.UtcNow;
+        }
+    }
+
+    public DateOnly Today => _inner.Today;
+}
+
+/// <summary>A notifier whose deliveries can be made to fail, like Graph mail during an outage.</summary>
+public sealed class SwitchableNotifier : INotifier
+{
+    public bool Fail { get; set; }
+    public int Attempts { get; private set; }
+    public int Delivered { get; private set; }
+
+    public Task<bool> SendAsync(Notification notification, CancellationToken cancellationToken = default)
+    {
+        Attempts++;
+        if (Fail)
+        {
+            return Task.FromResult(false);
+        }
+        Delivered++;
+        return Task.FromResult(true);
+    }
+}
+
 /// <summary>The application services wired by hand for one user, on a fresh DbContext.</summary>
 public sealed class Actor
 {
-    public Actor(TestWorld world, Guid? userId)
+    public Actor(TestWorld world, Guid? userId) : this(world, userId, null, null)
     {
+    }
+
+    public Actor(TestWorld world, Guid? userId, IClock? clockOverride, INotifier? notifierOverride)
+    {
+        IClock clock = clockOverride ?? world.Clock;
         Db = world.NewDb();
         string? name = null;
         if (userId is not null)
@@ -108,15 +168,18 @@ public sealed class Actor
         }
         var user = new FakeCurrentUser(Db, userId, name);
         Access = new ContractAccessService(Db, user);
-        var audit = new AuditService(Db, user, world.Clock);
-        var writer = new DocumentWriter(Db, world.Store, world.Clock);
-        var notifier = new OutboxNotifier(Db, world.Clock);
-        Approvals = new ApprovalService(Db, user, world.Clock, notifier, audit, writer);
-        Queries = new ContractQueryService(Db, user, Access, world.Clock, world.Store, writer, audit);
-        Commands = new ContractCommandService(Db, user, Access, world.Clock, audit, Approvals, writer);
-        Jobs = new JobService(Db, world.Clock, notifier, new EmptySupplierSource(), new SeededDirectoryService(),
+        var audit = new AuditService(Db, user, clock);
+        var writer = new DocumentWriter(Db, world.Store, clock);
+        INotifier notifier = notifierOverride ?? new OutboxNotifier(Db, clock);
+        Approvals = new ApprovalService(Db, user, clock, notifier, audit, writer);
+        Queries = new ContractQueryService(Db, user, Access, clock, world.Store, writer, audit);
+        Commands = new ContractCommandService(Db, user, Access, clock, audit, Approvals, writer);
+        Documents = new DocumentService(Db, user, Access, world.Store, writer, audit);
+        Jobs = new JobService(Db, clock, notifier, new EmptySupplierSource(), new SeededDirectoryService(),
             Approvals, audit, NullLogger<JobService>.Instance);
     }
+
+    public DocumentService Documents { get; }
 
     public AppDbContext Db { get; }
     public ContractAccessService Access { get; }
@@ -191,6 +254,8 @@ public sealed class TestWorld : IDisposable
     }
 
     public Actor As(Guid? userId) => new(this, userId);
+
+    public Actor As(Guid? userId, IClock? clock, INotifier? notifier = null) => new(this, userId, clock, notifier);
 
     private static Guid AddUser(
         AppDbContext db, string name, AppRole roles, bool groupManagement = false, GroupFunction function = GroupFunction.None,

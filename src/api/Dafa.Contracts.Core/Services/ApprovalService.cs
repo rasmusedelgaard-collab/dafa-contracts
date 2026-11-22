@@ -39,10 +39,13 @@ public static class ApprovalRuleMatcher
             .FirstOrDefault();
     }
 
-    /// <summary>The value an approval is based on: total value when set, otherwise annual value, in DKK.</summary>
+    /// <summary>
+    /// The value an approval is based on, in DKK: the larger of total value and annual value
+    /// (a missing value counts as 0), so a small total cannot hide a large annual value.
+    /// </summary>
     public static decimal ValueDkk(decimal? annualValue, decimal? totalValue, string? currency)
     {
-        var value = totalValue ?? annualValue ?? 0m;
+        var value = Math.Max(totalValue ?? 0m, annualValue ?? 0m);
         return CurrencyRates.ToDkk(value, currency);
     }
 
@@ -122,10 +125,37 @@ public sealed class ApproverDirectory
         }
     }
 
-    public AppUser? FallbackAdmin() =>
-        _users.Where(u => u.IsActive && (u.Roles & AppRole.Admin) == AppRole.Admin)
+    public AppUser? FallbackAdmin() => FallbackAdmin(null);
+
+    /// <summary>The first active administrator who is not excluded.</summary>
+    public AppUser? FallbackAdmin(ICollection<Guid>? excluded) =>
+        _users.Where(u => u.IsActive && (u.Roles & AppRole.Admin) == AppRole.Admin && (excluded is null || !excluded.Contains(u.Id)))
             .OrderBy(u => u.Name, StringComparer.Ordinal)
             .FirstOrDefault();
+
+    private AppUser? FirstActiveExcept(IEnumerable<Guid> userIds, ICollection<Guid> excluded) =>
+        FirstActive(userIds.Where(id => !excluded.Contains(id)).ToList());
+
+    /// <summary>
+    /// Separation of duties: who approves instead of someone who may not (the contract owner or the
+    /// submitter) or cannot (inactive). In order: an entity manager of the contract's entity, the
+    /// Group CFO, the Group CEO, then an administrator. Null when nobody independent exists.
+    /// </summary>
+    public AppUser? Substitute(Guid? entityId, ICollection<Guid> excluded)
+    {
+        AppUser? user = null;
+        if (entityId is not null)
+        {
+            user = FirstActiveExcept(_entityManagers.Where(m => m.EntityId == entityId.Value).Select(m => m.UserId), excluded);
+        }
+        user ??= FirstActiveExcept(_users.Where(u => u.GroupFunction == GroupFunction.GroupCFO).Select(u => u.Id), excluded);
+        user ??= FirstActiveExcept(_users.Where(u => u.GroupFunction == GroupFunction.GroupCEO).Select(u => u.Id), excluded);
+        user ??= FallbackAdmin(excluded);
+        return user;
+    }
+
+    /// <summary>Role labels are stored in a 300-character column.</summary>
+    public static string FitLabel(string label) => label.Length > 300 ? label.Substring(0, 297) + "..." : label;
 
     /// <summary>The deputy covering for the user today, if a holiday cover is active.</summary>
     public AppUser? ActiveDeputy(Guid userId, DateOnly today)
@@ -216,6 +246,9 @@ public class ApprovalService
         Guid? entityId, Guid? typeId, Guid? departmentId, decimal? value, string? currency,
         CancellationToken cancellationToken = default)
     {
+        // The caller is the likely submitter and cannot approve their own contract (M2).
+        var profile = await _currentUser.GetProfileAsync(cancellationToken);
+        var excluded = new HashSet<Guid> { profile.UserId };
         var rules = await _db.ApprovalRules.AsNoTracking().ToListAsync(cancellationToken);
         var valueDkk = CurrencyRates.ToDkk(value ?? 0m, string.IsNullOrWhiteSpace(currency) ? "DKK" : currency);
         var rule = ApprovalRuleMatcher.Match(rules, entityId, typeId, departmentId, valueDkk);
@@ -237,6 +270,10 @@ public class ApprovalService
             {
                 var label = ApproverDirectory.Label(approver.Kind);
                 var user = directory.Resolve(approver, entityId, departmentId);
+                if (user is not null && excluded.Contains(user.Id))
+                {
+                    user = directory.Substitute(entityId, excluded);
+                }
                 // "Role · Name", the format the UI shows as it is.
                 var text = label + " \u00B7 " + (user is null ? "not assigned" : user.Name);
                 if (!names.Contains(text))
@@ -249,26 +286,50 @@ public class ApprovalService
         return preview;
     }
 
+    /// <summary>The people who may never approve this contract: its owner and whoever submitted it.</summary>
+    private static HashSet<Guid> ExcludedApprovers(Contract contract, Guid? submittedById)
+    {
+        var excluded = new HashSet<Guid> { contract.OwnerId };
+        if (submittedById is not null)
+        {
+            excluded.Add(submittedById.Value);
+        }
+        return excluded;
+    }
+
     /// <summary>
     /// Creates the approval instance and its steps for a contract and opens the first stage.
     /// Adds to the unit of work; the caller sets the contract status and saves.
+    /// The owner and the submitter are never approvers (M2): a role or user that resolves to one
+    /// of them is replaced through <see cref="ApproverDirectory.Substitute"/>, and the step's role
+    /// label says so.
     /// </summary>
     public async Task<ApprovalInstance> StartAsync(Contract contract, Guid? startedById, CancellationToken cancellationToken = default)
     {
+        var contractId = contract.Id;
+        var alreadyOpen = _db.ApprovalInstances.Local.Any(i => i.ContractId == contractId && i.Status == ApprovalStatus.Pending)
+            || await _db.ApprovalInstances.AsNoTracking()
+                .AnyAsync(i => i.ContractId == contractId && i.Status == ApprovalStatus.Pending, cancellationToken);
+        if (alreadyOpen)
+        {
+            throw new ConflictException("This contract already has an approval in progress.");
+        }
+
         var rules = await _db.ApprovalRules.AsNoTracking().ToListAsync(cancellationToken);
         var valueDkk = ApprovalRuleMatcher.ValueDkk(contract.AnnualValue, contract.TotalValue, contract.Currency);
         var rule = ApprovalRuleMatcher.Match(rules, contract.EntityId, contract.TypeId, contract.DepartmentId, valueDkk);
         if (rule is null)
         {
-            throw new ConflictException("No approval rule matches this contract. Ask an administrator to add a rule.");
+            throw new ConflictException("No approval rule matches this contract. Ask an administrator to add a rule.", ProblemTypes.NoApprovalRule);
         }
         var stages = ApprovalRuleMatcher.Stages(rule);
         if (stages.Count == 0)
         {
-            throw new ConflictException("The approval rule '" + rule.Name + "' has no stages. Ask an administrator to complete it.");
+            throw new ConflictException("The approval rule '" + rule.Name + "' has no stages. Ask an administrator to complete it.", ProblemTypes.NoApprovalRule);
         }
 
         var directory = await ApproverDirectory.LoadAsync(_db, cancellationToken);
+        var excluded = ExcludedApprovers(contract, startedById);
         var now = _clock.UtcNow;
         var instance = new ApprovalInstance
         {
@@ -294,12 +355,20 @@ public class ApprovalService
                 var user = directory.Resolve(approver, contract.EntityId, contract.DepartmentId);
                 if (user is null)
                 {
-                    user = directory.FallbackAdmin();
+                    user = directory.FallbackAdmin(excluded);
                     label += " (not assigned, sent to administrator)";
+                }
+                else if (excluded.Contains(user.Id))
+                {
+                    var conflicted = user;
+                    user = directory.Substitute(contract.EntityId, excluded);
+                    label += " (instead of " + conflicted.Name + ", who owns or submitted the contract)";
                 }
                 if (user is null)
                 {
-                    throw new ConflictException("No approver could be found for stage " + order + " (" + ApproverDirectory.Label(approver.Kind) + ").");
+                    throw new ConflictException(
+                        "No independent approver could be found for stage " + order + " (" + ApproverDirectory.Label(approver.Kind)
+                            + "). The owner and the submitter cannot approve their own contract.", ProblemTypes.NoApprover);
                 }
                 if (!seen.Add(user.Id))
                 {
@@ -312,7 +381,7 @@ public class ApprovalService
                     ContractId = contract.Id,
                     StageOrder = order,
                     ApproverId = user.Id,
-                    RoleLabel = label,
+                    RoleLabel = ApproverDirectory.FitLabel(label),
                     Status = ApprovalStepStatus.Waiting
                 });
             }
@@ -320,21 +389,40 @@ public class ApprovalService
 
         _db.ApprovalInstances.Add(instance);
         _db.ApprovalSteps.AddRange(steps);
-        await ActivateStageAsync(contract, steps, 1, directory, cancellationToken);
+        await ActivateStageAsync(contract, steps, 1, directory, excluded, cancellationToken);
         return instance;
     }
 
     private async Task ActivateStageAsync(
         Contract contract, List<ApprovalStep> steps, int stageOrder, ApproverDirectory directory,
-        CancellationToken cancellationToken)
+        HashSet<Guid> excluded, CancellationToken cancellationToken)
     {
         var now = _clock.UtcNow;
+        var stageApprovers = new HashSet<Guid>(steps.Where(s => s.StageOrder == stageOrder).Select(s => s.ApproverId));
         foreach (var step in steps.Where(s => s.StageOrder == stageOrder && s.Status == ApprovalStepStatus.Waiting))
         {
-            var deputy = directory.ActiveDeputy(step.ApproverId, _clock.Today);
-            if (deputy is not null)
+            // The approver may have been deactivated since the contract was submitted.
+            var current = directory.Find(step.ApproverId);
+            if (current is null || !current.IsActive)
             {
-                Reroute(step, deputy, directory);
+                var unavailable = new HashSet<Guid>(excluded);
+                unavailable.UnionWith(stageApprovers);
+                var replacement = directory.Substitute(contract.EntityId, unavailable);
+                if (replacement is not null)
+                {
+                    step.OriginalApproverId = step.ApproverId;
+                    step.RoleLabel = ApproverDirectory.FitLabel(step.RoleLabel + " (instead of " + directory.NameOf(step.ApproverId) + ", who is inactive)");
+                    step.ApproverId = replacement.Id;
+                    stageApprovers.Add(replacement.Id);
+                }
+            }
+            else
+            {
+                var deputy = directory.ActiveDeputy(step.ApproverId, _clock.Today);
+                if (deputy is not null && !excluded.Contains(deputy.Id))
+                {
+                    Reroute(step, deputy, directory);
+                }
             }
             step.Status = ApprovalStepStatus.Pending;
             step.ActivatedAt = now;
@@ -353,10 +441,37 @@ public class ApprovalService
         var originalName = directory.NameOf(step.ApproverId);
         step.OriginalApproverId = step.ApproverId;
         step.ApproverId = deputy.Id;
-        step.RoleLabel = step.RoleLabel + " (cover for " + originalName + ")";
+        step.RoleLabel = ApproverDirectory.FitLabel(step.RoleLabel + " (cover for " + originalName + ")");
     }
 
+    /// <summary>
+    /// Records a decision. Safe against concurrent decisions (M1): every decision also updates the
+    /// approval instance, whose concurrency token makes the later of two simultaneous saves fail.
+    /// That one is then repeated from freshly loaded rows, so the stage is evaluated with the other
+    /// approver's decision included. A second decision on the same step gets 409.
+    /// </summary>
     public async Task DecideAsync(Guid stepId, ApprovalDecision decision, string? comment, CancellationToken cancellationToken = default)
+    {
+        const int maxAttempts = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await DecideOnceAsync(stepId, decision, comment, cancellationToken);
+                return;
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                _db.DiscardChanges();
+                if (attempt >= maxAttempts)
+                {
+                    throw new ConflictException("The approval was changed by someone else at the same time. Reload and try again.", ProblemTypes.Stale);
+                }
+            }
+        }
+    }
+
+    private async Task DecideOnceAsync(Guid stepId, ApprovalDecision decision, string? comment, CancellationToken cancellationToken)
     {
         var profile = await _currentUser.GetProfileAsync(cancellationToken);
         var step = await _db.ApprovalSteps.FirstOrDefaultAsync(s => s.Id == stepId, cancellationToken);
@@ -385,6 +500,15 @@ public class ApprovalService
         {
             throw new NotFoundException("Contract not found.");
         }
+        if (contract.Status != ContractStatus.InApproval)
+        {
+            throw new ConflictException("This contract is not in approval.");
+        }
+        var excluded = ExcludedApprovers(contract, instance.StartedById);
+        if (excluded.Contains(profile.UserId))
+        {
+            throw new ForbiddenException("The owner and the submitter cannot approve their own contract. Delegate the step or ask an administrator to reassign it.");
+        }
         var steps = await _db.ApprovalSteps.Where(s => s.InstanceId == instanceId).ToListAsync(cancellationToken);
         var now = _clock.UtcNow;
         var trimmed = string.IsNullOrWhiteSpace(comment) ? null : comment.Trim();
@@ -395,6 +519,8 @@ public class ApprovalService
             {
                 throw new InputValidationException("comment", "A comment is required when rejecting.");
             }
+            // Every decision changes the instance row, so simultaneous decisions collide on its token.
+            instance.Version = Guid.NewGuid();
             step.Status = ApprovalStepStatus.Rejected;
             step.DecidedAt = now;
             step.Comment = trimmed;
@@ -418,7 +544,12 @@ public class ApprovalService
             await _db.SaveChangesAsync(cancellationToken);
             return;
         }
+        if (decision != ApprovalDecision.Approve)
+        {
+            throw new InputValidationException("decision", "Choose Approve or Reject.");
+        }
 
+        instance.Version = Guid.NewGuid();
         step.Status = ApprovalStepStatus.Approved;
         step.DecidedAt = now;
         step.Comment = trimmed;
@@ -435,7 +566,7 @@ public class ApprovalService
             {
                 var directory = await ApproverDirectory.LoadAsync(_db, cancellationToken);
                 instance.CurrentStage = laterStages[0];
-                await ActivateStageAsync(contract, steps, laterStages[0], directory, cancellationToken);
+                await ActivateStageAsync(contract, steps, laterStages[0], directory, excluded, cancellationToken);
             }
             else
             {
@@ -506,6 +637,12 @@ public class ApprovalService
         return text.ToString();
     }
 
+    /// <summary>
+    /// Hands an open step to another user. The approver delegates their own step; an administrator
+    /// may reassign someone else's, which is recorded as such. The target must be active, hold the
+    /// Approver role (or be an administrator), and may not be the contract owner, the submitter,
+    /// the current approver or the person doing the delegation (M2).
+    /// </summary>
     public async Task DelegateAsync(Guid stepId, Guid toUserId, CancellationToken cancellationToken = default)
     {
         var profile = await _currentUser.GetProfileAsync(cancellationToken);
@@ -514,7 +651,8 @@ public class ApprovalService
         {
             throw new NotFoundException("Approval step not found.");
         }
-        if (step.ApproverId != profile.UserId && !profile.IsAdmin)
+        var isOwnStep = step.ApproverId == profile.UserId;
+        if (!isOwnStep && !profile.IsAdmin)
         {
             throw new ForbiddenException("This approval step is assigned to someone else.");
         }
@@ -522,14 +660,11 @@ public class ApprovalService
         {
             throw new ConflictException("Only an open approval step can be delegated.");
         }
-        if (toUserId == step.ApproverId)
+        var instanceId = step.InstanceId;
+        var instance = await _db.ApprovalInstances.FirstOrDefaultAsync(i => i.Id == instanceId, cancellationToken);
+        if (instance is null || instance.Status != ApprovalStatus.Pending)
         {
-            throw new InputValidationException("userId", "Choose a different user to delegate to.");
-        }
-        var target = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == toUserId, cancellationToken);
-        if (target is null || !target.IsActive)
-        {
-            throw new InputValidationException("userId", "The selected user does not exist or is inactive.");
+            throw new ConflictException("This approval is already closed.");
         }
         var contractId = step.ContractId;
         var contract = await _db.Contracts.AsNoTracking().FirstOrDefaultAsync(c => c.Id == contractId, cancellationToken);
@@ -538,10 +673,41 @@ public class ApprovalService
             throw new NotFoundException("Contract not found.");
         }
 
+        if (toUserId == step.ApproverId || toUserId == profile.UserId)
+        {
+            throw new InputValidationException("userId", "Choose a different user to delegate to.");
+        }
+        if (ExcludedApprovers(contract, instance.StartedById).Contains(toUserId))
+        {
+            throw new InputValidationException("userId", "The contract owner and the person who submitted it cannot approve it.");
+        }
+        var target = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == toUserId, cancellationToken);
+        if (target is null || !target.IsActive)
+        {
+            throw new InputValidationException("userId", "The selected user does not exist or is inactive.");
+        }
+        var canApprove = (target.Roles & AppRole.Approver) == AppRole.Approver || (target.Roles & AppRole.Admin) == AppRole.Admin;
+        if (!canApprove)
+        {
+            throw new InputValidationException("userId", "The selected user does not have the approver role.");
+        }
+        var stepStage = step.StageOrder;
+        var alreadyInStage = await _db.ApprovalSteps.AsNoTracking().AnyAsync(
+            s => s.InstanceId == instanceId && s.StageOrder == stepStage && s.ApproverId == toUserId
+                && s.Status != ApprovalStepStatus.Delegated && s.Status != ApprovalStepStatus.Waiting,
+            cancellationToken);
+        if (alreadyInStage)
+        {
+            throw new InputValidationException("userId", "The selected user is already an approver in this stage.");
+        }
+
         var now = _clock.UtcNow;
         var previousApproverId = step.ApproverId;
         var previousApprover = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == previousApproverId, cancellationToken);
         var previousName = previousApprover?.Name ?? profile.Name;
+        var how = isOwnStep
+            ? " (delegated by " + previousName + ")"
+            : " (reassigned from " + previousName + " by administrator " + profile.Name + ")";
 
         var replacement = new ApprovalStep
         {
@@ -551,7 +717,7 @@ public class ApprovalService
             StageOrder = step.StageOrder,
             ApproverId = target.Id,
             OriginalApproverId = step.ApproverId,
-            RoleLabel = step.RoleLabel + " (delegated by " + previousName + ")",
+            RoleLabel = ApproverDirectory.FitLabel(step.RoleLabel + how),
             Status = ApprovalStepStatus.Pending,
             ActivatedAt = now
         };
@@ -559,21 +725,31 @@ public class ApprovalService
 
         step.Status = ApprovalStepStatus.Delegated;
         step.DecidedAt = now;
-        step.Comment = "Delegated to " + target.Name;
+        step.Comment = isOwnStep ? "Delegated to " + target.Name : "Reassigned to " + target.Name + " by administrator " + profile.Name;
+        instance.Version = Guid.NewGuid();
 
-        _audit.Record("approval.delegated", previousName + " delegated the approval to " + target.Name, contract.Id);
+        if (isOwnStep)
+        {
+            _audit.Record("approval.delegated", previousName + " delegated the approval to " + target.Name, contract.Id);
+        }
+        else
+        {
+            _audit.Record("approval.reassigned",
+                "Administrator " + profile.Name + " reassigned the approval from " + previousName + " to " + target.Name, contract.Id);
+        }
         await _notifier.SendAsync(new Notification(
             target.Id,
             "ApprovalRequested",
             "Approval delegated to you: " + contract.Title,
-            previousName + " delegated the approval of contract " + contract.ContractNo + " (" + contract.Title + ") to you.",
+            previousName + "'s approval of contract " + contract.ContractNo + " (" + contract.Title + ") was handed to you.",
             contract.Id), cancellationToken);
         await _db.SaveChangesAsync(cancellationToken);
     }
 
     /// <summary>
     /// Moves open steps to the deputy when a holiday cover has become active after the step was
-    /// opened. A step is rerouted at most once. Adds to the unit of work; the caller saves.
+    /// opened. A step is rerouted at most once, and never to the contract owner or the submitter.
+    /// Adds to the unit of work; the caller saves.
     /// </summary>
     public async Task<int> ApplyHolidayCoverAsync(CancellationToken cancellationToken = default)
     {
@@ -594,7 +770,16 @@ public class ApprovalService
                 continue;
             }
             var stepContractId = step.ContractId;
+            var stepInstanceId = step.InstanceId;
             var contract = await _db.Contracts.AsNoTracking().FirstOrDefaultAsync(c => c.Id == stepContractId, cancellationToken);
+            var startedById = await _db.ApprovalInstances.AsNoTracking()
+                .Where(i => i.Id == stepInstanceId)
+                .Select(i => i.StartedById)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (contract is not null && ExcludedApprovers(contract, startedById).Contains(deputy.Id))
+            {
+                continue;
+            }
             Reroute(step, deputy, directory);
             count++;
             if (contract is not null)

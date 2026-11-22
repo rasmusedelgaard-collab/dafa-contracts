@@ -3,49 +3,124 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Dafa.Contracts.Api.Auth;
 using Dafa.Contracts.Infrastructure.Seed;
+using Dafa.Contracts.Infrastructure.Data;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Dafa.Contracts.Tests;
+
+/// <summary>
+/// All tests that boot the API host run one after another: the host reads its settings from
+/// process environment variables, which are shared by the whole test process.
+/// </summary>
+[CollectionDefinition(Name)]
+public sealed class ApiCollection
+{
+    public const string Name = "Api host";
+}
 
 /// <summary>
 /// Boots the real API host on a shared in-memory Sqlite database with the demo seed.
 /// Settings are passed as environment variables because Program.cs reads configuration while
 /// it is building the host, before WebApplicationFactory's own configuration hooks apply.
+/// They are set again right before the host is created, so several factories with different
+/// settings can exist in one test run (see <see cref="ApiCollection"/>).
 /// </summary>
-public sealed class ApiFactory : WebApplicationFactory<Program>
+public class ApiFactory : WebApplicationFactory<Program>
 {
+    public const string RequestedWithHeader = "X-Requested-With";
+    public const string RequestedWithValue = "dafa-contracts";
+
     private readonly SqliteConnection _keepAlive;
     private readonly string _tempFolder;
+    private readonly Dictionary<string, string?> _settings;
 
-    public ApiFactory()
+    public ApiFactory() : this(null)
+    {
+    }
+
+    protected ApiFactory(Dictionary<string, string?>? overrides)
     {
         var connectionString = "Data Source=dafa-tests-" + Guid.NewGuid().ToString("N") + ";Mode=Memory;Cache=Shared";
         _tempFolder = Path.Combine(Path.GetTempPath(), "dafa-contracts-tests-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_tempFolder);
 
-        Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Development");
-        Environment.SetEnvironmentVariable("Database__Provider", "Sqlite");
-        Environment.SetEnvironmentVariable("ConnectionStrings__Default", connectionString);
-        Environment.SetEnvironmentVariable("Seed__DemoData", "true");
-        Environment.SetEnvironmentVariable("Jobs__Enabled", "false");
-        Environment.SetEnvironmentVariable("Auth__Mode", "Dev");
-        Environment.SetEnvironmentVariable("Auth__Dev__AccessCode", "");
-        Environment.SetEnvironmentVariable("Documents__Provider", "Local");
-        Environment.SetEnvironmentVariable("Documents__LocalPath", Path.Combine(_tempFolder, "files"));
-        Environment.SetEnvironmentVariable("DataProtection__KeysPath", Path.Combine(_tempFolder, "keys"));
+        _settings = new Dictionary<string, string?>
+        {
+            ["ASPNETCORE_ENVIRONMENT"] = "Development",
+            ["Database__Provider"] = "Sqlite",
+            ["ConnectionStrings__Default"] = connectionString,
+            ["Seed__DemoData"] = "true",
+            ["Jobs__Enabled"] = "false",
+            ["Auth__Mode"] = "Dev",
+            ["Auth__Dev__AccessCode"] = null,
+            ["Auth__BootstrapAdmins"] = null,
+            ["AzureAd__Instance"] = null,
+            ["AzureAd__TenantId"] = null,
+            ["AzureAd__ClientId"] = null,
+            ["AzureAd__ClientSecret"] = null,
+            ["Documents__Provider"] = "Local",
+            ["Documents__LocalPath"] = Path.Combine(_tempFolder, "files"),
+            ["DataProtection__KeysPath"] = Path.Combine(_tempFolder, "keys")
+        };
+        if (overrides is not null)
+        {
+            foreach (var pair in overrides)
+            {
+                _settings[pair.Key] = pair.Value;
+            }
+        }
+        ApplySettings();
 
         // The named in-memory database lives as long as one connection to it is open.
         _keepAlive = new SqliteConnection(connectionString);
         _keepAlive.Open();
     }
 
-    public async Task<HttpClient> LoginAsync(string demoUserKey)
+    private void ApplySettings()
+    {
+        foreach (var pair in _settings)
+        {
+            Environment.SetEnvironmentVariable(pair.Key, pair.Value);
+        }
+    }
+
+    protected override IHost CreateHost(IHostBuilder builder)
+    {
+        // Program.Main starts inside base.CreateHost; make sure it sees this factory's settings.
+        ApplySettings();
+        return base.CreateHost(builder);
+    }
+
+    /// <summary>A client that sends the header every state-changing API request needs.</summary>
+    public HttpClient CreateApiClient()
     {
         var client = CreateClient();
-        var response = await client.PostAsJsonAsync("/api/dev/login", new { userId = SeedIds.User(demoUserKey) });
+        client.DefaultRequestHeaders.Add(RequestedWithHeader, RequestedWithValue);
+        return client;
+    }
+
+    public async Task<HttpClient> LoginAsync(string demoUserKey, string? accessCode = null)
+    {
+        return await LoginAsync(SeedIds.User(demoUserKey), accessCode);
+    }
+
+    public async Task<HttpClient> LoginAsync(Guid userId, string? accessCode = null)
+    {
+        var client = CreateApiClient();
+        var response = await client.PostAsJsonAsync("/api/dev/login", new { userId, accessCode });
         response.EnsureSuccessStatusCode();
         return client;
+    }
+
+    /// <summary>Direct database access for arranging and checking state.</summary>
+    public async Task WithDbAsync(Func<AppDbContext, Task> action)
+    {
+        using var scope = Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await action(db);
     }
 
     protected override void Dispose(bool disposing)
@@ -68,6 +143,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
     }
 }
 
+[Collection(ApiCollection.Name)]
 public class ApiIntegrationTests : IClassFixture<ApiFactory>
 {
     private readonly ApiFactory _factory;
@@ -222,6 +298,47 @@ public class AuthSettingsTests
         Assert.False(settings.AccessCodeMatches("OPEN-SESAME"));
         Assert.False(settings.AccessCodeMatches(""));
         Assert.False(settings.AccessCodeMatches(null));
+    }
+
+    [Theory]
+    [InlineData("EntraID")]
+    [InlineData("")]
+    [InlineData(null)]
+    [InlineData("Production")]
+    [InlineData("Dev ,")]
+    public void UnknownOrMissingAuthMode_StopsTheApp(string? value)
+    {
+        Assert.Throws<InvalidOperationException>(() => AuthModes.Parse(value));
+    }
+
+    [Fact]
+    public void KnownAuthModes_AreAcceptedInAnyCasing()
+    {
+        Assert.Equal(AuthModes.Dev, AuthModes.Parse(" dev "));
+        Assert.Equal(AuthModes.Entra, AuthModes.Parse("ENTRA"));
+    }
+
+    [Fact]
+    public void DevMode_OutsideDevelopment_RefusesToStart_WithoutALongAccessCode()
+    {
+        Assert.Throws<InvalidOperationException>(() => new AuthSettings(AuthModes.Dev, null).EnsureSafeFor(false));
+        Assert.Throws<InvalidOperationException>(() => new AuthSettings(AuthModes.Dev, "   ").EnsureSafeFor(false));
+        Assert.Throws<InvalidOperationException>(() => new AuthSettings(AuthModes.Dev, "elevenchars").EnsureSafeFor(false));
+
+        new AuthSettings(AuthModes.Dev, "twelve-chars").EnsureSafeFor(false);
+        // Local development needs no code, and Entra mode never uses one.
+        new AuthSettings(AuthModes.Dev, null).EnsureSafeFor(true);
+        new AuthSettings(AuthModes.Entra, null).EnsureSafeFor(false);
+    }
+
+    [Fact]
+    public void AccessCodeStamp_ChangesWithTheCode_AndDoesNotContainIt()
+    {
+        var first = new AuthSettings(AuthModes.Dev, "correct-horse-battery").AccessCodeStamp();
+        var second = new AuthSettings(AuthModes.Dev, "another-long-code").AccessCodeStamp();
+        Assert.NotEqual(first, second);
+        Assert.DoesNotContain("correct", first);
+        Assert.Equal("", new AuthSettings(AuthModes.Dev, null).AccessCodeStamp());
     }
 
     [Fact]

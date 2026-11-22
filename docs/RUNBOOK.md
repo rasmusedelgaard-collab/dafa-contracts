@@ -54,22 +54,42 @@ In environment variables and App Service settings, write `:` as `__` (for exampl
 
 | Key | Test value | Production value | Effect |
 |---|---|---|---|
-| `Auth:Mode` | `Dev` | `Entra` | Dev = pick a seeded demo user, no real authentication. Entra = OpenID Connect via Microsoft.Identity.Web. |
+| `Auth:Mode` | `Dev` | `Entra` | Dev = pick a seeded demo user, no real authentication. Entra = OpenID Connect via Microsoft.Identity.Web. **Required, no default outside local development:** a missing or misspelled value stops the app at startup. |
+| `Auth:Dev:AccessCode` | the shared tester code (secret `MONSTERASP_DEV_ACCESS_CODE`), at least 12 characters | not used | Dev mode outside the Development environment refuses to start without it. Asked before the demo-user list is shown; 10 wrong codes per address in 10 minutes block that address. Changing it signs everyone out. |
+| `Auth:BootstrapAdmins` | not used | list of e-mail addresses / UPNs (array, or one string separated by `,` or `;`) | Entra mode: these accounts are created at their first sign-in (even with `Auth:Entra:AutoProvision=false`) and given the Admin role. This is how the first administrators come into being. Remove an address to stop the role being re-granted at sign-in. |
+| `Auth:Entra:AutoProvision` | not used | `true` (default) or `false` | `true`: any tenant user who signs in becomes a Reader without memberships. `false`: only users that already exist (or bootstrap admins) get in; others get 403. |
 | `Database:Provider` | `Sqlite` (local) / `SqlServer` (test site) | `SqlServer` | EF Core provider. |
-| Connection string (assumed `ConnectionStrings:Default`) | monsterasp.net "Local access" string | Passwordless, managed identity (`Authentication=Active Directory Default`) | The test deployment writes the string under `ConnectionStrings:Default`, `ConnectionStrings:DefaultConnection` and `Database:ConnectionString` so it works whichever the API reads. |
-| `Storage:Mode` | `Local` (disk under `App_Data/files`) | `SharePoint` | Where contract documents are stored. |
-| `Ai:Mode` | `Heuristic` | `AzureOpenAI` (or stay on `Heuristic`) | Field extraction and summary at intake. |
-| `Suppliers:Mode` | `Seed` | `PowerBi` | Supplier master source. |
-| `Notifications:Mode` | `Outbox` (rows shown in admin) | `Graph` (mail + Teams) | How reminders are delivered. |
-| `Seed:DemoData` | `true` | `false` | Creates demo users, contracts and rules. Must be `false` in production. |
+| `ConnectionStrings:Default` | monsterasp.net "Local access" string | Passwordless, managed identity (`Authentication=Active Directory Default`) | The only connection string key the API reads. |
+| `Documents:Provider` | `Local` (disk under `App_Data/files`, default) | `SharePoint` | Where contract documents are stored. |
+| `Analyzer:Provider` | `Heuristic` (default) | `AzureOpenAI` (or stay on `Heuristic`) | Field extraction and summary at intake. |
+| `Suppliers:Provider` | `Seed` (default) | `PowerBi` | Supplier master source. |
+| `Notifications:Provider` | `Outbox` (rows shown in admin, default) | `Graph` (mail) | How reminders are delivered. With `Graph`, a reminder whose mail fails is retried by the hourly job (up to 5 attempts) instead of being marked as sent. |
+| `Seed:DemoData` | `true` (set by the deployment) | `false` (default) | Creates demo users, contracts and approvals. Off unless set to `true`, and ignored unless `Auth:Mode=Dev`. |
 | `AzureAd:Instance`, `AzureAd:TenantId`, `AzureAd:ClientId`, `AzureAd:ClientSecret` (assumed, Microsoft.Identity.Web convention) | not used | set | Entra app registration. Secret comes from Key Vault. |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | not used | set by Bicep | Telemetry. Only has an effect once the API includes Application Insights / OpenTelemetry (see known gaps). |
 
 E-sign is `None` in both modes for version 1 (the owner marks a contract as signed). DocuSign is a later stub.
 
+Approval rule specificity (how the rule for a contract is picked): the rule with the most
+criteria set wins, where entity, type, department and the value band (minimum and/or maximum
+together) each count as one; ties go to the higher priority, then the name. The value compared
+with the band is the **larger** of total value and annual value, in DKK. Consequences to keep
+in mind when editing rules in Settings:
+
+- A rule with only a contract type and no value band is exactly as specific as a plain value
+  band, and wins on priority. Anyone who can choose the contract type could then route a large
+  contract around the value bands. **Give every type rule a maximum value** (the seeded "NDA"
+  rule has DKK 1m): type + band is then more specific than a band alone for small contracts,
+  and larger ones fall through to the value bands.
+- The seeded "Corporate" rule has no cap on purpose: its route (Legal and Group CFO, then
+  Group CEO) is at least as strict as the top value band.
+- The contract owner and the person who submits are never approvers. A role or person that
+  resolves to one of them is replaced by an entity manager of the contract's entity, else the
+  Group CFO, else the Group CEO, else an administrator; the step's role label says so.
+
 How the test site gets its settings: the **Deploy test** workflow writes
-`appsettings.Production.json` into the published folder at deploy time (Dev sign-in, SQL
-Server, demo data, connection string from the GitHub secret). The file is never committed.
+`appsettings.Production.json` into the published folder at deploy time (Dev sign-in with the
+access code, SQL Server, demo data, connection string from the GitHub secret). The file is never committed.
 Environment variables set in the monsterasp.net Control Panel (website > Scripting >
 Environment variables) override it.
 
@@ -85,7 +105,8 @@ Artifacts per CI run: `web-dist`, `api-publish` (30 days), `test-results`, `buil
 
 Repository secrets (test deployment): `MONSTERASP_WEBDEPLOY_URL`,
 `MONSTERASP_WEBDEPLOY_SITE`, `MONSTERASP_WEBDEPLOY_USERNAME`,
-`MONSTERASP_WEBDEPLOY_PASSWORD`, `MONSTERASP_DB_CONNECTION_STRING`.
+`MONSTERASP_WEBDEPLOY_PASSWORD`, `MONSTERASP_DB_CONNECTION_STRING`,
+`MONSTERASP_DEV_ACCESS_CODE`.
 Optional repository variables: `MONSTERASP_SITE_URL`, `MONSTERASP_ALLOW_UNTRUSTED_CERT`
 (`false` to require a trusted certificate on the Web Deploy endpoint), `PUBLISH_RUNTIME`
 (default `win-x86`), `PUBLISH_SELF_CONTAINED` (default `false`).
@@ -206,7 +227,7 @@ and match the names in the app exactly. Dynamic groups require Entra ID P1.
 
 ### 5.6 Cut-over checklist
 
-- [ ] `Auth:Mode=Entra`, `Seed:DemoData=false`, `Storage:Mode=SharePoint`, `Notifications:Mode=Graph`
+- [ ] `Auth:Mode=Entra`, `Auth:BootstrapAdmins` set to the first administrators, `Seed:DemoData=false`, `Documents:Provider=SharePoint`, `Notifications:Provider=Graph`
 - [ ] Database is empty of demo data (new database, not a copy of test)
 - [ ] Migrations introduced before the first production schema change (replace `EnsureCreated`)
 - [ ] Approval rules replaced with the real authority matrix; reminder settings reviewed

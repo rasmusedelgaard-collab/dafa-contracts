@@ -140,9 +140,9 @@ public class AuditService
 
     public const string ContractViewed = "contract.viewed";
 
-    public void Record(string action, string text, Guid? contractId = null)
+    public AuditEvent Record(string action, string text, Guid? contractId = null)
     {
-        _db.AuditEvents.Add(new AuditEvent
+        var auditEvent = new AuditEvent
         {
             Id = Guid.NewGuid(),
             At = _clock.UtcNow,
@@ -151,7 +151,9 @@ public class AuditService
             Action = action,
             ContractId = contractId,
             Text = text
-        });
+        };
+        _db.AuditEvents.Add(auditEvent);
+        return auditEvent;
     }
 }
 

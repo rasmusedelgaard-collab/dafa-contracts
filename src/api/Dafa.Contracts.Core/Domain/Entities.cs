@@ -3,6 +3,17 @@ namespace Dafa.Contracts.Core.Domain;
 // Persistence model. Relations are plain Guid foreign-key columns without navigation properties:
 // the data set is small, and this keeps the schema identical and cascade-free on Sqlite and SQL Server.
 
+/// <summary>
+/// Rows with optimistic concurrency. <see cref="Version"/> is a concurrency token that the
+/// DbContext replaces with a new Guid on every insert and update (portable across Sqlite and
+/// SQL Server, unlike rowversion). A save based on a stale copy fails with
+/// DbUpdateConcurrencyException, which the API reports as 409.
+/// </summary>
+public interface IVersioned
+{
+    Guid Version { get; set; }
+}
+
 public class LegalEntity
 {
     public Guid Id { get; set; }
@@ -73,9 +84,10 @@ public class Supplier
     public bool IsActive { get; set; } = true;
 }
 
-public class Contract
+public class Contract : IVersioned
 {
     public Guid Id { get; set; }
+    public Guid Version { get; set; }
     public string ContractNo { get; set; } = "";
     public string Title { get; set; } = "";
     public Guid TypeId { get; set; }
@@ -111,6 +123,11 @@ public class Contract
     public Guid? RenewalDecidedById { get; set; }
     public DateTime? RenewalDecidedAt { get; set; }
     public string? RenewalComment { get; set; }
+    /// <summary>
+    /// The notice deadline of the term that was last renewed (Renew decision or automatic roll-forward).
+    /// A term can be renewed only once: Renew is refused while the current deadline equals this value.
+    /// </summary>
+    public DateOnly? LastRenewedDeadline { get; set; }
     /// <summary>JSON array of deviations found by the analyzer at intake.</summary>
     public string? DeviationsJson { get; set; }
     public Guid CreatedById { get; set; }
@@ -181,9 +198,10 @@ public class ApproverDefinition
     public Guid? UserId { get; set; }
 }
 
-public class ApprovalInstance
+public class ApprovalInstance : IVersioned
 {
     public Guid Id { get; set; }
+    public Guid Version { get; set; }
     public Guid ContractId { get; set; }
     public Guid? RuleId { get; set; }
     public string RuleName { get; set; } = "";
@@ -194,9 +212,10 @@ public class ApprovalInstance
     public DateTime? CompletedAt { get; set; }
 }
 
-public class ApprovalStep
+public class ApprovalStep : IVersioned
 {
     public Guid Id { get; set; }
+    public Guid Version { get; set; }
     public Guid InstanceId { get; set; }
     public Guid ContractId { get; set; }
     public int StageOrder { get; set; }
@@ -215,10 +234,19 @@ public class Reminder
     public Guid Id { get; set; }
     public Guid ContractId { get; set; }
     public Guid? ObligationId { get; set; }
-    /// <summary>Notice{days}, Escalation or Obligation.</summary>
+    /// <summary>Notice{days}, Escalation, AnnualReview or Obligation.</summary>
     public string Kind { get; set; } = "";
+    /// <summary>
+    /// What the reminder is about, so one is sent once per term: the notice deadline (yyyy-MM-dd) for
+    /// Notice and Escalation, the anniversary for AnnualReview, obligation id and due date for Obligation.
+    /// Unique together with ContractId and Kind.
+    /// </summary>
+    public string TermKey { get; set; } = "";
     public DateOnly DueDate { get; set; }
+    /// <summary>Null while the notification could not be delivered (Graph mode); retried by the job.</summary>
     public DateTime? SentAt { get; set; }
+    /// <summary>Number of delivery attempts so far.</summary>
+    public int Attempts { get; set; }
     public Guid RecipientId { get; set; }
 }
 

@@ -115,11 +115,8 @@ public class ContractQueryService
         switch ((query.View ?? "all").Trim().ToLowerInvariant())
         {
             case "due90":
-                items = items.Where(c =>
-                {
-                    var days = ContractCalculations.DaysToNotice(c, today);
-                    return c.Status == ContractStatus.Active && days is >= 0 and <= 90;
-                });
+                // Same rule as the home tile and the overview count: no decision recorded yet.
+                items = items.Where(c => IsDueWithin(c, today, 90));
                 break;
             case "approval":
                 items = items.Where(c => c.Status == ContractStatus.InApproval);
@@ -326,11 +323,12 @@ public class ContractQueryService
     {
         var text = value ?? "";
         // Stop spreadsheet programs from treating user text as a formula.
-        if (text.Length > 0 && "=+-@".IndexOf(text[0]) >= 0)
+        // Excel also evaluates cells that start with a tab or a carriage return.
+        if (text.Length > 0 && "=+-@\t\r".IndexOf(text[0]) >= 0)
         {
             text = "'" + text;
         }
-        if (text.IndexOfAny(new[] { ',', '"', '\n', '\r' }) >= 0)
+        if (text.IndexOfAny(new[] { ',', '"', '\n', '\r', '\t' }) >= 0)
         {
             text = "\"" + text.Replace("\"", "\"\"") + "\"";
         }
@@ -460,6 +458,7 @@ public class ContractQueryService
             var instanceId = instance.Id;
             var steps = await _db.ApprovalSteps.AsNoTracking().Where(s => s.InstanceId == instanceId).ToListAsync(cancellationToken);
             detail.Approval = ApprovalMapper.ToDto(instance, steps, reference, contract.Title);
+            detail.SubmittedById = instance.StartedById;
         }
 
         // Reminders
@@ -494,6 +493,7 @@ public class ContractQueryService
         detail.Deviations = JsonDefaults.ReadList<Deviation>(contract.DeviationsJson);
         detail.CanEdit = ContractAccessRules.CanEdit(profile, contract) && contract.Status != ContractStatus.InApproval;
         detail.CanDecideRenewal = ContractAccessRules.CanDecideRenewal(profile, contract);
+        detail.LockedFields = ApprovedTerms.LockedFieldsFor(profile, contract);
 
         try
         {
@@ -615,8 +615,8 @@ public class ContractQueryService
                 EntityId = contract.EntityId,
                 EntityName = reference.Entity(contract.EntityId),
                 DepartmentName = reference.Department(contract.DepartmentId),
-                NoticeDeadline = deadline,
-                DaysToNotice = ContractCalculations.DaysToNotice(deadline, today),
+                NoticeDeadline = deadline.Value,
+                DaysToNotice = deadline.Value.DayNumber - today.DayNumber,
                 AutoRenew = contract.AutoRenew,
                 AnnualValue = contract.AnnualValue,
                 Currency = contract.Currency
@@ -905,6 +905,8 @@ public class ContractQueryService
 
     public async Task<List<SupplierDto>> SuppliersAsync(string? q, CancellationToken cancellationToken = default)
     {
+        // Known, active users only (M10).
+        await _currentUser.GetProfileAsync(cancellationToken);
         var term = (q ?? "").Trim();
         var suppliers = await _db.Suppliers.AsNoTracking().Where(s => s.IsActive).ToListAsync(cancellationToken);
         return suppliers
@@ -935,7 +937,8 @@ public class ContractQueryService
                 Id = u.Id,
                 Name = u.Name,
                 Initials = u.Initials,
-                DepartmentIds = departmentsByUser.TryGetValue(u.Id, out var ids) ? ids : new List<Guid>()
+                DepartmentIds = departmentsByUser.TryGetValue(u.Id, out var ids) ? ids : new List<Guid>(),
+                Roles = u.Roles.ToNames()
             }).ToList(),
             Currencies = CurrencyRates.Currencies.ToList()
         };

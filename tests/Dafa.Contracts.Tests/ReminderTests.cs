@@ -209,7 +209,8 @@ public class ReminderTests
         Assert.Equal(1, due.ObligationReminders);
         Assert.Equal(0, again.ObligationReminders);
 
-        var reminder = Assert.Single(Reminders(world, contract.Id));
+        // The open-ended contract also gets its yearly review reminder; look at the obligation's only.
+        var reminder = Assert.Single(Reminders(world, contract.Id), r => r.ObligationId != null);
         Assert.Equal(obligationId, reminder.ObligationId);
         Assert.Equal(world.PurchasingMember, reminder.RecipientId);
         Assert.Equal(1, OutboxCount(world, "Obligation"));
