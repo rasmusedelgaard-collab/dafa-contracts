@@ -4,6 +4,7 @@ import type { ContractInput, Id } from '../types';
 import { addDays } from '../../lib/dates';
 import { createMockApi, type MockApi } from './mockApi';
 import { DEP, ENT, TYP, USER, departmentId, entityId, typeId } from './seed';
+const SUPPLIER_1 = '00000005-0000-4000-8000-000000000001';
 
 const TODAY = '2026-11-22';
 const as = (userId: Id, extra: Parameters<typeof createMockApi>[0] = {}): MockApi => createMockApi({ today: TODAY, userId, ...extra });
@@ -36,7 +37,7 @@ const stepOf = (api: MockApi, title: string, userId: Id) => {
 
 function input(overrides: Partial<ContractInput> = {}): ContractInput {
   return {
-    title: 'Phase 2 test agreement', typeId: typeId(TYP.direct), supplierId: null, counterpartyName: 'Test Supplier ApS', entityId: entityId(ENT.dafa), departmentId: departmentId(DEP.purchasing),
+    title: 'Phase 2 test agreement', typeId: typeId(TYP.direct), supplierId: SUPPLIER_1, counterpartyName: 'Test Supplier ApS', entityId: entityId(ENT.dafa), departmentId: departmentId(DEP.purchasing),
     ownerId: USER.jon, delegateId: null, responsibleId: null, reminderRecipient: 'Owner', startDate: '2027-01-01', endDate: '2027-12-31', noticePeriodDays: 90, autoRenew: false, renewalMonths: null,
     annualValue: 400_000, totalValue: null, currency: 'DKK', paymentTerms: null, priceAdjustment: null, priceAdjustmentDate: null, governingLaw: null, liabilityCap: null, exclusivity: null, changeOfControl: false, summary: null,
     ...overrides,
@@ -129,12 +130,12 @@ describe('approvals decision flow', () => {
 
 describe('sign-in configuration and access code', () => {
   it('reports Dev mode without an access code by default', async () => {
-    expect(await as(USER.ras).getDevConfig()).toEqual({ authMode: 'Dev', accessCodeRequired: false });
+    expect(await as(USER.ras).getDevConfig()).toMatchObject({ authMode: 'Dev', accessCodeRequired: false });
   });
 
   it('with an access code: starts signed out and needs the code for dev/users and dev/login', async () => {
     const api = createMockApi({ today: TODAY, accessCode: 'dafa-test' });
-    expect(await api.getDevConfig()).toEqual({ authMode: 'Dev', accessCodeRequired: true });
+    expect(await api.getDevConfig()).toMatchObject({ authMode: 'Dev', accessCodeRequired: true });
     expect((await problem(api.getMe())).status).toBe(401);
     expect((await problem(api.getDevUsers())).status).toBe(401);
     expect((await problem(api.getDevUsers('wrong'))).status).toBe(401);

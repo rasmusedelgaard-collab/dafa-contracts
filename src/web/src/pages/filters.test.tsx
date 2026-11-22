@@ -190,7 +190,7 @@ describe('Overview: every filter can be removed with its chip and with Clear all
         for (const p of c.params) await waitFor(() => expect(urlParams().getAll(p)).toEqual([]));
         await expectUnfiltered(await totalOf(api));
         // The filter bar shows "All" again for the select-type filters.
-        for (const label of ['Department', 'Type', 'Status', 'Owner', 'Value', 'Dates']) expect(screen.getByRole('combobox', { name: label })).toHaveValue('');
+        for (const label of ['Department', 'Type', 'Status', 'Owner', 'Value', 'Dates', 'Counterparty']) expect(screen.getByRole('combobox', { name: label })).toHaveValue('');
       });
     }
   }
@@ -209,7 +209,7 @@ describe('Overview: every filter can be removed with its chip and with Clear all
     const user = userEvent.setup();
     const api = renderApp(`/overview?counterparty=${CP}`);
     await overviewReady();
-    await user.click(await screen.findByRole('button', { name: 'Clear counterparty filter' }));
+    await user.click(await screen.findByRole('button', { name: 'Clear counterparty' }));
     await expectUnfiltered(await totalOf(api), 'counterparty');
   });
 

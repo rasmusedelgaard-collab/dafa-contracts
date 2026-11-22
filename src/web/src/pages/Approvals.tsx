@@ -3,13 +3,15 @@ import { useBodyFlag } from '../app/bodyFlag';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { apiMode } from '../api';
-import { qk, useApi, useMe } from '../app/context';
+import { qk, useApi, useMe, useScope } from '../app/context';
 import type { ApprovalInstance, ApprovalStep, MyApproval } from '../api/types';
-import { Button, ButtonLink, Card, EmptyState, ErrorState, Icon, Select, Skeleton, SkeletonRows } from '../components';
+import { Button, ButtonLink, Card, EmptyState, ErrorState, Icon, Skeleton, SkeletonRows } from '../components';
 import { Deviations, KeyTerms, stageApproverIds, useApprovalDecision, type DecisionContract } from '../features/Approval';
 import { routeSummary, splitRoleLabel, stepLabel, waitInfo } from '../lib/approvals';
 import { formatDate } from '../lib/dates';
 import { plural } from '../lib/format';
+import { ScopeChip } from '../shell/ScopeChip';
+import { PersonPicker } from '../features/Pickers';
 
 function stepState(step: ApprovalStep, mine: boolean): { text: string; look: 'done' | 'you' | 'now' | 'next' | 'stop' | 'off' } {
   switch (step.status) {
@@ -108,7 +110,7 @@ function DecisionBar({ stepId, onDone, contract }: { stepId: string; onDone: () 
           <label htmlFor={`${id}-delegate`} className="sr-only">
             Delegate to
           </label>
-          <Select id={`${id}-delegate`} value={d.delegateTo} onChange={(e) => d.setDelegateTo(e.target.value)} placeholder="Delegate to…" options={d.delegateOptions} autoFocus />
+          <PersonPicker id={`${id}-delegate`} value={d.delegateTo || null} filter={d.canDelegateTo} placeholder="Delegate to…" clearLabel="Clear delegate" onChange={(id) => d.setDelegateTo(id ?? '')} />
           <Button variant="on-dark-ghost" onClick={() => d.setDelegating(false)} disabled={d.busy}>
             Cancel
           </Button>
@@ -205,7 +207,8 @@ function Detail({ item, onDone, onBack }: { item: MyApproval; onDone: () => void
 export function Approvals() {
   const api = useApi();
   const [params, setParams] = useSearchParams();
-  const mine = useQuery({ queryKey: [...qk.approvals, 'mine'], queryFn: () => api.getMyApprovals() });
+  const scope = useScope();
+  const mine = useQuery({ queryKey: [...qk.approvals, 'mine', scope.entityIds], queryFn: () => api.getMyApprovals(scope.entityIds) });
   const items = mine.data ?? [];
   const picked = params.get('step');
   const pickedItem = items.find((i) => i.stepId === picked);
@@ -229,6 +232,7 @@ export function Approvals() {
           </span>
         </div>
       </div>
+      <ScopeChip />
 
       {mine.isLoading ? (
         <Card clip>

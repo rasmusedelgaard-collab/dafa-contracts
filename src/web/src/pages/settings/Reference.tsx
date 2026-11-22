@@ -142,7 +142,9 @@ export function CurrenciesAdmin() {
     <>
       <SectionHead title="Currencies" text="Currencies a contract can be in, and the rate to DKK used for every DKK figure: Overview, value bands and the approval route." action={<Button loading={save.isPending} disabled={!rows} onClick={() => rows && save.mutate(rows)}>Save changes</Button>} />
       <Card clip>
-        {!rows ? (
+        {q.isError && !rows ? (
+          <ErrorState text="The currencies could not be loaded." onRetry={() => void q.refetch()} />
+        ) : !rows ? (
           <SkeletonRows rows={6} />
         ) : (
           <div className="table-wrap">
@@ -238,6 +240,8 @@ export function TagsAdmin() {
       <Card clip>
         {q.isLoading ? (
           <SkeletonRows rows={4} />
+        ) : q.isError ? (
+          <ErrorState text="The tags could not be loaded." onRetry={() => void q.refetch()} />
         ) : (q.data ?? []).length === 0 ? (
           <EmptyState icon="tag" title="No tags yet" />
         ) : (

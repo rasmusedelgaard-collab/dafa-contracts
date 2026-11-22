@@ -13,6 +13,7 @@ import { fileExtension, formatFileSize, formatMoney, plural } from '../../lib/fo
 import { applySuggestions } from '../../lib/suggestions';
 import { draftToInput, emptyDraft, hasErrors, parseAmount, parseWhole, routeValue, validateDraft, type ContractDraft, type DraftErrors } from '../../lib/validation';
 import { LINK_KINDS } from '../record/dialogs';
+import { PersonPicker } from '../../features/Pickers';
 
 const STEPS = ['Upload', 'Details', 'Links and obligations', 'Approval'] as const;
 
@@ -269,7 +270,7 @@ function LinksStep({ links, setLinks, obligations, setObligations, defaultRespon
           <Field label="Repeats every (months)" optional error={obError.frequency}>
             {(p) => <TextInput {...p} inputMode="numeric" value={frequency} onChange={(e) => setFrequency(e.target.value)} placeholder="12" />}
           </Field>
-          <Field label="Responsible">{(p) => <Select {...p} value={responsibleId} onChange={(e) => setResponsibleId(e.target.value)} options={lookups.users.map((u) => ({ value: u.id, label: u.name }))} />}</Field>
+          <Field label="Responsible">{(p) => <PersonPicker {...p} value={responsibleId || null} clearLabel="Clear responsible" onChange={(id) => setResponsibleId(id ?? '')} />}</Field>
           <Button variant="tint" icon="plus" onClick={addObligation}>
             Add obligation
           </Button>
@@ -337,6 +338,18 @@ export function NewContract() {
       const applied = applySuggestions(draft, result.suggestions, lookups);
       const next = !applied.draft.summary && result.summary ? { ...applied.draft, summary: result.summary } : applied.draft;
       setDraft(next);
+      // Release 4: a suggested counterparty name is matched to the master data (exact name); the
+      // user still accepts the suggestion. Without a match the picker starts with the name.
+      if (!next.supplierId && next.counterpartyName.trim()) {
+        const name = next.counterpartyName.trim().toLowerCase();
+        void api
+          .getCounterparties(next.counterpartyName.trim())
+          .then((list) => {
+            const hit = list.find((c) => c.isActive && c.name.trim().toLowerCase() === name);
+            if (hit) setDraft((d) => (d.supplierId || d.counterpartyName.trim().toLowerCase() !== name ? d : { ...d, supplierId: hit.id, counterpartyName: hit.name }));
+          })
+          .catch(() => undefined);
+      }
       setPending(new Set(applied.fields));
       setAccepted(new Set());
       setSource({ kind: 'upload', result });

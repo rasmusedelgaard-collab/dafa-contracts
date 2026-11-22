@@ -238,6 +238,8 @@ export function JobsAdmin() {
       <Card clip>
         {q.isLoading ? (
           <SkeletonRows rows={8} />
+        ) : q.isError ? (
+          <ErrorState text="The jobs could not be loaded." onRetry={() => void q.refetch()} />
         ) : (
           <Table<JobInfo>
             caption="Jobs" minWidth={760}
@@ -325,7 +327,7 @@ export function GeneralAdmin() {
       toast.error(e);
     },
   });
-  if (!s) return <SkeletonRows rows={8} />;
+  if (!s) return q.isError ? <ErrorState text="The general settings could not be loaded." onRetry={() => void q.refetch()} /> : <SkeletonRows rows={8} />;
   const dqOptions = [...DATA_QUALITY_FIELDS.map((k) => ({ key: k as string, label: DQ_LABEL[k] ?? k })), ...config.customFields.map((d) => ({ key: `cf.${d.key}`, label: `${d.label} (custom field)` }))];
   return (
     <>

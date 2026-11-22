@@ -47,6 +47,30 @@ import type {
   TemplateInput,
 } from './types';
 import type {
+  AccessMapping,
+  Branding,
+  ContractFilter as ContractFilterR4,
+  CounterpartyCreateInput,
+  DepartmentAdmin,
+  DepartmentInputV4,
+  DistinctColumn,
+  DistinctValues,
+  ESignSettings,
+  LinkTestResult,
+  LogoVariant,
+  PeopleQuery,
+  PersonOption,
+  SignaturePermissions,
+  SignatureRequest,
+  SignatureRequestInput,
+  SimulateSignatureInput,
+  TemplateCategory,
+  TemplateCategoryInput,
+  TemplatePreviewInfo,
+  StorageHealth,
+  ReconciliationReport,
+} from './types';
+import type {
   AdminUser,
   AdminUserInput,
   AppConfig,
@@ -127,13 +151,17 @@ export class ApiError extends Error {
  * .NET API; `mock/mockApi.ts` implements it in the browser. One method per endpoint in
  * docs/BUILD_BRIEF.md section 5.
  */
+/** Top-bar entity scope for a request: the ids are sent as repeated `entityId`. */
+export type Scope = Id[];
+
 export interface Api {
   // Session and reference data
   getMe(): Promise<Me>;
   getLookups(): Promise<Lookups>;
   getSuppliers(q?: string): Promise<Supplier[]>;
-  getHome(): Promise<HomeData>;
-  search(q: string): Promise<SearchResult[]>;
+  /** Release 4: `scope` = the top-bar entity scope, sent as repeated `entityId`. */
+  getHome(scope?: Scope): Promise<HomeData>;
+  search(q: string, scope?: Scope): Promise<SearchResult[]>;
   /** Read-only reminder settings for every signed-in user (`GET reminder-settings`). */
   getReminderSettings(): Promise<ReminderSettings>;
 
@@ -169,15 +197,15 @@ export interface Api {
   fromTemplate(input: FromTemplateInput): Promise<FromTemplateResult>;
 
   // Approvals
-  getMyApprovals(): Promise<MyApproval[]>;
+  getMyApprovals(scope?: Scope): Promise<MyApproval[]>;
   decideApprovalStep(stepId: Id, input: ApprovalDecisionInput): Promise<void>;
   delegateApprovalStep(stepId: Id, userId: Id): Promise<void>;
   previewApproval(query: ApprovalPreviewQuery): Promise<ApprovalPreview>;
 
   // Renewals and overview
-  getRenewals(months?: number): Promise<RenewalItem[]>;
+  getRenewals(months?: number, scope?: Scope): Promise<RenewalItem[]>;
   /** Release 3: every signed-in user, scoped to what they can see (no 403 any more). */
-  getOverview(): Promise<OverviewData>;
+  getOverview(scope?: Scope): Promise<OverviewData>;
 
   // ----- Release 3 (docs/CONTRACT_V3.md) -----
   /** `GET app-config`: settings, custom fields, field rules, tags and rates every page needs. */
@@ -231,6 +259,29 @@ export interface Api {
   getDataRoomExports(): Promise<DataRoomExport[]>;
   getDataRoomExport(id: Id): Promise<DataRoomExport>;
   getDataRoomContent(id: Id): Promise<FileDownload>;
+
+  // ----- Release 4 (docs/CONTRACT_V4.md) -----
+  /** `GET contracts/distinct?column=&q=&limit=&<ContractFilter>` */
+  getDistinct(column: DistinctColumn, filter: ContractFilterR4, q?: string, limit?: number): Promise<DistinctValues>;
+  /** `GET people?q=&limit=&role=&includeInactive=` */
+  searchPeople(query: PeopleQuery): Promise<PersonOption[]>;
+  /** `POST counterparties` (non-admin, per `AppSettings.counterpartyCreation`). */
+  createCounterpartyQuick(input: CounterpartyCreateInput): Promise<Counterparty>;
+  /** `GET template-categories` (active, any user) */
+  getTemplateCategories(): Promise<TemplateCategory[]>;
+  /** `GET templates/{id}/preview` */
+  getTemplatePreview(id: Id): Promise<TemplatePreviewInfo>;
+  /** `GET branding` (anonymous) */
+  getBranding(): Promise<Branding>;
+  /** Absolute URL for a relative asset path returned by the API (logo). */
+  assetUrl(path: string): string;
+  getSignaturePermissions(contractId: Id): Promise<SignaturePermissions>;
+  getSignatureRequests(contractId: Id): Promise<SignatureRequest[]>;
+  createSignatureRequest(contractId: Id, input: SignatureRequestInput): Promise<SignatureRequest>;
+  resendSignatureRequest(id: Id): Promise<SignatureRequest>;
+  cancelSignatureRequest(id: Id): Promise<SignatureRequest>;
+  /** Simulated provider only. */
+  simulateSignature(id: Id, input: SimulateSignatureInput): Promise<SignatureRequest>;
 
   // Admin (role Admin)
   admin: {
@@ -342,6 +393,26 @@ export interface Api {
 
     getAppSettings(): Promise<AppSettings>;
     updateAppSettings(input: AppSettings): Promise<AppSettings>;
+
+    // ----- Release 4 -----
+    getTemplateCategories(): Promise<TemplateCategory[]>;
+    createTemplateCategory(input: TemplateCategoryInput): Promise<TemplateCategory>;
+    updateTemplateCategory(id: Id, input: TemplateCategoryInput): Promise<TemplateCategory>;
+    deleteTemplateCategory(id: Id): Promise<void>;
+    orderTemplateCategories(ids: Id[]): Promise<TemplateCategory[]>;
+    uploadLogo(variant: LogoVariant, file: File): Promise<Branding>;
+    deleteLogo(variant: LogoVariant): Promise<Branding>;
+    /** `GET admin/departments` with the release 4 link fields. */
+    getDepartmentsV4(): Promise<DepartmentAdmin[]>;
+    updateDepartmentV4(id: Id, input: DepartmentInputV4): Promise<DepartmentAdmin>;
+    testEntityLink(id: Id): Promise<LinkTestResult>;
+    testDepartmentLink(id: Id): Promise<LinkTestResult>;
+    getAccessMapping(): Promise<AccessMapping>;
+    getESignSettings(): Promise<ESignSettings>;
+    updateESignSettings(input: ESignSettings): Promise<ESignSettings>;
+    getStorageHealth(): Promise<StorageHealth>;
+    getReconciliation(): Promise<ReconciliationReport | null>;
+    runReconciliation(): Promise<ReconciliationReport>;
   };
 
   // Dev mode sign-in

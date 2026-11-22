@@ -11,6 +11,7 @@ export const PROBLEM_TYPES = {
   'in-use': 'urn:dafa:problem:in-use',
   'synced-field': 'urn:dafa:problem:synced-field',
   'import-state': 'urn:dafa:problem:import-state',
+  'signature-state': 'urn:dafa:problem:signature-state',
 } as const;
 export type ConflictKind = keyof typeof PROBLEM_TYPES;
 

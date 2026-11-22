@@ -4,6 +4,7 @@ import { useApi, useAppConfig, useInvalidateContracts, useLookups } from '../app
 import type { BulkInput, BulkResult, ContractRole } from '../api/types';
 import { Button, Field, Modal, Select, Textarea, useToast } from '../components';
 import { plural, saveBlob } from '../lib/format';
+import { PersonPicker } from './Pickers';
 
 type Action = 'tag' | 'untag' | 'reassign' | 'complete' | null;
 
@@ -125,7 +126,7 @@ export function BulkBar({ ids, onClear }: { ids: string[]; onClear: () => void }
                   )}
                 </Field>
                 <Field label="New person" error={error} hint={role === 'Owner' ? 'Only people with the contract owner role are listed.' : undefined}>
-                  {(p) => <Select {...p} value={toUserId} placeholder="Choose" options={owners.map((u) => ({ value: u.id, label: u.name }))} onChange={(e) => setTo(e.target.value)} />}
+                  {(p) => <PersonPicker {...p} value={toUserId || null} filter={(u) => owners.some((x) => x.id === u.id)} clearLabel="Clear person" onChange={(id) => setTo(id ?? '')} />}
                 </Field>
               </>
             ) : (

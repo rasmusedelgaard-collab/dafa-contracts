@@ -258,6 +258,8 @@ export interface SyncSourceRec extends Omit<SyncSource, 'lastRun' | 'nextRunAt'>
 }
 
 export interface Db {
+  /** Release 4 state (template categories, branding, links, e-signature); created on first use. */
+  r4?: import('./r4').R4State;
   entities: EntityRec[];
   departments: NamedRefV3[];
   contractTypes: NamedRefV3[];

@@ -11,6 +11,7 @@ import { DataRoomDialog } from '../../features/DataRoom';
 import { addDays, addMonths, monthShort, todayIso } from '../../lib/dates';
 import { applyDrill, chipsOf, filterToParams, isEmptyFilter, monthRange, parseFilter } from '../../lib/drill';
 import { ALL_STATUSES, formatMoney, plural, saveBlob, statusLabel } from '../../lib/format';
+import { CounterpartyPicker, PersonPicker } from '../../features/Pickers';
 
 const PAGE_SIZE = 20;
 const URGENCY = [
@@ -163,8 +164,6 @@ export function Overview() {
 
   const cpId = typeof filter.counterpartyId === 'string' ? filter.counterpartyId : null;
   const cpPage = useQuery({ queryKey: qk.counterparty(cpId ?? ''), queryFn: () => api.getCounterparty(cpId ?? ''), enabled: !!cpId, staleTime: 60_000 });
-  const [cpText, setCpText] = useState('');
-  const cpOptions = useQuery({ queryKey: qk.counterparties(cpText), queryFn: () => api.getCounterparties(cpText), staleTime: 60_000 });
 
   const exportCsv = useMutation({
     mutationFn: () => api.exportContracts({ ...filter, includeEnded: filter.includeEnded ?? false, sort: sort as never, columns: defaultColumns('xl') } as never),
@@ -243,34 +242,15 @@ export function Overview() {
         <ChipSelect label="Department" options={refs(lookups.departments)} value={filter.departmentId} onChange={(v) => drill({ departmentId: v || undefined }, true)} />
         <ChipSelect label="Type" options={refs(lookups.contractTypes)} value={filter.typeId} onChange={(v) => drill({ typeId: v || undefined }, true)} />
         <ChipSelect label="Status" options={ALL_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))} value={filter.status} onChange={(v) => drill({ status: (v || undefined) as ContractStatus | undefined }, true)} />
-        <label className={`chip chip--input${filter.counterpartyId ? ' chip--on' : ''}`}>
-          <span className="sr-only">Counterparty</span>
-          <input
-            list="overview-counterparties"
-            placeholder={cpPage.data && cpId ? cpPage.data.counterparty.name : Array.isArray(filter.counterpartyId) ? `Counterparty: ${filter.counterpartyId.length} selected` : filter.counterpartyId ? 'Counterparty: selected' : 'Counterparty: All'}
-            value={cpText}
-            onChange={(e) => {
-              const v = e.target.value;
-              const hit = cpOptions.data?.find((c) => c.name === v);
-              if (hit) {
-                setCpText('');
-                drill({ counterpartyId: hit.id }, true);
-              } else setCpText(v);
-            }}
-            aria-label="Counterparty"
-          />
-          <datalist id="overview-counterparties">
-            {(cpOptions.data ?? []).map((c) => (
-              <option key={c.id} value={c.name} />
-            ))}
-          </datalist>
-          {filter.counterpartyId ? (
-            <button type="button" className="chip__clear" aria-label="Clear counterparty filter" onClick={() => { setCpText(''); drill({ counterpartyId: undefined }, true); }}>
-              <Icon name="x" size={12} stroke={2.6} />
-            </button>
-          ) : null}
-        </label>
-        <ChipSelect label="Owner" options={lookups.users.filter((u) => u.isActive !== false).map((u) => ({ value: u.id, label: u.name }))} value={filter.ownerId} onChange={(v) => drill({ ownerId: v || undefined }, true)} />
+        <CounterpartyPicker
+          compact
+          ariaLabel="Counterparty"
+          allowCreate={false}
+          placeholder={Array.isArray(filter.counterpartyId) ? `Counterparty: ${filter.counterpartyId.length} selected` : 'Counterparty: All'}
+          value={cpId ? { supplierId: cpId, name: cpPage.data?.counterparty.name ?? data?.topCounterparties.find((b) => b.key === cpId)?.label ?? 'Counterparty' } : { supplierId: null, name: '' }}
+          onChange={(v) => drill({ counterpartyId: v.supplierId ?? undefined }, true)}
+        />
+        <PersonPicker compact ariaLabel="Owner" placeholder={Array.isArray(filter.ownerId) ? `Owner: ${filter.ownerId.length} selected` : 'Owner: All'} value={typeof filter.ownerId === 'string' ? filter.ownerId : null} clearLabel="Clear owner filter" onChange={(id) => drill({ ownerId: id ?? undefined }, true)} />
         <ChipSelect label="Value" options={VALUE_BANDS.map((b) => ({ value: b.key, label: b.label }))} value={filter.valueBand} onChange={(v) => drill({ valueBand: (v || undefined) as never }, true)} />
         <ChipSelect
           label="Dates"

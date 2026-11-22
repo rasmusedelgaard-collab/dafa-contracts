@@ -3,11 +3,12 @@ import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { qk, useApi, useInvalidateContracts, useLookups, useMe } from '../../app/context';
 import type { AccessRule, AdminUser, AdminUserInput, ContractRole, ReassignInput, Role } from '../../api/types';
-import { Avatar, Button, ButtonLink, Card, ChipSelect, EmptyState, ErrorState, Field, Icon, Modal, Pill, Segmented, Select, SkeletonRows, Table, TextInput, useToast } from '../../components';
+import { Avatar, Button, ButtonLink, Card, ChipSelect, EmptyState, ErrorState, Field, Icon, Modal, Pill, Segmented, SkeletonRows, Table, TextInput, useToast } from '../../components';
 import { formatDateTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import { SectionHead } from './common';
 import { problemErrors, useRefreshReference } from './Reference';
+import { PersonPicker } from '../../features/Pickers';
 
 const ROLES: { value: Role; label: string; hint: string }[] = [
   { value: 'Reader', label: 'Reader', hint: 'Sees contracts through the access rules' },
@@ -184,7 +185,6 @@ function EffectiveAccessDialog({ user, onClose }: { user: AdminUser; onClose: ()
 
 function ReassignDialog({ from, onClose }: { from: AdminUser | null; onClose: () => void }) {
   const api = useApi();
-  const lookups = useLookups();
   const toast = useToast();
   const invalidate = useInvalidateContracts();
   const [input, setInput] = useState<ReassignInput>({ fromUserId: from?.id ?? '', toUserId: '', roles: ['Owner', 'Delegate', 'Responsible'], contractIds: null, includeEnded: false, includeObligations: true });
@@ -199,7 +199,6 @@ function ReassignDialog({ from, onClose }: { from: AdminUser | null; onClose: ()
     },
     onError: (e) => toast.error(e),
   });
-  const users = lookups.users.map((u) => ({ value: u.id, label: `${u.name}${u.isActive === false ? ' (inactive)' : ''}` }));
   const toggleRole = (r: ContractRole, on: boolean) => setInput({ ...input, roles: on ? [...input.roles, r] : input.roles.filter((x) => x !== r) });
   return (
     <Modal
@@ -220,8 +219,8 @@ function ReassignDialog({ from, onClose }: { from: AdminUser | null; onClose: ()
     >
       <div className="stack" style={{ gap: 14 }}>
         <div className="form-grid form-grid--flat">
-          <Field label="From">{(p) => <Select {...p} value={input.fromUserId} placeholder="Choose" options={users} onChange={(e) => setInput({ ...input, fromUserId: e.target.value })} />}</Field>
-          <Field label="To">{(p) => <Select {...p} value={input.toUserId} placeholder="Choose" options={users.filter((u) => u.value !== input.fromUserId)} onChange={(e) => setInput({ ...input, toUserId: e.target.value })} />}</Field>
+          <Field label="From" hint="Inactive people are listed too">{(p) => <PersonPicker {...p} includeInactive value={input.fromUserId || null} clearLabel="Clear from" onChange={(id) => setInput({ ...input, fromUserId: id ?? '' })} />}</Field>
+          <Field label="To">{(p) => <PersonPicker {...p} value={input.toUserId || null} filter={(u) => u.id !== input.fromUserId} clearLabel="Clear to" onChange={(id) => setInput({ ...input, toUserId: id ?? '' })} />}</Field>
         </div>
         <div className="check-row">
           {(['Owner', 'Delegate', 'Responsible'] as const).map((r) => (
@@ -305,7 +304,7 @@ export function UsersAdmin() {
         <Card pad className="stack" style={{ gap: 12 }}>
           <p className="secondary prose">Pick a person to see which contracts they can see, and why.</p>
           <div className="row-flex" style={{ gap: 10, alignItems: 'flex-end' }}>
-            <Field label="Person">{(p) => <Select {...p} value={checkId} placeholder="Choose" options={lookups.users.map((u) => ({ value: u.id, label: u.name }))} onChange={(e) => setCheckId(e.target.value)} />}</Field>
+            <Field label="Person">{(p) => <PersonPicker {...p} includeInactive value={checkId || null} clearLabel="Clear person" onChange={(id) => setCheckId(id ?? '')} />}</Field>
             <Button disabled={!checkId} onClick={() => { const u = users.data?.find((x) => x.id === checkId); if (u) setAccess(u); else void api.admin.getUsers({}).then((all) => { const hit = all.find((x) => x.id === checkId); if (hit) setAccess(hit); }); }}>
               Check access
             </Button>

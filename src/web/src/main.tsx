@@ -17,6 +17,7 @@ import './styles/shell.css';
 import './styles/pages.css';
 import './styles/screens.css';
 import './styles/r3.css';
+import './styles/r4.css';
 import { loadApi } from './api';
 import { App } from './App';
 import { ApiProvider } from './app/context';

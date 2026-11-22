@@ -8,6 +8,7 @@ import { PersonLink, TagList } from '../../features/columns';
 import { formatDate } from '../../lib/dates';
 import { formatFileSize, plural, saveBlob } from '../../lib/format';
 import { highlightRanges, segments, terms } from '../../lib/search';
+import { PersonPicker } from '../../features/Pickers';
 
 const GROUPS: { value: SearchGroup | 'all'; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -127,7 +128,8 @@ export function Search() {
     q,
     group: group === 'all' ? undefined : group,
     personId: params.get('person') || undefined,
-    entityId: params.get('entity') || undefined,
+    // The entity filter is the top-bar scope (`entity`, repeatable).
+    entityId: params.getAll('entity').filter(Boolean).length ? params.getAll('entity').filter(Boolean) : undefined,
     departmentId: params.get('department') || undefined,
     typeId: params.get('type') || undefined,
     documentKind: (params.get('kind') as DocumentKind | null) || undefined,
@@ -183,8 +185,8 @@ export function Search() {
       </form>
       <Segmented ariaLabel="Result type" options={GROUPS.map((g) => ({ ...g, label: counts && g.value !== 'all' ? `${g.label} (${counts[g.value]})` : g.label }))} value={group} onChange={(v) => set({ group: v === 'all' ? null : v })} />
       <div className="toolbar toolbar--chips" role="group" aria-label="Filters">
-        <ChipSelect label="Person" options={lookups.users.filter((u) => u.isActive !== false).map((u) => ({ value: u.id, label: u.name }))} value={params.get('person') ?? ''} onChange={(v) => set({ person: v })} />
-        <ChipSelect label="Entity" options={refs(lookups.entities)} value={params.get('entity') ?? ''} onChange={(v) => set({ entity: v })} />
+        <PersonPicker compact includeInactive ariaLabel="Person" placeholder="Person: All" value={params.get('person') || null} clearLabel="Clear person filter" onChange={(id) => set({ person: id })} />
+        <ChipSelect label="Entity" options={refs(lookups.entities)} value={params.getAll('entity')} onChange={(v) => set({ entity: v })} />
         <ChipSelect label="Department" options={refs(lookups.departments)} value={params.get('department') ?? ''} onChange={(v) => set({ department: v })} />
         <ChipSelect label="Type" options={refs(lookups.contractTypes)} value={params.get('type') ?? ''} onChange={(v) => set({ type: v })} />
         <ChipSelect label="Document" options={DOC_KINDS} value={params.get('kind') ?? ''} onChange={(v) => set({ kind: v })} />

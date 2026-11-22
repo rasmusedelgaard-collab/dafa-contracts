@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { permissions, qk, useApi, useAppConfig, useInvalidateContracts, useLookups, useMe } from '../../app/context';
+import { permissions, qk, useApi, useAppConfig, useInvalidateContracts, useMe } from '../../app/context';
 import { ApiError } from '../../api/api';
 import type { ContractDetail, DocumentKind, LinkKind, Obligation } from '../../api/types';
 import { Button, Field, Modal, Select, Skeleton, TextInput, useToast } from '../../components';
@@ -10,6 +10,7 @@ import { RoutePreview } from '../../features/Approval';
 import { formatFileSize, formatMoney, toDkk } from '../../lib/format';
 import { LOCKED_MESSAGE, UPLOAD_ACCEPT, UPLOAD_HINT, uploadError } from '../../lib/uploads';
 import { draftToInput, fieldsToDraft, hasErrors, parseWhole, validateDraft, type ContractDraft, type DraftErrors } from '../../lib/validation';
+import { PersonPicker } from '../../features/Pickers';
 
 interface DialogProps {
   contract: ContractDetail;
@@ -259,7 +260,6 @@ export function UploadDialog({ contract, onClose }: DialogProps) {
 
 export function ObligationDialog({ contract, obligation, onClose }: DialogProps & { obligation: Obligation | null }) {
   const api = useApi();
-  const lookups = useLookups();
   const toast = useToast();
   const invalidate = useInvalidateContracts();
   const [description, setDescription] = useState(obligation?.description ?? '');
@@ -320,7 +320,7 @@ export function ObligationDialog({ contract, obligation, onClose }: DialogProps 
         </Field>
       </div>
       <Field label="Responsible" error={errors.responsibleId}>
-        {(p) => <Select {...p} value={responsibleId} onChange={(e) => setResponsibleId(e.target.value)} options={lookups.users.map((u) => ({ value: u.id, label: u.name }))} placeholder="Choose" />}
+        {(p) => <PersonPicker {...p} value={responsibleId || null} clearLabel="Clear responsible" onChange={(id) => setResponsibleId(id ?? '')} />}
       </Field>
     </Modal>
   );

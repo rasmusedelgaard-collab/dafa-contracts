@@ -53,6 +53,7 @@ import { makePdf, makeRtf } from './files';
 import { filterRows, queryRows, sortRows, toCsv, type RegisterRow } from './query';
 import { createSeed } from './seed';
 import { createR3, type MockCtx } from './r3';
+import { createR4 } from './r4';
 import { validateCustomFields, rulesForType, validateStandardRules, enforcesRequired, displayValue } from '../../lib/customFields';
 import { matchesAll, terms as searchTerms } from '../../lib/search';
 import type { NotificationEvent, RenewalItem } from '../types';
@@ -330,6 +331,11 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     departmentId: c.departmentId,
     typeId: c.typeId,
     peopleIds: [c.ownerId, c.delegateId, c.responsibleId].filter((x): x is Id => !!x),
+    delegateId: c.delegateId,
+    responsibleId: c.responsibleId,
+    currency: c.currency,
+    annualDkk: c.annualValue === null ? 0 : rateDkk(c.annualValue, c.currency),
+    totalDkk: c.totalValue === null ? 0 : rateDkk(c.totalValue, c.currency),
   });
 
   function toApproval(a: ApprovalRec): ApprovalInstance {
@@ -1108,10 +1114,14 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     runJobs: () => runJobs(false),
   };
   const r3 = createR3(ctx);
+  const r4 = createR4(ctx);
+  /** Release 4: the top-bar entity scope (`entityId`, repeatable); empty = no filter. */
+  const inScope = (cs: ContractRec[], scope?: Id[]) => (scope?.length ? cs.filter((c) => scope.includes(c.entityId)) : cs);
 
   const api: MockApi = {
     db,
     ...r3.top,
+    ...r4.top,
 
     getMe: () => run(() => toMe(me())),
 
@@ -1136,12 +1146,12 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         return db.suppliers.filter((s) => s.isActive && (!needle || s.name.toLowerCase().includes(needle))).slice(0, 20).map((s) => ({ id: s.id, name: s.name, country: s.country, vatNo: s.vatNo }));
       }),
 
-    getHome: () =>
+    getHome: (scope) =>
       run(() => {
         const u = me();
         const t = today();
-        const mine = visible(u);
-        const tasks = buildTasks(u);
+        const mine = inScope(visible(u), scope);
+        const tasks = buildTasks(u).filter((x) => !scope?.length || !x.contractId || scope.includes(byId(db.contracts, x.contractId)?.entityId ?? ''));
         const renewalsThisWeek = tasks.filter((x) => x.kind === 'Renewal' && x.urgency === 'high').length;
         const approvalsWaiting = tasks.filter((x) => x.kind === 'Approval').length;
         const due = mine.filter((c) => {
@@ -1154,7 +1164,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           renewalsThisWeek,
           approvalsWaiting,
           renewingIn90: { count: due.length, valueDkk: Math.round(due.reduce((sum, c) => sum + annualDkk(c), 0)) },
-          myContracts: db.contracts.filter((c) => isOnContract(u, c) && c.status !== 'Expired' && c.status !== 'Terminated').length,
+          myContracts: inScope(db.contracts, scope).filter((c) => isOnContract(u, c) && c.status !== 'Expired' && c.status !== 'Terminated').length,
           tasks,
           noticeByMonth: months.map((month) => ({
             month,
@@ -1162,24 +1172,24 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           })),
           recent: (db.recent[u.id] ?? [])
             .map((id) => byId(db.contracts, id))
-            .filter((c): c is ContractRec => !!c && sees(u, c))
+            .filter((c): c is ContractRec => !!c && sees(u, c) && (!scope?.length || scope.includes(c.entityId)))
             .slice(0, 3)
             .map((c) => ({ id: c.id, title: c.title })),
         };
       }),
 
-    search: (q) =>
+    search: (q, scope) =>
       run(() => {
         const u = me();
         const needle = q.trim().toLowerCase();
         if (needle.length < 2) return [];
-        const contracts = visible(u)
+        const contracts = inScope(visible(u), scope)
           .filter((c) => [c.title, c.counterpartyName, c.contractNo].some((v) => v.toLowerCase().includes(needle)))
           .slice(0, 6)
           .map((c) => ({ kind: 'Contract' as const, id: c.id, title: c.title, subtitle: `${c.counterpartyName} · ${nameOf(db.entities, c.entityId)}` }));
         const ts = searchTerms(q);
         const contractList = contracts.slice(0, 4);
-        const visibleIds = new Map(visible(u).map((c) => [c.id, c]));
+        const visibleIds = new Map(inScope(visible(u), scope).map((c) => [c.id, c]));
         const docs = db.documents
           .filter((d) => visibleIds.has(d.contractId) && matchesAll([d.name, d.text], ts))
           .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt))
@@ -1512,11 +1522,12 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         return { uploadId, fileName };
       }),
 
-    getMyApprovals: () =>
+    getMyApprovals: (scope) =>
       run(() => {
         const u = me();
         const t = today();
         return myPendingSteps(u)
+          .filter(({ c }) => !scope?.length || scope.includes(c.entityId))
           .map(({ a, step, c }): MyApproval => ({ instance: toApproval(a), stepId: step.id, waitingDays: step.pendingSince ? daysBetween(step.pendingSince, t) : 0, contract: toDetail(c, u) }))
           .sort((x, y) => y.waitingDays - x.waitingDays);
       }),
@@ -1601,12 +1612,12 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         };
       }),
 
-    getRenewals: (months = 12) =>
+    getRenewals: (months = 12, scope) =>
       run(() => {
         const u = me();
         const t = today();
         const until = addMonths(t, months);
-        return visible(u)
+        return inScope(visible(u), scope)
           .filter((c) => c.status === 'Active')
           .map((c) => ({ c, deadline: deadlineOf(c) }))
           // Also the deadlines that passed without a decision while the contract is still running.
@@ -1626,10 +1637,10 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           }));
       }),
 
-    getOverview: () =>
+    getOverview: (scope) =>
       run(() => {
         const u = me();
-        const all = visible(u);
+        const all = inScope(visible(u), scope);
         const live = all.filter(isLive);
         const t = today();
         const group = <K extends string>(items: ContractRec[], key: (c: ContractRec) => K, value: (c: ContractRec) => number) => {
@@ -1818,6 +1829,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         }),
 
       ...r3.admin,
+      ...r4.admin,
       getHolidayCover: () => run(() => (admin(), db.holidayCover.map(toCover))),
       updateHolidayCover: (input) =>
         run(() => {
@@ -1862,5 +1874,5 @@ export function createMockApi(options: MockOptions = {}): MockApi {
   const departmentsCrud = namedCrud(db.departments, 'department', (id) => db.contracts.some((c) => c.departmentId === id) || db.users.some((u) => u.departmentIds.includes(id)));
   const typesCrud = namedCrud(db.contractTypes, 'contract type', (id) => db.contracts.some((c) => c.typeId === id));
 
-  return api;
+  return r4.decorate(api);
 }

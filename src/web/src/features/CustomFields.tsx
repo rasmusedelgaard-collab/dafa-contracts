@@ -5,9 +5,9 @@ import type { CustomFieldDef, CustomFieldValue, TagRef } from '../api/types';
 import { Field, Segmented, Select, TextInput } from '../components';
 import { displayValue, isEmptyValue } from '../lib/customFields';
 import { formatDate } from '../lib/dates';
+import { PersonPicker } from './Pickers';
 
 export function CustomFieldInput({ def, value, error, onChange, currency }: { def: CustomFieldDef; value: CustomFieldValue | undefined; error?: string; onChange: (v: CustomFieldValue) => void; currency: string }) {
-  const lookups = useLookups();
   const groupId = useId();
   const common = { label: def.label, optional: !def.required, error, hint: def.helpText ?? undefined };
   switch (def.type) {
@@ -52,7 +52,7 @@ export function CustomFieldInput({ def, value, error, onChange, currency }: { de
     case 'Choice':
       return <Field {...common}>{(p) => <Select {...p} value={typeof value === 'string' ? value : ''} placeholder={def.required ? 'Choose' : 'None'} options={def.options.map((o) => ({ value: o, label: o }))} onChange={(e) => onChange(e.target.value || null)} />}</Field>;
     case 'Person':
-      return <Field {...common}>{(p) => <Select {...p} value={typeof value === 'string' ? value : ''} placeholder={def.required ? 'Choose' : 'None'} options={lookups.users.filter((u) => u.isActive !== false).map((u) => ({ value: u.id, label: u.name }))} onChange={(e) => onChange(e.target.value || null)} />}</Field>;
+      return <Field {...common}>{(p) => <PersonPicker {...p} value={typeof value === 'string' ? value : null} clearLabel={`Clear ${def.label}`} onChange={(id) => onChange(id)} />}</Field>;
     case 'YesNo':
       return (
         <div className="field">

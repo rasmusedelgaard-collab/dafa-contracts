@@ -23,11 +23,11 @@ import {
 } from '../../lib/settingsForms';
 import { parseAmount } from '../../lib/validation';
 import { ConfirmDelete, SectionHead } from './common';
+import { PersonPicker } from '../../features/Pickers';
 
 const NO_ERRORS: RuleErrors = { stage: {}, approver: {} };
 
 function StagesEditor({ stages, errors, onChange }: { stages: StageDraft[]; errors: RuleErrors; onChange: (stages: StageDraft[]) => void }) {
-  const lookups = useLookups();
   const setStage = (si: number, approvers: ApproverDraft[]) => onChange(stages.map((s, i) => (i === si ? { ...s, approvers } : s)));
   const setApprover = (si: number, ai: number, patch: Partial<ApproverDraft>) => setStage(si, (stages[si]?.approvers ?? []).map((a, i) => (i === ai ? { ...a, ...patch } : a)));
   const move = (si: number, by: number) => {
@@ -78,7 +78,7 @@ function StagesEditor({ stages, errors, onChange }: { stages: StageDraft[]; erro
                     {a.kind === 'role' ? (
                       <Select aria-label={`${label}: role`} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined} value={a.role} placeholder="Choose a role" onChange={(e) => setApprover(si, ai, { role: e.target.value as ApproverRole | '' })} options={APPROVER_ROLES.map((r) => ({ value: r.value, label: r.label }))} />
                     ) : (
-                      <Select aria-label={`${label}: person`} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined} value={a.userId} placeholder="Choose a person" onChange={(e) => setApprover(si, ai, { userId: e.target.value })} options={lookups.users.map((u) => ({ value: u.id, label: u.name }))} />
+                      <PersonPicker ariaLabel={`${label}: person`} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined} value={a.userId || null} clearLabel={`Clear ${label}: person`} onChange={(id) => setApprover(si, ai, { userId: id ?? '' })} />
                     )}
                     <Button variant="ghost" size="sm" icon="x" iconOnly onClick={() => setStage(si, stage.approvers.filter((_, i) => i !== ai))} aria-label={`Remove approver ${ai + 1} from stage ${si + 1}`} />
                   </div>

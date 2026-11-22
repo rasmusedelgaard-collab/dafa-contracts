@@ -50,8 +50,11 @@ export function parseFilter(params: URLSearchParams): ContractFilter {
       if (Number.isFinite(n)) f[key] = n;
     } else f[key] = values[0];
   }
-  const cf: Record<string, string> = {};
-  for (const [k, v] of params.entries()) if (k.startsWith('cf.') && v) cf[k.slice(3)] = v;
+  const cf: Record<string, string | string[]> = {};
+  for (const k of new Set([...params.keys()].filter((x) => x.startsWith('cf.')))) {
+    const values = params.getAll(k).filter((v) => v !== '');
+    if (values.length) cf[k.slice(3)] = values.length === 1 ? (values[0] as string) : values;
+  }
   if (Object.keys(cf).length) f.cf = cf;
   return f as ContractFilter;
 }
@@ -66,7 +69,7 @@ export function filterToParams(filter: ContractFilter, base: URLSearchParams = n
     if (v === undefined || v === null || v === '') continue;
     for (const x of one(v as unknown)) if (x !== undefined && x !== null && x !== '') next.append(name, String(x));
   }
-  for (const [k, v] of Object.entries(filter.cf ?? {})) if (v) next.set(`cf.${k}`, v);
+  for (const [k, v] of Object.entries(filter.cf ?? {})) for (const x of one(v)) if (x) next.append(`cf.${k}`, x);
   return next;
 }
 
@@ -75,12 +78,12 @@ export function applyDrill(filter: ContractFilter, patch: Partial<ContractFilter
   const next: Record<string, unknown> = { ...filter };
   for (const [k, v] of Object.entries(patch)) {
     if (v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0)) delete next[k];
-    else if (k === 'cf') next.cf = { ...(filter.cf ?? {}), ...(v as Record<string, string>) };
+    else if (k === 'cf') next.cf = { ...(filter.cf ?? {}), ...(v as Record<string, string | string[]>) };
     else next[k] = v;
   }
   // An emptied custom field is removed, not sent as `cf.<key>=` (the API would filter on an empty value).
   if (next.cf) {
-    const cf = Object.fromEntries(Object.entries(next.cf as Record<string, string | undefined>).filter(([, x]) => x !== undefined && x !== null && x !== ''));
+    const cf = Object.fromEntries(Object.entries(next.cf as Record<string, string | string[] | undefined>).filter(([, x]) => x !== undefined && x !== null && x !== '' && !(Array.isArray(x) && x.length === 0)));
     if (Object.keys(cf).length) next.cf = cf;
     else delete next.cf;
   }

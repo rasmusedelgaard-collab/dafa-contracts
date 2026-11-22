@@ -115,7 +115,8 @@ export function validateDraft(d: ContractDraft, pendingSuggestions: Iterable<str
   };
 
   req('title', 'Enter a title');
-  req('counterpartyName', 'Enter the counterparty');
+  // Release 4: the counterparty must be picked from the master data (no free text).
+  if (!d.supplierId) e.counterpartyName = d.counterpartyName.trim() ? 'Pick the counterparty from the list' : 'Choose the counterparty';
   req('typeId', 'Choose a contract type');
   req('entityId', 'Choose a legal entity');
   req('departmentId', 'Choose a department');

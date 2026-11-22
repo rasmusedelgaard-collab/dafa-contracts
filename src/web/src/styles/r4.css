@@ -1,0 +1,105 @@
+/* Release 4: pickers, header filters, number inputs, templates, logo, links, e-signature. */
+
+/* ---------- Combobox (person and counterparty pickers) ---------- */
+.combo {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.combo__box {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.combo__icon {
+  position: absolute;
+  left: 12px;
+  display: inline-flex;
+  color: var(--label);
+  pointer-events: none;
+}
+.combo__input {
+  padding-left: 36px;
+  padding-right: 40px;
+}
+.combo--set .combo__input::placeholder {
+  color: var(--text);
+}
+.combo__clear {
+  position: absolute;
+  right: 8px;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.combo__clear:hover,
+.combo__clear:focus-visible {
+  background: var(--tint);
+  color: var(--primary);
+}
+.combo__list {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(16, 32, 48, 0.14);
+}
+.combo__opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.combo__opt--active {
+  background: var(--tint);
+}
+.combo__opt--footer {
+  margin-top: 4px;
+  border-top: 1px solid var(--hairline);
+  border-radius: 0 0 10px 10px;
+  color: var(--primary);
+  font-weight: 600;
+}
+.combo__empty {
+  padding: 10px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.combo--compact {
+  flex: 0 1 220px;
+}
+.combo--compact .combo__input {
+  height: 36px;
+  padding-left: 14px;
+  border-radius: 999px;
+}
+.combo--compact.combo--set .combo__input {
+  border-color: var(--primary);
+  background: var(--tint);
+}
+.combo--compact.combo--set .combo__input::placeholder {
+  color: var(--primary);
+}
+
+/* ---------- Scope chip ---------- */
+.scope-chip {
+  margin: 0 0 12px;
+}

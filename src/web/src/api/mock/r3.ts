@@ -126,7 +126,8 @@ type R3Top = Pick<
   | 'getDataRoomExport'
   | 'getDataRoomContent'
 >;
-type R3Admin = Omit<Api['admin'], keyof ReturnType<typeof _legacyAdminKeys>>;
+type R3Admin = Omit<Api['admin'], keyof ReturnType<typeof _legacyAdminKeys> | R4AdminKeys>;
+type R4AdminKeys = 'getTemplateCategories' | 'createTemplateCategory' | 'updateTemplateCategory' | 'deleteTemplateCategory' | 'orderTemplateCategories' | 'uploadLogo' | 'deleteLogo' | 'getDepartmentsV4' | 'updateDepartmentV4' | 'testEntityLink' | 'testDepartmentLink' | 'getAccessMapping' | 'getESignSettings' | 'updateESignSettings' | 'getStorageHealth' | 'getReconciliation' | 'runReconciliation';
 // Only a type helper: the release 1–2 admin methods stay in mockApi.ts.
 declare function _legacyAdminKeys(): Pick<
   Api['admin'],
@@ -711,7 +712,7 @@ export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersCh
         };
         const visible = ctx.visible(u).filter(
           (c) =>
-            (!query.entityId || c.entityId === query.entityId) &&
+            (!query.entityId || [query.entityId].flat().includes(c.entityId)) &&
             (!query.departmentId || c.departmentId === query.departmentId) &&
             (!query.typeId || c.typeId === query.typeId),
         );

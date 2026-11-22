@@ -29,7 +29,7 @@ export function qs(params?: object): string {
   };
   for (const [k, v] of Object.entries(params as Record<string, unknown>)) {
     if (Array.isArray(v)) for (const x of v) add(k, x as QueryValue);
-    else if (k === 'cf' && v && typeof v === 'object') for (const [ck, cv] of Object.entries(v as Record<string, QueryValue>)) add(`cf.${ck}`, cv);
+    else if (k === 'cf' && v && typeof v === 'object') for (const [ck, cv] of Object.entries(v as Record<string, QueryValue | QueryValue[]>)) for (const x of Array.isArray(cv) ? cv : [cv]) add(`cf.${ck}`, x);
     else add(k, v as QueryValue);
   }
   const s = sp.toString();
@@ -103,10 +103,10 @@ async function download(path: string, fallbackName: string): Promise<FileDownloa
   return { blob: await res.blob(), fileName: fileNameFrom(res, fallbackName) };
 }
 
-function multipart<T>(path: string, file: File, extra?: Record<string, string>): Promise<T> {
+function multipart<T>(path: string, file: File, extra?: Record<string, string | string[]>): Promise<T> {
   const form = new FormData();
   form.append('file', file, file.name);
-  for (const [k, v] of Object.entries(extra ?? {})) form.append(k, v);
+  for (const [k, v] of Object.entries(extra ?? {})) for (const x of Array.isArray(v) ? v : [v]) form.append(k, x);
   return json<T>(path, { method: 'POST', body: form });
 }
 
@@ -132,8 +132,8 @@ export function createHttpApi(): Api {
     getMe: () => get('me'),
     getLookups: () => get('lookups'),
     getSuppliers: (q?: string) => get(`suppliers${qs({ q })}`),
-    getHome: () => get('home'),
-    search: (q: string) => get(`search${qs({ q })}`),
+    getHome: (scope?: Id[]) => get(`home${qs({ entityId: scope })}`),
+    search: (q: string, scope?: Id[]) => get(`search${qs({ q, entityId: scope })}`),
     getReminderSettings: () => get('reminder-settings'),
 
     getContracts: (query?: ContractQuery) => get(`contracts${qs(query)}`),
@@ -162,13 +162,13 @@ export function createHttpApi(): Api {
     getTemplates: () => get('templates'),
     fromTemplate: (input: unknown) => post('intake/from-template', input),
 
-    getMyApprovals: () => get('approvals/mine'),
+    getMyApprovals: (scope?: Id[]) => get(`approvals/mine${qs({ entityId: scope })}`),
     decideApprovalStep: (stepId: Id, input: unknown) => post(`approvals/steps/${stepId}/decision`, input),
     delegateApprovalStep: (stepId: Id, userId: Id) => post(`approvals/steps/${stepId}/delegate`, { userId }),
     previewApproval: (query: object) => get(`approvals/preview${qs(query)}`),
 
-    getRenewals: (months = 12) => get(`renewals${qs({ months })}`),
-    getOverview: () => get('overview'),
+    getRenewals: (months = 12, scope?: Id[]) => get(`renewals${qs({ months, entityId: scope })}`),
+    getOverview: (scope?: Id[]) => get(`overview${qs({ entityId: scope })}`),
 
     getAppConfig: () => get('app-config'),
     getOverviewAnalytics: (filter: ContractFilter, ddThresholdDkk?: number) => get(`overview/analytics${qs({ ...filter, ddThresholdDkk })}`),
@@ -203,6 +203,21 @@ export function createHttpApi(): Api {
     getDataRoomExport: (id: Id) => get(`data-room/exports/${id}`),
     getDataRoomContent: (id: Id) => download(`data-room/exports/${id}/content`, 'data-room.zip'),
 
+    // Release 4
+    getDistinct: (column: string, filter: object, q?: string, limit?: number) => get(`contracts/distinct${qs({ ...filter, column, q, limit })}`),
+    searchPeople: (query: object) => get(`people${qs(query)}`),
+    createCounterpartyQuick: (input: unknown) => post('counterparties', input),
+    getTemplateCategories: () => get('template-categories'),
+    getTemplatePreview: (id: Id) => get(`templates/${id}/preview`),
+    getBranding: () => get('branding'),
+    assetUrl: (path: string) => (/^(https?:|data:|blob:|\/)/.test(path) ? path : `${BASE}/${path}`),
+    getSignaturePermissions: (contractId: Id) => get(`contracts/${contractId}/signature-permissions`),
+    getSignatureRequests: (contractId: Id) => get(`contracts/${contractId}/signature-requests`),
+    createSignatureRequest: (contractId: Id, input: unknown) => post(`contracts/${contractId}/signature-requests`, input),
+    resendSignatureRequest: (id: Id) => post(`signature-requests/${id}/resend`),
+    cancelSignatureRequest: (id: Id) => post(`signature-requests/${id}/cancel`),
+    simulateSignature: (id: Id, input: unknown) => post(`signature-requests/${id}/simulate`, input),
+
     admin: {
       getApprovalRules: rules.list,
       createApprovalRule: rules.create,
@@ -222,7 +237,14 @@ export function createHttpApi(): Api {
       deleteContractType: types.remove,
       getTemplates: templates.list,
       createTemplate: (input: TemplateInput, file: File) =>
-        multipart('admin/templates', file, { name: input.name, description: input.description, ...(input.typeId ? { typeId: input.typeId } : {}) }),
+        multipart('admin/templates', file, {
+          name: input.name,
+          description: input.description,
+          ...(input.typeId ? { typeId: input.typeId } : {}),
+          ...(input.categoryId ? { categoryId: input.categoryId } : {}),
+          ...(input.typeIds?.length ? { typeIds: input.typeIds } : {}),
+          ...(input.language ? { language: input.language } : {}),
+        }),
       getTemplateContent: (id: Id) => download(`admin/templates/${id}/content`, 'template.docx'),
       updateTemplate: templates.update,
       deleteTemplate: templates.remove,
@@ -297,6 +319,25 @@ export function createHttpApi(): Api {
 
       getAppSettings: () => get('admin/app-settings'),
       updateAppSettings: (input: unknown) => put('admin/app-settings', input),
+
+      // Release 4
+      getTemplateCategories: () => get('admin/template-categories'),
+      createTemplateCategory: (input: unknown) => post('admin/template-categories', input),
+      updateTemplateCategory: (id: Id, input: unknown) => put(`admin/template-categories/${id}`, input),
+      deleteTemplateCategory: (id: Id) => del(`admin/template-categories/${id}`),
+      orderTemplateCategories: (ids: Id[]) => put('admin/template-categories/order', { ids }),
+      uploadLogo: (variant: string, file: File) => multipart(`admin/branding/logo${qs({ variant })}`, file),
+      deleteLogo: (variant: string) => json(`admin/branding/logo${qs({ variant })}`, { method: 'DELETE' }),
+      getDepartmentsV4: () => get('admin/departments'),
+      updateDepartmentV4: (id: Id, input: unknown) => put(`admin/departments/${id}`, input),
+      testEntityLink: (id: Id) => post(`admin/entities/${id}/test-link`),
+      testDepartmentLink: (id: Id) => post(`admin/departments/${id}/test-link`),
+      getAccessMapping: () => get('admin/access-mapping'),
+      getESignSettings: () => get('admin/esign-settings'),
+      updateESignSettings: (input: unknown) => put('admin/esign-settings', input),
+      getStorageHealth: () => get('admin/storage/health'),
+      getReconciliation: () => get('admin/storage/reconciliation'),
+      runReconciliation: () => post('admin/storage/reconciliation/run'),
     },
 
     getDevConfig: () => get('dev/config'),
