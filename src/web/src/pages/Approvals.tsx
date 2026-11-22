@@ -1,12 +1,13 @@
 import { useId, useRef } from 'react';
+import { useBodyFlag } from '../app/bodyFlag';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { apiMode } from '../api';
 import { qk, useApi, useMe } from '../app/context';
 import type { ApprovalInstance, ApprovalStep, MyApproval } from '../api/types';
 import { Button, ButtonLink, Card, EmptyState, ErrorState, Icon, Select, Skeleton, SkeletonRows } from '../components';
-import { Deviations, KeyTerms, useApprovalDecision, type DecisionContract } from '../features/Approval';
-import { stepLabel, waitInfo } from '../lib/approvals';
+import { Deviations, KeyTerms, stageApproverIds, useApprovalDecision, type DecisionContract } from '../features/Approval';
+import { routeSummary, splitRoleLabel, stepLabel, waitInfo } from '../lib/approvals';
 import { formatDate } from '../lib/dates';
 import { plural } from '../lib/format';
 
@@ -40,18 +41,25 @@ function RouteCards({ instance, myStepId }: { instance: ApprovalInstance; myStep
             </span>
             <ul className="route-cards__steps">
               {stage.steps.map((s) => {
-                const mine = s.id === myStepId;
-                const state = stepState(s, mine);
+                // "You" is the signed-in user's own step only, never another person's.
+                const mine = s.id === myStepId || s.approverId === me.id;
+                const state = stepState(s, s.id === myStepId);
+                const { role, note } = splitRoleLabel(s.roleLabel);
                 return (
-                  <li key={s.id} className={`route-card route-card--${state.look}`} aria-current={mine ? 'step' : undefined}>
+                  <li key={s.id} className={`route-card route-card--${state.look}`} aria-current={s.id === myStepId ? 'step' : undefined}>
                     <span className="route-card__avatar" aria-hidden="true">
                       {s.initials}
                     </span>
                     <span className="kv">
-                      <span className="route-card__who">{mine || s.approverId === me.id ? 'You' : s.approverName}</span>
+                      <span className="route-card__who">{mine ? 'You' : s.approverName}</span>
                       <span className="kv__k">
-                        {s.roleLabel} · {state.text}
+                        {role} · {state.text}
                       </span>
+                      {note ? (
+                        <span className="route-card__note" title={note}>
+                          {note}
+                        </span>
+                      ) : null}
                     </span>
                   </li>
                 );
@@ -113,7 +121,8 @@ function DecisionBar({ stepId, onDone, contract }: { stepId: string; onDone: () 
           <Button variant="on-dark-ghost" className="decide__delegate-btn" onClick={() => d.setDelegating(true)} disabled={d.busy}>
             Delegate
           </Button>
-          <div className="decide__actions">
+          {/* Under 720px this bar is fixed to the bottom of the screen (styles/screens.css). */}
+          <div className="decide__actions" data-pinned-bar>
             <Button variant="on-dark-ghost" className="decide__reject" onClick={reject} disabled={d.busy} loading={d.rejecting}>
               Reject
             </Button>
@@ -144,7 +153,8 @@ function Detail({ item, onDone, onBack }: { item: MyApproval; onDone: () => void
               {c.title}
             </h2>
             <span className="secondary">
-              {c.counterparty} · {c.entityName} · {c.departmentName} · owner {c.ownerName}
+              {c.counterparty} · {c.entityName} · {c.departmentName}
+              <span className="hide-phone"> · owner {c.ownerName}</span>
             </span>
           </div>
           <ButtonLink to={`/contracts/${c.id}`} variant="secondary" size="md">
@@ -164,13 +174,30 @@ function Detail({ item, onDone, onBack }: { item: MyApproval; onDone: () => void
         <Deviations items={c.deviations} wide />
       </Card>
       <Card className="approval-card">
-        <h3 className="card-title">Approval route</h3>
+        <h3 className="card-title">
+          <span className="approval-card__title-wide">Approval route</span>
+          <span className="approval-card__title-phone" aria-hidden="true">
+            Route
+          </span>
+        </h3>
         <RouteCards instance={item.instance} myStepId={item.stepId} />
+        {/* Phone: the route in one sentence (PhoneApprove.dc.html); the cards above are hidden. */}
+        <p className="route-line" aria-hidden="true">
+          {routeSummary(item.instance, item.stepId).map((part, i) => (
+            <span key={i}>
+              {i > 0 ? ' · ' : ''}
+              {part.now ? <strong>{part.text}</strong> : part.text}
+            </span>
+          ))}
+        </p>
         <Link to={`/contracts/${c.id}`} className="approval-card__docs">
-          Open the contract and its {plural(docs, 'document')}
+          <span className="approval-card__title-wide">Open the contract and its {plural(docs, 'document')}</span>
+          <span className="approval-card__title-phone" aria-hidden="true">
+            {docs === 0 ? 'Open the contract' : `Open the ${plural(docs, 'document')}`}
+          </span>
         </Link>
       </Card>
-      <DecisionBar key={item.stepId} stepId={item.stepId} onDone={onDone} contract={c} />
+      <DecisionBar key={item.stepId} stepId={item.stepId} onDone={onDone} contract={{ ownerId: c.ownerId, submittedById: c.submittedById, stageApproverIds: stageApproverIds(item.instance, item.stepId) }} />
     </div>
   );
 }
@@ -183,6 +210,8 @@ export function Approvals() {
   const picked = params.get('step');
   const pickedItem = items.find((i) => i.stepId === picked);
   const current = pickedItem ?? items[0];
+  // Phone: one approval fills the screen, without the top bar and the tab bar.
+  useBodyFlag('approval-detail', !!pickedItem);
 
   const pick = (stepId: string | null) => {
     setParams(stepId ? { step: stepId } : {}, { replace: true });
@@ -191,7 +220,7 @@ export function Approvals() {
   };
 
   return (
-    <div className={`page rise approvals${pickedItem ? ' approvals--picked' : ''}`} style={{ paddingTop: 10 }}>
+    <div className={`page rise rise--fade approvals${pickedItem ? ' approvals--picked' : ''}`} style={{ paddingTop: 10 }}>
       <div className="page-head approvals__head">
         <div className="page-head__text">
           <h1 className="h1">Approvals</h1>
@@ -252,7 +281,7 @@ export function Approvals() {
           <Detail key={current.stepId} item={current} onDone={() => pick(null)} onBack={() => pick(null)} />
         </div>
       )}
-      {apiMode === 'mock' ? <p className="caption">Sample data. Pick a contract in the queue.</p> : null}
+      {apiMode === 'mock' ? <p className="caption approvals__note">{items.length > 1 ? 'Sample data. Pick a contract in the queue.' : 'Sample data.'}</p> : null}
     </div>
   );
 }

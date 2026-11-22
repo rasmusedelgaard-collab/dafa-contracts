@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Api } from '../api/api';
 import type { Lookups, Me, ReminderSettings } from '../api/types';
@@ -52,6 +53,36 @@ export function useInvalidateContracts(): () => Promise<void> {
       client.invalidateQueries({ queryKey: qk.overview }),
     ]);
   };
+}
+
+/** Query keys that are not tied to the signed-in user. */
+const isSessionFree = (key: readonly unknown[]) => key[0] === qk.devConfig[0];
+
+/**
+ * Sign-in, user switch and sign-out, in one place.
+ *
+ * - `signedIn(me)`: every cached answer belonged to the previous user (or to nobody), so it is
+ *   dropped; `me` is set from the `dev/login` response. `App` keys the whole shell on the user
+ *   id, so the shell, the navigation and the permissions are rebuilt for the new user and any
+ *   query still on screen starts again from nothing.
+ * - `signedOut()`: drops everything and asks `me` again; the 401 puts the sign-in screen up.
+ */
+export function useSessionActions() {
+  const client = useQueryClient();
+  return useMemo(
+    () => ({
+      signedIn(me: Me): void {
+        client.removeQueries({ predicate: (q) => !isSessionFree(q.queryKey) && q.queryKey[0] !== qk.me[0] });
+        client.setQueryData(qk.me, me);
+      },
+      async signedOut(): Promise<void> {
+        client.removeQueries({ predicate: (q) => !isSessionFree(q.queryKey) && q.queryKey[0] !== qk.me[0] });
+        // Back to "not asked yet" (the splash), then the fresh answer: 401, so the sign-in screen.
+        await client.resetQueries({ queryKey: qk.me });
+      },
+    }),
+    [client],
+  );
 }
 
 // ----- Session -----
@@ -133,9 +164,54 @@ interface Scope {
 }
 const ScopeContext = createContext<Scope | null>(null);
 
+/**
+ * The entity scope lives in the URL (`?entity=<id>`), so a reload or a shared link shows the
+ * same list. It is carried along when the user moves between pages (see `ScopeLink` users:
+ * the shell re-applies it on navigation).
+ */
 export function ScopeProvider({ children }: { children: ReactNode }) {
-  const [entityId, setEntityId] = useState('');
-  const value = useMemo(() => ({ entityId, setEntityId }), [entityId]);
+  const [params, setParams] = useSearchParams();
+  const fromUrl = params.get('entity') ?? '';
+  const [entityId, setLocal] = useState(fromUrl);
+  // The URL wins when it names an entity (deep link, back/forward).
+  const [seen, setSeen] = useState(fromUrl);
+  if (fromUrl !== seen) {
+    setSeen(fromUrl);
+    if (fromUrl) setLocal(fromUrl);
+  }
+  // Navigation inside the app drops the query string; put the scope back so a reload keeps it.
+  const missing = !!entityId && !fromUrl;
+  useEffect(() => {
+    if (!missing) return;
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('entity', entityId);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [missing, entityId, setParams]);
+  const value = useMemo(
+    () => ({
+      entityId,
+      setEntityId: (id: string) => {
+        setLocal(id);
+        setSeen(id);
+        setParams(
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            if (id) next.set('entity', id);
+            else next.delete('entity');
+            next.delete('page');
+            return next;
+          },
+          { replace: true },
+        );
+      },
+    }),
+    [entityId, setParams],
+  );
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>;
 }
 

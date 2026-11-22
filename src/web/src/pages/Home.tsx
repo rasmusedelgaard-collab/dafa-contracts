@@ -1,20 +1,24 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useOutletContext } from 'react-router-dom';
+import { useBodyFlag } from '../app/bodyFlag';
 import { apiMode } from '../api';
 import { permissions, qk, useApi, useInvalidateContracts, useMe } from '../app/context';
 import type { HomeData, HomeTask, Urgency } from '../api/types';
-import { Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Icon, Pill, Segmented, Skeleton, SkeletonRows, useToast, type IconName } from '../components';
+import { Avatar, Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Icon, Pill, Segmented, Skeleton, SkeletonRows, useToast, type IconName } from '../components';
 import { ApprovalDialog } from '../features/Approval';
 import { RenewalDialog } from '../features/RenewalDialog';
 import { formatWeekdayLong, monthShort, todayIso } from '../lib/dates';
 import { formatMoneyCompact, plural, type Tone } from '../lib/format';
+import { usePhone } from '../lib/media';
 
 type Filter = 'all' | 'renewals' | 'approvals';
 
 const URGENCY_TONE: Record<Urgency, Tone> = { high: 'red', medium: 'amber', low: 'blue', info: 'gray' };
 const TASK_ICON: Record<HomeTask['kind'], IconName> = { Renewal: 'refresh', Approval: 'check', Obligation: 'clock', MissingData: 'alert' };
 const ACTION: Record<HomeTask['kind'], string> = { Renewal: 'Decide', Approval: 'Review', Obligation: 'Mark done', MissingData: 'Complete' };
+/** The full-width button on a phone task card (Phone.dc.html). */
+const ACTION_LONG: Record<HomeTask['kind'], string> = { Renewal: 'Decide on renewal', Approval: 'Review and approve', Obligation: 'Mark as done', MissingData: 'Complete the data' };
 
 const taskTone = (t: HomeTask): Tone => (t.kind === 'Approval' ? 'blue' : URGENCY_TONE[t.urgency]);
 const taskKey = (t: HomeTask) => `${t.kind}-${t.contractId ?? ''}-${t.approvalStepId ?? ''}-${t.obligationId ?? ''}`;
@@ -40,6 +44,15 @@ function heroText(home: HomeData): { title: string; text: string } {
   if (home.approvalsWaiting > 0) parts.push(home.approvalsWaiting === 1 ? 'one approval waiting for you' : `${home.approvalsWaiting} approvals waiting for you`);
   const sentence = parts.join(', and ');
   return { title: `${n} ${n === 1 ? 'decision needs' : 'decisions need'} you`, text: `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.` };
+}
+
+/** The phone hero has one short line: "1 renewal · 1 approval". */
+function heroShort(home: HomeData): string {
+  const parts: string[] = [];
+  if (home.renewalsThisWeek > 0) parts.push(plural(home.renewalsThisWeek, 'renewal'));
+  if (home.approvalsWaiting > 0) parts.push(plural(home.approvalsWaiting, 'approval'));
+  if (parts.length > 0) return parts.join(' · ');
+  return home.tasks.length > 0 ? `${plural(home.tasks.length, 'task')}, none urgent` : 'Nothing is waiting';
 }
 
 function NoticeChart({ data }: { data: HomeData['noticeByMonth'] }) {
@@ -72,6 +85,10 @@ export function Home() {
   const [approvalFor, setApprovalFor] = useState<string | null>(null);
 
   const home = useQuery({ queryKey: qk.home, queryFn: () => api.getHome() });
+  // Phone: the page has its own header (date, "My work", avatar) instead of the top bar.
+  useBodyFlag('page-home', true);
+  const phone = usePhone();
+  const shell = useOutletContext<{ openUser?: () => void } | null>();
 
   const complete = useMutation({
     mutationFn: (obligationId: string) => api.completeObligation(obligationId),
@@ -95,14 +112,49 @@ export function Home() {
   const urgent = data?.tasks.find((t) => t.kind === 'Approval' || (t.kind === 'Renewal' && t.urgency === 'high')) ?? data?.tasks[0];
   const hero = data ? heroText(data) : null;
 
+  const quickTiles = (
+      <div className="quick-tiles">
+        {perms.canCreate ? (
+          <>
+            <Link to="/contracts/new" className="quick-tile lift">
+              <span className="tile" aria-hidden="true">
+                <Icon name="upload" size={18} stroke={2} />
+              </span>
+              Upload a contract
+            </Link>
+            <Link to="/contracts/new?start=template" className="quick-tile lift">
+              <span className="tile" aria-hidden="true">
+                <Icon name="docPlus" size={18} stroke={2} />
+              </span>
+              Start from a template
+            </Link>
+          </>
+        ) : null}
+        <Link to="/contracts" className="quick-tile lift">
+          <span className="tile" aria-hidden="true">
+            <Icon name="search" size={18} stroke={2} />
+          </span>
+          Find a contract
+        </Link>
+      </div>
+  );
+
   return (
     <div className="page page--home rise">
-      <div className="stack" style={{ gap: 6 }}>
-        <span className="secondary">{formatWeekdayLong(todayIso())}</span>
-        <h1 className="h1">
-          {greeting()}, {me.name.split(' ')[0]}
-        </h1>
-      </div>
+      <header className="home-head">
+        <div className="stack home-head__text">
+          <span className="secondary">{formatWeekdayLong(todayIso())}</span>
+          <h1 className="h1">
+            <span className="home-head__wide">
+              {greeting()}, {me.name.split(' ')[0]}
+            </span>
+            <span className="home-head__phone">My work</span>
+          </h1>
+        </div>
+        <button type="button" className="home-head__avatar" onClick={() => shell?.openUser?.()} aria-haspopup="dialog" aria-label={`${me.name}. ${me.authMode === 'Dev' ? 'Switch demo user' : 'Account'}`}>
+          <Avatar initials={me.initials} solid size="lg" />
+        </button>
+      </header>
 
       <section className="hero" aria-label="Summary">
         <div className="hero__main">
@@ -110,9 +162,10 @@ export function Home() {
           {hero && data ? (
             <>
               <span className="hero__title">{hero.title}</span>
-              <span className="hero__text">{hero.text}</span>
+              <span className="hero__text hero__text--wide">{hero.text}</span>
+              <span className="hero__text hero__text--phone">{heroShort(data)}</span>
               {urgent && data.decisionsThisWeek > 0 ? (
-                <Button variant="on-dark" style={{ alignSelf: 'flex-start', marginTop: 8 }} onClick={() => act(urgent)}>
+                <Button variant="on-dark" className="hero__cta" style={{ alignSelf: 'flex-start', marginTop: 8 }} onClick={() => act(urgent)}>
                   Start with the most urgent
                 </Button>
               ) : null}
@@ -140,34 +193,11 @@ export function Home() {
         </div>
       </section>
 
-      <div className="quick-tiles">
-        {perms.canCreate ? (
-          <>
-            <Link to="/contracts/new" className="quick-tile lift">
-              <span className="tile" aria-hidden="true">
-                <Icon name="upload" size={18} stroke={2} />
-              </span>
-              Upload a contract
-            </Link>
-            <Link to="/contracts/new?start=template" className="quick-tile lift">
-              <span className="tile" aria-hidden="true">
-                <Icon name="docPlus" size={18} stroke={2} />
-              </span>
-              Start from a template
-            </Link>
-          </>
-        ) : null}
-        <Link to="/contracts" className="quick-tile lift">
-          <span className="tile" aria-hidden="true">
-            <Icon name="search" size={18} stroke={2} />
-          </span>
-          Find a contract
-        </Link>
-      </div>
+      {phone ? null : quickTiles}
 
       <div className="split split--home">
         <section className="split__main" style={{ gap: 14 }} aria-labelledby="my-work-heading">
-          <div className="section-head">
+          <div className="section-head section-head--tasks">
             <h2 className="h2" id="my-work-heading">
               My work
             </h2>
@@ -203,7 +233,8 @@ export function Home() {
                   const busy = t.kind === 'Obligation' && complete.isPending && complete.variables === t.obligationId;
                   return (
                     <li key={taskKey(t)} className="task">
-                      <span className={`tile tile--lg tone-${tone}`} aria-hidden="true">
+                      {/* The icon tile carries the urgency color (Home.dc.html, Phone.dc.html). */}
+                      <span className={`tile tile--lg tone-${tone}`} data-tone={tone} aria-hidden="true">
                         <Icon name={TASK_ICON[t.kind]} stroke={2} />
                       </span>
                       <div className="task__text">
@@ -222,7 +253,10 @@ export function Home() {
                       </div>
                       <Pill tone={tone}>{t.pill}</Pill>
                       <Button size="sm" loading={busy} onClick={() => act(t)} aria-label={`${ACTION[t.kind]}: ${t.title}`}>
-                        {ACTION[t.kind]}
+                        <span className="task__action-short">{ACTION[t.kind]}</span>
+                        <span className="task__action-long" aria-hidden="true">
+                          {ACTION_LONG[t.kind]}
+                        </span>
                       </Button>
                     </li>
                   );
@@ -231,6 +265,9 @@ export function Home() {
             )}
           </Card>
         </section>
+
+        {/* Phone (Phone.dc.html): the tasks come first; the shortcuts follow them. */}
+        {phone ? quickTiles : null}
 
         <aside className="split__aside">
           <Card pad className="stack" style={{ gap: 16 }}>

@@ -46,6 +46,15 @@ export function redirectedRecently(now = Date.now()): boolean {
   }
 }
 
+let signedOut = false;
+/** Set when the user signs out, so Entra mode shows "You are signed out" instead of signing in again at once. */
+export function markSignedOut(value = true): void {
+  signedOut = value;
+}
+export function isSignedOut(): boolean {
+  return signedOut;
+}
+
 /** The one place the app leaves the SPA, so tests can replace it. */
 export const browser = {
   redirect(url: string): void {

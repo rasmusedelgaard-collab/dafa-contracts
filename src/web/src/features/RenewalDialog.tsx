@@ -3,7 +3,9 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { qk, useApi, useInvalidateContracts } from '../app/context';
 import type { RenewalDecision } from '../api/types';
 import { Button, ErrorState, Field, Modal, Skeleton, Textarea, TextInput, useToast } from '../components';
+import { ApiError } from '../api/api';
 import { addDays, addMonths, formatDate, isIsoDate } from '../lib/dates';
+import { errorMessage, isConflict } from '../lib/errors';
 
 const DONE_TEXT: Record<RenewalDecision, string> = {
   Renew: 'Renewal recorded',
@@ -22,6 +24,7 @@ export function RenewalDialog({ contractId, initial, onClose }: { contractId: st
   const [comment, setComment] = useState('');
   const [newEndDate, setNewEndDate] = useState('');
   const [tried, setTried] = useState(false);
+  const [refused, setRefused] = useState<string>();
   const c = contract.data;
   const openEnded = !!c && c.endDate === null;
   // Giving notice is the only decision an open-ended contract can take.
@@ -41,13 +44,20 @@ export function RenewalDialog({ contractId, initial, onClose }: { contractId: st
       toast.show(DONE_TEXT[d]);
       onClose();
     },
-    onError: (e) => toast.error(e),
+    onError: (e) => {
+      // A 409 (too early to renew, already renewed, open-ended, ...) carries the reason in `detail`:
+      // it stays in the dialog, next to the choice it is about. Everything else is a toast.
+      if (isConflict(e)) setRefused(errorMessage(e));
+      else if (e instanceof ApiError && e.problem.errors?.newEndDate) setRefused(errorMessage(e));
+      else toast.error(e);
+    },
   });
 
   const submit = () => {
     setTried(true);
     if (!decision || (needsComment && !comment.trim())) return;
     if (needsEndDate && (!isIsoDate(newEndDate) || (c?.endDate && newEndDate <= c.endDate))) return;
+    setRefused(undefined);
     save.mutate(decision);
   };
 
@@ -121,6 +131,11 @@ export function RenewalDialog({ contractId, initial, onClose }: { contractId: st
               </span>
             ) : null}
           </fieldset>
+          {refused ? (
+            <p className="banner tone-red" role="alert">
+              {refused}
+            </p>
+          ) : null}
           {needsEndDate ? (
             <Field label="New end date" error={endDateError} hint={`The contract ends on ${formatDate(c.endDate)} today.`}>
               {(p) => <TextInput {...p} type="date" min={c.endDate ? addDays(c.endDate, 1) : undefined} value={newEndDate} onChange={(e) => setNewEndDate(e.target.value)} />}

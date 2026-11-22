@@ -9,9 +9,9 @@ import { Deviations, RoutePreview } from '../../features/Approval';
 import { ContractForm } from '../../features/ContractForm';
 import { UPLOAD_ACCEPT, uploadError } from '../../lib/uploads';
 import { formatDate, formatDayMonth, noticeDeadline, reminderSchedule } from '../../lib/dates';
-import { fileExtension, formatFileSize, formatMoney, plural, toDkk } from '../../lib/format';
+import { fileExtension, formatFileSize, formatMoney, plural } from '../../lib/format';
 import { applySuggestions } from '../../lib/suggestions';
-import { draftToInput, emptyDraft, hasErrors, parseAmount, parseWhole, validateDraft, type ContractDraft, type DraftErrors, type DraftField } from '../../lib/validation';
+import { draftToInput, emptyDraft, hasErrors, parseAmount, parseWhole, routeValue, validateDraft, type ContractDraft, type DraftErrors } from '../../lib/validation';
 import { LINK_KINDS } from '../record/dialogs';
 
 const STEPS = ['Upload', 'Details', 'Links and obligations', 'Approval'] as const;
@@ -32,12 +32,28 @@ function useDebounced<T>(value: T, ms: number): T {
   return debounced;
 }
 
-/** Contract value in DKK for the approval route: total value when given, else annual value. */
-function routeValue(d: ContractDraft): number {
-  const total = parseAmount(d.totalValue);
-  const annual = parseAmount(d.annualValue);
-  const value = total !== null && !Number.isNaN(total) ? total : annual !== null && !Number.isNaN(annual) ? annual : 0;
-  return Math.round(toDkk(value, d.currency));
+/** The placeholder value bands of the seeded approval rules (DKK). The real authority matrix comes from Settings. */
+const BANDS: { label: string; min: number; max: number }[] = [
+  { label: 'Under DKK 1m', min: 0, max: 1_000_000 },
+  { label: 'DKK 1–5m', min: 1_000_000, max: 5_000_000 },
+  { label: 'DKK 5–20m', min: 5_000_000, max: 20_000_000 },
+  { label: 'Over DKK 20m', min: 20_000_000, max: Infinity },
+];
+
+/** Which band the entered value falls in. Read-only: the value comes from the form, not from the chips. */
+function ValueBands({ value }: { value: number }) {
+  return (
+    <ul className="bands" aria-label="Value band">
+      {BANDS.map((b) => {
+        const on = value >= b.min && value < b.max;
+        return (
+          <li key={b.label} className={`band${on ? ' band--on' : ''}`} aria-current={on ? 'true' : undefined}>
+            {b.label}
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -325,7 +341,8 @@ export function NewContract() {
       setErrors({});
       setTried(false);
       goTo(1);
-      toast.show(`${plural(applied.fields.length, 'field')} suggested from ${result.fileName}`);
+      if (result.note) toast.show(result.note);
+      else toast.show(`${plural(applied.fields.length, 'field')} suggested from ${result.fileName}`);
     },
     onError: (e) => toast.error(e, 'The file could not be read. Try again.'),
   });
@@ -336,14 +353,15 @@ export function NewContract() {
     else extract.mutate(file);
   };
 
-  const change = <K extends DraftField>(field: K, value: ContractDraft[K]) => {
-    const next = { ...draft, [field]: value };
+  const change = (patch: Partial<ContractDraft>) => {
+    const next = { ...draft, ...patch };
     setDraft(next);
     let nextPending = pending;
-    if (pending.has(field)) {
+    const touched = Object.keys(patch).filter((f) => pending.has(f));
+    if (touched.length > 0) {
       // Changing a suggested value counts as handling the suggestion.
       const p = new Set(pending);
-      p.delete(field);
+      for (const f of touched) p.delete(f);
       nextPending = p;
       setPending(p);
     }
@@ -396,6 +414,8 @@ export function NewContract() {
   );
   const canPreview = !!(previewQuery.entityId && previewQuery.typeId && previewQuery.departmentId);
   const preview = useQuery({ queryKey: qk.approvalPreview(previewQuery), queryFn: () => api.previewApproval(previewQuery), enabled: canPreview && step >= 1 });
+  // The form already names entity, type and department, but the debounced query has not caught up: still loading.
+  const previewPending = !canPreview && !!(draft.entityId && draft.typeId && draft.departmentId);
 
   // ----- save -----
   const save = useMutation({
@@ -478,7 +498,6 @@ export function NewContract() {
   }
 
   const busy = extract.isPending || save.isPending;
-  const stepLabel = step === 3 ? 'Submit for approval' : 'Continue';
 
   const aside = (
     <aside className="flow__aside">
@@ -499,8 +518,9 @@ export function NewContract() {
       </Card>
       <Card pad className="stack" style={{ gap: 14 }} aria-labelledby="route-heading">
         <CardTitle id="route-heading">Approval route</CardTitle>
-        <RoutePreview preview={canPreview ? preview.data : undefined} loading={canPreview && preview.isLoading} />
-        <span className="caption">From the approval rules in Settings, for a value of {formatMoney(routeValue(draft), 'DKK')}. Value bands are placeholders.</span>
+        <ValueBands value={routeValue(draft)} />
+        <RoutePreview preview={canPreview ? preview.data : undefined} loading={previewPending || (canPreview && preview.isLoading)} />
+        <span className="caption">From the approval rules in Settings, for {formatMoney(routeValue(draft), 'DKK')} (the larger of total and annual value). Value bands are placeholders.</span>
       </Card>
       {source?.kind === 'upload' ? (
         <Card pad className="stack" style={{ gap: 12 }}>
@@ -549,9 +569,10 @@ export function NewContract() {
             Back
           </Button>
         ) : null}
-        {step === 0 ? null : (
-          <Button size="md" className="flow__next" style={{ height: 40, borderRadius: 12, fontSize: 14, padding: '0 20px' }} loading={save.isPending && save.variables === true} disabled={busy} onClick={next}>
-            {stepLabel}
+        {/* The last step has its two actions (save as draft, submit) together in the page. */}
+        {step === 0 || step === 3 ? null : (
+          <Button size="md" className="flow__next" style={{ height: 40, borderRadius: 12, fontSize: 14, padding: '0 20px' }} disabled={busy} onClick={next}>
+            Continue
           </Button>
         )}
       </header>
@@ -583,8 +604,9 @@ export function NewContract() {
                   <div className="file-card__text">
                     <span style={{ fontWeight: 600, overflowWrap: 'anywhere' }}>{source.result.fileName}</span>
                     <span className="caption">
-                      {formatFileSize(source.result.size)} · {plural(source.result.pages, 'page')} · read by AI, {plural(pending.size + accepted.size, 'field')} suggested
+                      {source.result.note ? formatFileSize(source.result.size) : `${formatFileSize(source.result.size)} · ${plural(source.result.pages, 'page')} · read by AI, ${plural(pending.size + accepted.size, 'field')} suggested`}
                     </span>
+                    {source.result.note ? <span className="file-card__note">{source.result.note}</span> : null}
                   </div>
                   <input
                     ref={replaceRef}
@@ -623,15 +645,15 @@ export function NewContract() {
 
               {tried && hasErrors(errors) ? (
                 <p className="error-summary" role="alert">
-                  {Object.keys(errors).length === 1 ? 'One field needs' : `${Object.keys(errors).length} fields need`} your attention. They are marked in red below.
+                  {Object.keys(errors).length === 1 ? 'One field needs' : `${Object.keys(errors).length} fields need`} your attention. {Object.keys(errors).length === 1 ? 'It is' : 'They are'} marked in red below.
                 </p>
               ) : null}
 
               <Card>
-                <ContractForm draft={draft} errors={errors} onChange={change} suggestions={source?.kind === 'upload' ? { pending, accepted, onAccept: (f) => accept([f]) } : undefined} />
+                <ContractForm draft={draft} errors={errors} onPatch={change} suggestions={source?.kind === 'upload' ? { pending, accepted, onAccept: (f) => accept([f]) } : undefined} />
               </Card>
               <div className="row-flex" style={{ justifyContent: 'flex-end' }}>
-                <Button onClick={next} disabled={busy}>
+                <Button variant="secondary" onClick={next} disabled={busy}>
                   Continue
                 </Button>
               </div>
@@ -644,7 +666,9 @@ export function NewContract() {
           <>
             <LinksStep links={links} setLinks={setLinks} obligations={obligations} setObligations={setObligations} defaultResponsible={draft.responsibleId || draft.ownerId || me.id} />
             <div className="row-flex" style={{ justifyContent: 'flex-end', flex: '1 1 100%' }}>
-              <Button onClick={next}>Continue</Button>
+              <Button variant="secondary" onClick={next}>
+                Continue
+              </Button>
             </div>
           </>
         ) : null}

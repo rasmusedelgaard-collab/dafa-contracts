@@ -75,7 +75,7 @@ describe('Approvals', () => {
     expect(await screen.findByText('Nothing is waiting for you')).toBeInTheDocument();
   });
 
-  it('tells the approver when someone else acted first (409) and refreshes', async () => {
+  it('shows the server\'s reason when the step was closed in the meantime (409 invalid-state) and refreshes', async () => {
     const user = userEvent.setup();
     const api = renderApp('/approvals');
     await screen.findByRole('button', { name: 'Approve' });
@@ -83,7 +83,9 @@ describe('Approvals', () => {
     const a = api.db.approvals.find((x) => x.contractId === erpOf(api).id)!;
     a.status = 'Rejected';
     await user.click(screen.getByRole('button', { name: 'Approve' }));
-    expect(await screen.findByText(/This was just updated by someone else\./)).toBeInTheDocument();
+    expect(await screen.findByText('This approval step is no longer open.')).toBeInTheDocument();
+    // Only a `stale` conflict is "updated by someone else".
+    expect(screen.queryByText(/This was just updated by someone else/)).not.toBeInTheDocument();
     expect(await screen.findByText('Nothing is waiting for you')).toBeInTheDocument();
   });
 
@@ -102,7 +104,7 @@ describe('Renewals', () => {
     expect(within(timeline).getByRole('group', { name: /^DAFA A\/S, \d+ deadlines?$/ })).toBeInTheDocument();
     const marker = within(timeline).getByRole('button', { name: /^Freight framework – Nordics, notice by 20 Jan 2027, in 59 days$/ });
     // 20 January: third column of 12, 19 of 31 days in.
-    expect(parseFloat(marker.style.left)).toBeCloseTo(((2 + 19 / 31) / 12) * 100, 1);
+    expect(Number(marker.style.getPropertyValue('--pct')) * 100).toBeCloseTo(((2 + 19 / 31) / 12) * 100, 1);
     expect(marker.className).toContain('marker--amber');
 
     await user.click(marker);
@@ -131,7 +133,7 @@ describe('Renewals', () => {
 
   it('opens the renewal decision dialog for the selected contract', async () => {
     const user = userEvent.setup();
-    renderApp('/renewals');
+    renderApp('/renewals', USER.pet); // an administrator may decide on every contract
     await user.click(await screen.findByRole('button', { name: 'Record decision' }));
     expect(await screen.findByRole('dialog', { name: 'Decide on renewal' })).toBeInTheDocument();
   });
@@ -143,8 +145,9 @@ describe('Renewals', () => {
     rec.noticePeriodDays = 400;
     renderWith(api, '/renewals');
     const marker = await screen.findByRole('button', { name: /^Freight framework – Nordics, notice by .*, 390 days overdue$/ });
-    expect(marker.style.left).toBe('0%');
+    expect(marker.className).toContain('marker--overdue');
     expect(marker.className).toContain('marker--red');
+    expect(screen.getByText('Overdue')).toBeInTheDocument(); // its own column in the axis
     expect(screen.getByText(/^\d+ overdue$/)).toBeInTheDocument();
     const list = screen.getByRole('heading', { name: /in date order/ }).parentElement!;
     expect(within(list).getAllByRole('listitem')[0]).toHaveTextContent('Freight framework – Nordics');
@@ -359,7 +362,7 @@ describe('phase 1 gaps and backend contract changes', () => {
     renderApp(`/contracts/${rec.id}`, rec.ownerId);
     await user.click(await screen.findByRole('button', { name: 'Edit details' }));
     const dialog = await screen.findByRole('dialog', { name: 'Edit details' });
-    expect(within(dialog).getByText('Approved terms are locked. Register an amendment as a linked contract, or ask an administrator.')).toBeInTheDocument();
+    expect(within(dialog).getByText(/^Approved terms are locked\. Register an amendment as a linked contract, or ask an administrator\./)).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Counterparty')).toBeDisabled();
     expect(within(dialog).getByLabelText('Start date')).toBeDisabled();
     expect(within(dialog).getByLabelText('Title')).toBeDisabled();

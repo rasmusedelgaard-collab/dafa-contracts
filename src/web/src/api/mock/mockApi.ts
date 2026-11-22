@@ -75,6 +75,14 @@ export type MockApi = Api & {
 };
 
 const USER_KEY = 'dafa.mock.userId';
+const SIGNED_OUT = 'signed-out';
+const MAX_WRONG_CODES = 10;
+const LOCK_LABELS: Record<string, string> = {
+  title: 'title', typeId: 'contract type', supplierId: 'supplier', counterpartyName: 'counterparty', entityId: 'legal entity', departmentId: 'department',
+  startDate: 'start date', endDate: 'end date', noticePeriodDays: 'notice period', autoRenew: 'automatic renewal', renewalMonths: 'renewal period',
+  annualValue: 'annual value', totalValue: 'total value', currency: 'currency', liabilityCap: 'liability cap', exclusivity: 'exclusivity',
+  changeOfControl: 'change of control', governingLaw: 'governing law', priceAdjustment: 'price adjustment', priceAdjustmentDate: 'next price adjustment',
+};
 const ROLE_LABEL: Record<ApproverRole, string> = {
   DepartmentHead: 'Department head',
   EntityManager: 'Entity management',
@@ -86,27 +94,39 @@ const ROLE_LABEL: Record<ApproverRole, string> = {
 const LOCKABLE = ['title', 'typeId', 'supplierId', 'counterpartyName', 'entityId', 'departmentId', 'startDate', 'endDate', 'noticePeriodDays', 'autoRenew', 'renewalMonths', 'annualValue', 'totalValue', 'currency', 'liabilityCap', 'exclusivity', 'changeOfControl', 'governingLaw', 'priceAdjustment', 'priceAdjustmentDate'] as const;
 const LOCKED_MESSAGE = 'Approved terms are locked. Register an amendment as a linked contract, or ask an administrator.';
 const UPLOAD_TYPES = /\.(pdf|docx|doc|xlsx|xls|pptx|msg|eml|txt|png|jpg|jpeg)$/i;
+const READ_LIMIT_BYTES = 20 * 1024 * 1024;
+const PROBLEM_TYPES = {
+  stale: 'urn:dafa:problem:stale',
+  'no-approval-rule': 'urn:dafa:problem:no-approval-rule',
+  'no-approver': 'urn:dafa:problem:no-approver',
+  'locked-fields': 'urn:dafa:problem:locked-fields',
+  duplicate: 'urn:dafa:problem:duplicate',
+  'invalid-state': 'urn:dafa:problem:invalid-state',
+} as const;
+type ConflictKind = keyof typeof PROBLEM_TYPES;
 const DECISION_TEXT = { Renew: 'Renew', Renegotiate: 'Renegotiate', GiveNotice: 'Give notice', LetExpire: 'Let it expire' } as const;
 
-function problem(status: number, title: string, detail?: string, errors?: Record<string, string[]>): ApiError {
-  return new ApiError({ type: 'about:blank', title, status, detail, errors });
+function problem(status: number, title: string, detail?: string, errors?: Record<string, string[]>, type = 'about:blank'): ApiError {
+  return new ApiError({ type, title, status, detail, errors });
 }
 const notFound = (what = 'Contract') => problem(404, 'Not found', `${what} was not found, or you do not have access to it.`);
 const forbidden = (detail = 'You do not have permission to do this.') => problem(403, 'Forbidden', detail);
-const conflict = (detail: string) => problem(409, 'Conflict', detail);
+/** Every 409 carries one of the backend's problem types; `invalid-state` is the catch-all. */
+const conflict = (detail: string, kind: ConflictKind = 'invalid-state') => problem(409, 'Conflict', detail, undefined, PROBLEM_TYPES[kind]);
 const invalid = (detail: string, errors?: Record<string, string[]>) => problem(400, 'Validation failed', detail, errors);
 
-function remembered(): Id | null {
+/** `undefined`: nothing stored. `null`: the user signed out, so a reload stays signed out. */
+function remembered(): Id | null | undefined {
   try {
-    return globalThis.localStorage?.getItem(USER_KEY) ?? null;
+    const v = globalThis.localStorage?.getItem(USER_KEY);
+    return v === SIGNED_OUT ? null : (v ?? undefined);
   } catch {
-    return null;
+    return undefined;
   }
 }
 function remember(id: Id | null): void {
   try {
-    if (id) globalThis.localStorage?.setItem(USER_KEY, id);
-    else globalThis.localStorage?.removeItem(USER_KEY);
+    globalThis.localStorage?.setItem(USER_KEY, id ?? SIGNED_OUT);
   } catch {
     /* storage unavailable */
   }
@@ -118,8 +138,9 @@ export function createMockApi(options: MockOptions = {}): MockApi {
   const latency = options.latencyMs ?? 0;
   const db = createSeed(today());
 
-  let currentUserId: Id | null =
-    options.userId ?? (options.accessCode ? null : ((options.rememberUser ? remembered() : null) ?? db.users[0]?.id ?? null));
+  const stored = options.rememberUser ? remembered() : undefined;
+  let currentUserId: Id | null = options.userId ?? (options.accessCode || stored === null ? null : (stored ?? db.users[0]?.id ?? null));
+  let wrongCodes = 0;
   if (currentUserId && !db.users.some((u) => u.id === currentUserId)) currentUserId = db.users[0]?.id ?? null;
 
   // ----- lookups -----
@@ -141,7 +162,12 @@ export function createMockApi(options: MockOptions = {}): MockApi {
   }
 
   function checkAccessCode(code: string | undefined): void {
-    if (options.accessCode && code !== options.accessCode) throw problem(401, 'Access code required', code ? 'The access code is not correct.' : 'Enter the access code for this test site.');
+    if (!options.accessCode) return;
+    // Like the API: after too many wrong codes every attempt is refused for a while, the right code included.
+    if (wrongCodes >= MAX_WRONG_CODES) throw problem(429, 'Too many attempts', 'Too many wrong access codes. Try again in a few minutes.');
+    if (code === options.accessCode) return;
+    if (code) wrongCodes += 1;
+    throw problem(401, 'Access code required', code ? 'The access code is not correct.' : 'Enter the access code for this test site.');
   }
 
   function audit(action: string, contractId: Id | null, text: string, userId: Id | null = currentUserId, at = now()): void {
@@ -174,7 +200,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     return d ? daysBetween(today(), d) : null;
   };
   const valueDkk = (c: Pick<ContractRec, 'totalValue' | 'annualValue' | 'currency'>) =>
-    toDkk(c.totalValue ?? c.annualValue ?? 0, c.currency);
+    toDkk(Math.max(c.totalValue ?? 0, c.annualValue ?? 0), c.currency);
   const annualDkk = (c: ContractRec) => toDkk(c.annualValue ?? 0, c.currency);
   const isLive = (c: ContractRec) => c.status === 'Active' || c.status === 'NoticeGiven';
 
@@ -187,10 +213,19 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     return missing;
   }
 
-  /** Once a contract has left Draft, the approved terms are locked for everyone but administrators. */
+  /**
+   * From submission on (every status except Draft) the approved terms are locked for everyone
+   * but administrators. Only fields that have a value are locked: an empty one can be filled in
+   * once. Annual and total value lock together as soon as either is set.
+   */
   function lockedFieldsOf(c: ContractRec, u: UserRec): (typeof LOCKABLE)[number][] {
     if (isAdmin(u) || c.status === 'Draft') return [];
-    return [...LOCKABLE];
+    const hasValue = c.annualValue !== null || c.totalValue !== null;
+    return LOCKABLE.filter((f) => {
+      if (f === 'annualValue' || f === 'totalValue') return hasValue;
+      const v = c[f];
+      return v !== null && v !== undefined && v !== '';
+    });
   }
 
   function recipientOf(c: ContractRec): Id {
@@ -223,6 +258,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
 
   const toRow = (c: ContractRec): RegisterRow => ({
     item: toListItem(c),
+    decided: c.renewalDecision !== null,
     entityId: c.entityId,
     departmentId: c.departmentId,
     typeId: c.typeId,
@@ -378,7 +414,8 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         .map((a) => ({ at: a.at, who: userName(a.userId), text: a.text })),
       access: accessOf(c),
       deviations: deviations.map((d) => ({ ...d })),
-      lockedFields: lockedFieldsOf(c, u).flatMap((f) => (f === 'endDate' ? ['endDate', 'openEnded'] : [f])),
+      // An open-ended contract has no end date, but `openEnded` itself is a set value and locks.
+      lockedFields: [...lockedFieldsOf(c, u), ...(!isAdmin(u) && c.status !== 'Draft' ? ['openEnded'] : [])],
       submittedById: c.submittedBy ?? null,
       canEdit: canEdit(u, c),
       canDecideRenewal: canDecideRenewal(u, c),
@@ -458,7 +495,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
 
   function startApproval(c: ContractRec, submitterId: Id): ApprovalRec {
     const rule = matchRule(c.entityId, c.typeId, c.departmentId, valueDkk(c));
-    if (!rule) throw conflict('No approval rule matches this contract. Ask an administrator to add one in Settings.');
+    if (!rule) throw conflict('No approval rule matches this contract. Ask an administrator to add one in Settings.', 'no-approval-rule');
     const blocked = new Set<Id>([c.ownerId, submitterId]);
     const stages = resolveStages(rule, c.entityId, c.departmentId)
       .map((s) => {
@@ -472,12 +509,13 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           const substitute = substituteFor(taken, blocked);
           if (!substitute) continue;
           taken.add(substitute);
-          approvers.push({ userId: substitute, label: `${a.label} (substitute: ${userName(a.userId)} is the owner or submitter)` });
+          approvers.push({ userId: substitute, label: `${a.label} (instead of ${userName(a.userId)}, who owns or submitted the contract)` });
         }
         return { order: s.order, approvers };
       })
       .filter((s) => s.approvers.length > 0);
-    if (stages.length === 0) throw conflict('The matching approval rule has no approvers.');
+    if (rule.stages.length === 0) throw conflict('The matching approval rule has no stages. Ask an administrator to add approvers in Settings.', 'no-approval-rule');
+    if (stages.length === 0) throw conflict('No approver who is independent of the owner and the submitter could be found.', 'no-approver');
     c.submittedBy = submitterId;
     const a: ApprovalRec = {
       id: newId(),
@@ -539,7 +577,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
   // ----- background jobs -----
   function runJobs(historical: boolean): JobRunResult {
     const t = today();
-    const result: JobRunResult = { ranAt: now(), remindersCreated: 0, escalations: 0, obligationReminders: 0, contractsExpired: 0 };
+    const result: JobRunResult = { ranAt: now(), remindersCreated: 0, escalations: 0, obligationReminders: 0, annualReviewReminders: 0, contractsExpired: 0 };
     const has = (contractId: Id, kind: string, dueDate: string) =>
       db.reminders.some((r) => r.contractId === contractId && r.kind === kind && r.dueDate === dueDate);
 
@@ -586,6 +624,21 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         if (escalation) result.escalations += 1;
         else result.remindersCreated += 1;
       }
+    }
+
+    // Open-ended contracts: a yearly review reminder 60 days before each anniversary of the start date.
+    for (const c of db.contracts) {
+      if (c.status !== 'Active' || c.endDate || !c.startDate) continue;
+      let anniversary = `${t.slice(0, 4)}${c.startDate.slice(4)}`;
+      if (anniversary < t) anniversary = addMonths(anniversary, 12);
+      const due = addDays(anniversary, -60);
+      if (due > t || anniversary <= c.startDate || has(c.id, 'AnnualReview', due)) continue;
+      const recipientId = recipientOf(c);
+      const sentAt = historical ? `${due}T07:00:00Z` : now();
+      db.reminders.push({ id: newId(), contractId: c.id, kind: 'AnnualReview', dueDate: due, sentAt, recipientId });
+      audit('ReminderSent', c.id, `Annual review reminder sent to ${userName(recipientId)} (open-ended contract)`, null, sentAt);
+      if (!historical) notify(recipientId, `Annual review: ${c.title}`, 'This open-ended contract has its anniversary in 60 days. Check that it is still needed, or give notice.', c.id);
+      result.annualReviewReminders += 1;
     }
 
     for (const o of db.obligations) {
@@ -715,6 +768,12 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     const ext = /\.([a-z0-9]+)$/i.exec(file.name)?.[1]?.toLowerCase() ?? '';
     if (!['pdf', 'docx', 'doc'].includes(ext)) throw invalid('Upload a PDF or Word file (.pdf, .docx).', { file: ['Unsupported file type'] });
     if (file.size > 25 * 1024 * 1024) throw invalid('The file is larger than 25 MB.', { file: ['File too large'] });
+    // Like the API's reading limits: a very large file is stored, but not read for suggestions.
+    if (file.size > READ_LIMIT_BYTES) {
+      const id = newId();
+      db.uploads.push({ id, fileName: file.name, size: file.size, blob: file, kind: 'Main', deviations: [], summary: null });
+      return { uploadId: id, fileName: file.name, size: file.size, pages: 0, suggestions: [], summary: '', deviations: [], note: 'The file was too large to read, so there are no suggestions. Fill in the details yourself.' };
+    }
 
     const base = file.name.replace(/\.[a-z0-9]+$/i, '').replace(/[_]+/g, ' ');
     const title = base.replace(/\s*[-–(]?\s*\b(draft|signed|final|v\d+|copy)\b\)?/gi, '').replace(/\s{2,}/g, ' ').trim() || base;
@@ -749,7 +808,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     const summary = `${type?.name ?? 'Contract'} with ${supplier?.name ?? 'the counterparty'} from ${formatDate(start)} to ${formatDate(end)}${renews ? ', renewing for 12 months at a time' : ''}. ${notice > 0 ? `Notice period ${notice} days.` : 'No notice period.'}`;
     const uploadId = newId();
     db.uploads.push({ id: uploadId, fileName: file.name, size: file.size, blob: file, kind: 'Main', deviations, summary });
-    return { uploadId, fileName: file.name, size: file.size, pages: Math.max(1, Math.round(file.size / 130_000)), suggestions, summary, deviations };
+    return { uploadId, fileName: file.name, size: file.size, pages: Math.max(1, Math.round(file.size / 130_000)), suggestions, summary, deviations, note: null };
   }
 
   // ----- admin helpers -----
@@ -1020,7 +1079,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         if (c.status === 'InApproval') throw conflict('The contract is in approval and cannot be changed until the approval is finished.');
         checkRefs(input);
         const changed = lockedFieldsOf(c, u).filter((f) => (input[f] ?? null) !== (c[f] ?? null));
-        if (changed.length > 0) throw conflict(LOCKED_MESSAGE);
+        if (changed.length > 0) throw conflict(`${LOCKED_MESSAGE} Locked: ${changed.map((f) => LOCK_LABELS[f] ?? f).join(', ')}.`, 'locked-fields');
         applyInput(c, input);
         audit('ContractUpdated', c.id, 'Details updated');
         return toDetail(c, u);
@@ -1063,9 +1122,16 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         if ((input.decision === 'GiveNotice' || input.decision === 'LetExpire') && !input.comment?.trim()) {
           throw invalid('Add a comment that explains why the contract ends.', { comment: ['Required for this decision'] });
         }
-        if (!c.endDate && input.decision !== 'GiveNotice') throw invalid('An open-ended contract can only be ended by giving notice.', { decision: ['Not available for an open-ended contract'] });
+        if (!c.endDate && input.decision !== 'GiveNotice') throw conflict('An open-ended contract can only be ended by giving notice.');
         if (input.decision === 'LetExpire' && c.autoRenew) throw invalid('A contract that renews automatically cannot be left to expire. Give notice instead.', { decision: ['Not available for an auto-renew contract'] });
-        const extend = input.decision === 'Renew' && !c.autoRenew && !!c.endDate;
+        if (input.decision === 'Renew') {
+          // Renewing is possible from the first reminder of the term (the largest notice offset).
+          const deadline = deadlineOf(c);
+          const opens = deadline ? addDays(deadline, -Math.max(0, ...db.reminderSettings.noticeDays)) : null;
+          if (opens && today() < opens) throw conflict(`It is too early to renew this contract. Renewal opens on ${formatDate(opens)}, when the first reminder is sent.`);
+        }
+        // A new end date is required on a fixed-term contract and overrides the renewal period on an auto-renew one.
+        const extend = input.decision === 'Renew' && !!c.endDate && (!(c.autoRenew && c.renewalMonths) || !!input.newEndDate);
         if (extend) {
           if (!input.newEndDate || !/^\d{4}-\d{2}-\d{2}$/.test(input.newEndDate)) throw invalid('Enter the new end date.', { newEndDate: ['Required when the contract does not renew automatically'] });
           if (input.newEndDate <= (c.endDate ?? '')) throw invalid('The new end date must be after the current end date.', { newEndDate: ['Must be after the current end date'] });
@@ -1093,7 +1159,11 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           c.renewalDecidedBy = u.id;
           c.renewalDecidedAt = now();
           c.renewalComment = comment;
-          if (input.decision === 'GiveNotice') c.status = 'NoticeGiven';
+          if (input.decision === 'GiveNotice') {
+            c.status = 'NoticeGiven';
+            // Open-ended: the contract now ends when the notice period has run.
+            if (!c.endDate) c.endDate = addDays(today(), c.noticePeriodDays ?? 0);
+          }
         }
         if (c.ownerId !== u.id) notify(c.ownerId, `Renewal decision: ${c.title}`, `${u.name} recorded "${DECISION_TEXT[input.decision]}".`, c.id);
         return toDetail(c, u);
@@ -1106,8 +1176,9 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         if (!file || file.size === 0) throw invalid('Choose a file to upload.', { file: ['Required'] });
         if (file.size > 25 * 1024 * 1024) throw invalid('The file is larger than 25 MB.', { file: ['File too large'] });
         if (!UPLOAD_TYPES.test(file.name)) throw invalid('This file type cannot be uploaded.', { file: ['File type not allowed'] });
-        if (kind === 'Main' && !isAdmin(u) && c.status !== 'Draft' && c.status !== 'InApproval' && db.documents.some((d) => d.contractId === c.id && d.kind === 'Main')) {
-          throw forbidden('Only an administrator can replace the main document after approval. Upload it as an amendment instead.');
+        const replacesMain = db.documents.some((d) => d.contractId === c.id && d.kind === 'Main' && d.name === file.name);
+        if ((kind === 'Main' || replacesMain) && !isAdmin(u) && c.status !== 'Draft') {
+          throw conflict('The main document is locked once the contract is submitted. Upload the file as an amendment, or ask an administrator.', 'locked-fields');
         }
         const doc = addDocument(c, file.name, kind, file, u.id);
         audit('DocumentUploaded', c.id, `${doc.name} uploaded${doc.version > 1 ? ` (version ${doc.version})` : ''}`);
@@ -1187,7 +1258,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         if (!target || !sees(u, target)) throw invalid('Choose a contract to link to.', { toContractId: ['Unknown contract'] });
         if (target.id === c.id) throw invalid('A contract cannot be linked to itself.', { toContractId: ['Same contract'] });
         if (!['Amendment', 'Appendix', 'Framework', 'Related'].includes(input.kind)) throw invalid('Choose the kind of link.', { kind: ['Required'] });
-        if (db.links.some((l) => (l.fromId === c.id && l.toId === target.id) || (l.fromId === target.id && l.toId === c.id))) throw conflict('These two contracts are already linked.');
+        if (db.links.some((l) => (l.fromId === c.id && l.toId === target.id) || (l.fromId === target.id && l.toId === c.id))) throw conflict('These two contracts are already linked.', 'duplicate');
         db.links.push({ id: newId(), fromId: c.id, toId: target.id, kind: input.kind });
         audit('LinkAdded', c.id, `Linked to ${target.title} (${input.kind.toLowerCase()})`);
         return toDetail(c, u);
@@ -1297,7 +1368,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         if (to.id === u.id) throw invalid('You cannot delegate to yourself.', { userId: ['Same user'] });
         if (to.id === c.ownerId || to.id === c.submittedBy) throw invalid('The owner or submitter of the contract cannot approve it.', { userId: ['Owner or submitter'] });
         if (!to.roles.includes('Approver') && !isAdmin(to)) throw invalid(`${to.name} does not have the Approver role.`, { userId: ['Not an approver'] });
-        if (stage.steps.some((s) => s.approverId === to.id && s.status === 'Pending')) throw conflict(`${to.name} is already approving this stage.`);
+        if (stage.steps.some((s) => s.approverId === to.id && s.status !== 'Delegated')) throw invalid(`${to.name} is already an approver in this stage.`, { userId: ['Already an approver in this stage'] });
         step.status = 'Delegated';
         step.decidedAt = now();
         step.comment = `Delegated to ${to.name}`;
@@ -1310,6 +1381,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     previewApproval: (query) =>
       run((): ApprovalPreview => {
         me();
+        // `value` is the larger of total and annual value, in DKK (the caller sends it that way).
         const rule = matchRule(query.entityId, query.typeId, query.departmentId, query.value ?? 0);
         if (!rule) return { stages: [], ruleId: null, ruleName: null };
         return {
@@ -1535,7 +1607,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         run(() => {
           admin();
           const result = runJobs(false);
-          audit('JobsRun', null, `Background jobs run: ${result.remindersCreated} reminders, ${result.escalations} escalations, ${result.obligationReminders} obligation reminders`);
+          audit('JobsRun', null, `Background jobs run: ${result.remindersCreated} reminders, ${result.escalations} escalations, ${result.obligationReminders} obligation reminders, ${result.annualReviewReminders} annual review reminders`);
           return result;
         }),
 

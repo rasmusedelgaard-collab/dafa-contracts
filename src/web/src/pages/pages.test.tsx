@@ -69,7 +69,7 @@ describe('Contracts register', () => {
   it('shows only what the user may see and filters by view', async () => {
     const user = userEvent.setup();
     renderApp('/contracts', USER.emm);
-    expect(await screen.findByText('2 contracts you can see, across 9 legal entities')).toBeInTheDocument();
+    expect(await screen.findByText('2 contracts you can see, across 1 legal entity')).toBeInTheDocument();
     const table = await screen.findByRole('table', { name: 'Contracts' });
     expect(within(table).getAllByRole('row')).toHaveLength(3);
     await user.click(screen.getByRole('button', { name: 'In approval' }));

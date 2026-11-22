@@ -56,16 +56,16 @@ function Content({ data }: { data: OverviewData }) {
       <div className="kpis">
         <Kpi label="Active contracts" value={data.activeContracts} sub={`Across ${plural(data.valueByEntity.length, 'legal entity', 'legal entities')}`} to="/contracts?status=Active" />
         <Kpi label="Annual contract value" value={formatMoneyCompact(data.annualValueDkk, 'DKK')} sub="Active contracts, converted to DKK" />
-        <Kpi label="Notice deadline within 90 days" value={data.dueIn90} sub="Open the list" to="/contracts?view=due90" />
+        <Kpi label="Notice within 90 days" value={data.dueIn90} sub="Open the list" to="/contracts?view=due90" />
         <Kpi label="In approval" value={data.inApproval} sub="Open the list" to="/contracts?view=approval" />
         <Kpi label="Missing data" value={data.missingData} sub={data.missingData === 0 ? 'Every contract is complete' : 'Contracts to complete'} to="/contracts?view=missing" tone={data.missingData > 0 ? 'amber' : undefined} />
       </div>
 
-      <div className="split">
+      <div className="split split--stretch">
         <Card pad className="split__main stack" style={{ gap: 16 }}>
           <CardTitle>Annual contract value by legal entity</CardTitle>
           <BarList label="Annual contract value by legal entity, in DKK" empty="No active contracts with a value yet." rows={data.valueByEntity.map((e) => ({ name: e.name, value: e.valueDkk, text: formatMoneyCompact(e.valueDkk, 'DKK') }))} />
-          <span className="caption">Active contracts and contracts with notice given. Other currencies are converted with indicative rates.</span>
+          <span className="caption" style={{ marginTop: 'auto' }}>Active contracts and contracts with notice given. Other currencies are converted with indicative rates.</span>
         </Card>
         <Card pad className="split__aside stack" style={{ gap: 16 }}>
           <CardTitle>Contracts by type</CardTitle>
@@ -73,7 +73,7 @@ function Content({ data }: { data: OverviewData }) {
         </Card>
       </div>
 
-      <div className="split">
+      <div className="split split--stretch">
         <Card className="split__main" style={{ gap: 0 }} clip>
           <div className="card-list-head">
             <h2 className="card-title">Expiring without renewal</h2>

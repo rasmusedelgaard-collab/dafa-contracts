@@ -3,11 +3,9 @@ import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { qk, useApi, useInvalidateContracts, useLookups, useMe } from '../app/context';
-import { ApiError } from '../api/api';
 import type { ApprovalInstance, ApprovalPreview, ApprovalStepStatus, ContractDetail, Deviation, LookupUser } from '../api/types';
-import { staleMessage } from '../lib/errors';
 import { Avatar, Button, EmptyState, ErrorState, Field, Modal, Pill, Select, Skeleton, Textarea, useToast } from '../components';
-import { formatDate } from '../lib/dates';
+import { formatDate, termLength } from '../lib/dates';
 import { formatMoneyCompact, type Tone } from '../lib/format';
 
 const STEP_TONE: Record<ApprovalStepStatus, Tone> = { Waiting: 'gray', Pending: 'blue', Approved: 'green', Rejected: 'red', Delegated: 'gray' };
@@ -90,7 +88,7 @@ export function Deviations({ items, wide }: { items: Deviation[]; wide?: boolean
         </div>
       ))}
       <p className="caption" style={{ marginTop: 8 }}>
-        Found by AI in the uploaded file. Check against the document before you decide.
+        Found by AI<span className="hide-phone"> in the uploaded file</span>. Check <span className="hide-phone">against </span>the document before you decide.
       </p>
     </div>
   );
@@ -103,15 +101,28 @@ export function KeyTerms({ contract: c, tiles }: { contract: ContractDetail; til
     [c.totalValue !== null ? 'Total value' : 'Annual value', formatMoneyCompact(value, c.currency)],
     ['Term', c.endDate ? `${formatDate(c.startDate)} – ${formatDate(c.endDate)}` : `From ${formatDate(c.startDate)}, open-ended`],
     ['Notice period', c.noticePeriodDays === null ? 'Missing' : `${c.noticePeriodDays} days`],
-    ['Renewal', c.autoRenew && c.renewalMonths ? `Automatic, ${c.renewalMonths} months` : 'Fixed term'],
+    ['Renewal', c.autoRenew && c.renewalMonths ? `Auto, ${c.renewalMonths} months` : c.endDate ? 'Fixed term' : 'Open-ended'],
     ['Change of control', c.changeOfControl === null ? 'Not set' : c.changeOfControl ? 'Yes' : 'No clause'],
   ];
+  // A phone shows four tiles in two columns (PhoneApprove.dc.html): the term as a length, no Renewal tile.
+  const short = c.endDate ? termLength(c.startDate, c.endDate) : 'Open-ended';
   return (
     <dl className={tiles ? 'term-tiles' : 'terms-grid'}>
       {terms.map(([k, v]) => (
-        <div key={k} className="kv">
+        <div key={k} className={`kv${tiles && k === 'Renewal' ? ' term-tiles__wide-only' : ''}`}>
           <dt className="kv__k">{k}</dt>
-          <dd className="kv__v">{v}</dd>
+          <dd className="kv__v">
+            {tiles && k === 'Term' ? (
+              <>
+                <span className="term-tiles__long">{v}</span>
+                <span className="term-tiles__short" aria-hidden="true">
+                  {short}
+                </span>
+              </>
+            ) : (
+              v
+            )}
+          </dd>
         </div>
       ))}
     </dl>
@@ -125,11 +136,22 @@ export function KeyTerms({ contract: c, tiles }: { contract: ContractDetail; til
 export interface DecisionContract {
   ownerId: string;
   submittedById?: string | null;
+  /** Everyone who already approves in the stage the step belongs to (delegated-away steps excluded). */
+  stageApproverIds?: string[];
 }
 
-/** Who a step may be delegated to: an Approver or Admin who is not you, the owner or the submitter. */
+/** The approvers of the stage that holds `stepId`; a step that was delegated away no longer counts. */
+export function stageApproverIds(instance: ApprovalInstance, stepId: string): string[] {
+  const stage = instance.stages.find((s) => s.steps.some((st) => st.id === stepId));
+  return (stage?.steps ?? []).filter((st) => st.status !== 'Delegated').map((st) => st.approverId);
+}
+
+/**
+ * Who a step may be delegated to, by the API's rules: an Approver or Admin who is not you, not
+ * the contract's owner, not its submitter and not already an approver in the same stage.
+ */
 export function delegateCandidates(users: LookupUser[], meId: string, contract?: DecisionContract): LookupUser[] {
-  const blocked = new Set([meId, contract?.ownerId, contract?.submittedById].filter((x): x is string => !!x));
+  const blocked = new Set([meId, contract?.ownerId, contract?.submittedById, ...(contract?.stageApproverIds ?? [])].filter((x): x is string => !!x));
   // An API that does not send roles on lookup users leaves the role check to the server.
   return users.filter((u) => !blocked.has(u.id) && (!u.roles || u.roles.includes('Approver') || u.roles.includes('Admin')));
 }
@@ -150,13 +172,11 @@ export function useApprovalDecision(stepId: string, onDone?: () => void, contrac
     toast.show(text);
     onDone?.();
   };
-  /** A 409 means someone else acted first: refetch so the screen shows what is true now. */
-  const failed = async (e: unknown) => {
-    if (e instanceof ApiError && e.status === 409) {
-      await invalidate();
-      toast.error(null, staleMessage(e));
-    } else toast.error(e);
-  };
+  /**
+   * A 409 means the step is no longer what the screen shows; the query client refetches on every
+   * 409. `stale` gets the fixed sentence, every other type the server's own explanation.
+   */
+  const failed = (e: unknown) => toast.error(e);
   const decide = useMutation({
     mutationFn: (decision: 'Approve' | 'Reject') => api.decideApprovalStep(stepId, { decision, comment: comment.trim() }),
     onSuccess: (_d, decision) => done(decision === 'Approve' ? 'Approved' : 'Rejected. The contract is back with the owner as a draft'),
@@ -277,7 +297,7 @@ export function ApprovalDialog({ stepId, onClose }: { stepId: string; onClose: (
           <Link to={`/contracts/${item.contract.id}`} onClick={onClose} style={{ fontWeight: 600, fontSize: 13, alignSelf: 'flex-start' }}>
             Open the contract and its {item.contract.documents.length} {item.contract.documents.length === 1 ? 'document' : 'documents'}
           </Link>
-          <DecisionForm stepId={stepId} onDone={onClose} contract={item.contract} />
+          <DecisionForm stepId={stepId} onDone={onClose} contract={{ ownerId: item.contract.ownerId, submittedById: item.contract.submittedById, stageApproverIds: stageApproverIds(item.instance, stepId) }} />
         </>
       )}
     </Modal>

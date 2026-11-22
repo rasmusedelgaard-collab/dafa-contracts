@@ -218,6 +218,7 @@ jobs:
       # Same arguments as monsterasp.net's documented command, plus:
       #  -enableRule:AppOffline  takes the app offline during the sync so files are not locked;
       #  -skip ... App_Data      keeps files uploaded on the test site (Documents:Provider=Local) across deploys;
+      #  -skip ... .well-known   never deletes the host's own folder for HTTPS certificate renewal;
       #  -retryAttempts          rides out short network errors.
       # Run with cmd (as in the vendor's .bat example) because msdeploy's quoting is unreliable from PowerShell.
       - name: Deploy with Web Deploy
@@ -235,6 +236,8 @@ jobs:
           -enableRule:AppOffline
           -skip:objectName=dirPath,absolutePath="\\App_Data$"
           -skip:objectName=filePath,absolutePath="\\App_Data\\.*"
+          -skip:objectName=dirPath,absolutePath="\\\.well-known$"
+          -skip:objectName=filePath,absolutePath="\\\.well-known\\.*"
           -retryAttempts:3
           -retryInterval:5000
 

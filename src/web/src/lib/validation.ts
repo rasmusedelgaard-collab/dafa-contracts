@@ -4,6 +4,7 @@
 // annualValue or totalValue, changeOfControl.
 import type { ContractFields, ContractInput, ReminderRecipient } from '../api/types';
 import { isIsoDate } from './dates';
+import { toDkk } from './format';
 
 /** Form state: text inputs are strings, the two required yes/no answers start unanswered (null). */
 export interface ContractDraft {
@@ -249,4 +250,13 @@ export function validateInput(i: Partial<ContractInput>): Record<string, string[
   if (i.reminderRecipient === 'Delegate' && !i.delegateId) add('delegateId', 'Required when reminders go to the delegate');
   if (i.reminderRecipient === 'Responsible' && !i.responsibleId) add('responsibleId', 'Required when reminders go to the responsible person');
   return errors;
+}
+
+/** Contract value in DKK for the approval route: the larger of total and annual value, as the API uses. */
+export function routeValue(d: Pick<ContractDraft, 'totalValue' | 'annualValue' | 'currency'>): number {
+  const amount = (text: string) => {
+    const n = parseAmount(text);
+    return n !== null && !Number.isNaN(n) ? n : 0;
+  };
+  return Math.round(toDkk(Math.max(amount(d.totalValue), amount(d.annualValue)), d.currency));
 }
