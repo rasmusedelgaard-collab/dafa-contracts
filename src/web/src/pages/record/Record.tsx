@@ -87,12 +87,12 @@ function Ring({ days, window: span }: { days: number; window: number }) {
   const shown = Math.abs(days);
   return (
     <svg role="img" aria-label={days >= 0 ? `${days} days left of the ${span}-day reminder window` : `${shown} days past the notice deadline`} width="88" height="88" viewBox="0 0 120 120" style={{ flex: '0 0 auto' }}>
-      <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="10" />
-      {fraction > 0 ? <circle cx="60" cy="60" r="50" fill="none" stroke="#ffffff" strokeWidth="10" strokeLinecap="round" strokeDasharray={`${fraction * circumference} ${circumference}`} transform="rotate(-90 60 60)" /> : null}
-      <text x="60" y="62" textAnchor="middle" fontSize={shown > 999 ? 26 : 34} fontWeight="700" fill="#ffffff">
+      <circle cx="60" cy="60" r="50" fill="none" style={{ stroke: 'var(--on-hero-soft)' }} strokeWidth="10" />
+      {fraction > 0 ? <circle cx="60" cy="60" r="50" fill="none" strokeWidth="10" strokeLinecap="round" style={{ stroke: 'var(--on-hero)' }} strokeDasharray={`${fraction * circumference} ${circumference}`} transform="rotate(-90 60 60)" /> : null}
+      <text x="60" y="62" textAnchor="middle" fontSize={shown > 999 ? 26 : 34} fontWeight="700" style={{ fill: 'var(--on-hero)' }}>
         {shown}
       </text>
-      <text x="60" y="82" textAnchor="middle" fontSize="12" fill="#ffffff">
+      <text x="60" y="82" textAnchor="middle" fontSize="12" style={{ fill: 'var(--on-hero)' }}>
         {days >= 0 ? 'days left' : 'days over'}
       </text>
     </svg>

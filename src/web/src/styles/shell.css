@@ -34,8 +34,8 @@
   width: 36px;
   height: 36px;
   border-radius: 11px;
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -64,7 +64,7 @@
   color: var(--text-3);
 }
 .nav-link:hover {
-  background: #f1f5f9;
+  background: var(--hover-bg);
   color: var(--text-3);
 }
 .nav-link.active {
@@ -82,8 +82,8 @@
   font-weight: 700;
 }
 .nav-link.active .nav-badge {
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
 }
 @media (prefers-reduced-motion: no-preference) {
   .nav-link,
@@ -107,7 +107,7 @@
   text-align: left;
 }
 .user-card:hover {
-  background: #e9eef4;
+  background: var(--track);
 }
 .user-card__name {
   font-size: 13px;
@@ -207,7 +207,7 @@
   background: transparent;
 }
 .gsearch__input::placeholder {
-  color: #6b7682;
+  color: var(--placeholder);
 }
 .gsearch__input::-webkit-search-cancel-button {
   display: none;
@@ -295,8 +295,8 @@
   height: 18px;
   padding: 0 5px;
   border-radius: 999px;
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
   font-size: 12px;
   line-height: 18px;
   text-align: center;
@@ -419,11 +419,11 @@
   justify-content: center;
 }
 .step--on {
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
 }
 .step--on .step__n {
-  background: #fff;
+  background: var(--surface);
   color: var(--primary);
 }
 .step--done {
@@ -432,7 +432,7 @@
 }
 .step--done .step__n {
   background: var(--green-fg);
-  color: #fff;
+  color: var(--green-bg);
 }
 button.step:disabled {
   cursor: default;

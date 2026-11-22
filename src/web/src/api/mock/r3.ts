@@ -179,6 +179,7 @@ export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersCh
       defaultEntityId: stored?.defaultEntityId ?? null,
       landingPage: stored?.landingPage ?? null,
       autoWatch: stored?.autoWatch ?? false,
+      theme: stored?.theme ?? 'light',
     };
   }
 
@@ -948,12 +949,14 @@ export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersCh
         if (!['Off', 'Daily', 'Weekly'].includes(input.digest)) throw invalid('Choose a digest frequency.', { digest: ['Required'] });
         if (input.defaultEntityId && !db.entities.some((e) => e.id === input.defaultEntityId && e.isActive)) throw invalid('Choose an active legal entity.', { defaultEntityId: ['Unknown entity'] });
         if (input.landingPage && !LANDING.includes(input.landingPage)) throw invalid('Choose a landing page.', { landingPage: ['Unknown page'] });
+        if (input.theme !== undefined && !['light', 'dark', 'system'].includes(input.theme)) throw invalid('Choose light, dark or system.', { theme: ['Unknown theme'] });
         const settings = db.notificationSettings.events;
         db.preferences[u.id] = {
           digest: input.digest,
           defaultEntityId: input.defaultEntityId ?? null,
           landingPage: input.landingPage ?? null,
           autoWatch: !!input.autoWatch,
+          theme: input.theme ?? db.preferences[u.id]?.theme ?? 'light',
           events: EVENT_DEFS.map((d) => {
             const e = input.events?.find((x) => x.event === d.event);
             const s = settings.find((x) => x.event === d.event);

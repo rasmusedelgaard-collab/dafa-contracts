@@ -57,7 +57,7 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: 0 12px 32px rgba(16, 32, 48, 0.14);
+  box-shadow: var(--shadow-pop);
 }
 .combo__opt {
   display: flex;
@@ -129,12 +129,12 @@
   color: var(--primary);
 }
 .th-filter--on {
-  background: var(--primary);
-  color: var(--on-primary, #fff);
+  background: var(--primary-fill);
+  color: var(--on-primary);
 }
 .th-filter--on:hover {
-  background: var(--primary-hover);
-  color: var(--on-primary, #fff);
+  background: var(--primary-fill-hover);
+  color: var(--on-primary);
 }
 .th-popover {
   position: fixed;
@@ -144,7 +144,7 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: var(--shadow-pop, 0 12px 32px rgba(16, 32, 48, 0.16));
+  box-shadow: var(--shadow-pop);
   text-align: left;
   font-weight: 400;
   text-transform: none;
@@ -286,10 +286,10 @@
   border-radius: 14px;
 }
 .logo-preview__box--light {
-  background: var(--sidebar-preview-light, #ffffff);
+  background: var(--logo-preview-light);
 }
 .logo-preview__box--dark {
-  background: var(--sidebar-preview-dark, #17202b);
+  background: var(--logo-preview-dark);
 }
 .settings-grid__full { grid-column: 1 / -1; }
 

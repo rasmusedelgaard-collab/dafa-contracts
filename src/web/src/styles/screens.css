@@ -50,7 +50,7 @@ li:first-child > .queue-item {
   height: 10px;
   margin-top: 6px;
   border-radius: 50%;
-  background: var(--primary);
+  background: var(--primary-fill);
 }
 .queue-item__dot--waiting {
   background: var(--dot-amber);
@@ -254,8 +254,8 @@ li:first-child > .queue-item {
   color: var(--green-fg);
 }
 .route-card--you .route-card__avatar {
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
 }
 .route-card--now .route-card__avatar {
   background: var(--avatar-bg);
@@ -285,7 +285,7 @@ li:first-child > .queue-item {
   overflow: hidden;
 }
 .decide {
-  background: var(--primary);
+  background: var(--primary-fill);
   border-radius: var(--r-card-lg);
   padding: 18px 20px;
   display: flex;
@@ -308,16 +308,16 @@ li:first-child > .queue-item {
   border-radius: 12px;
   font-size: 14px;
   color: var(--text);
-  background: #fff;
+  background: var(--hero-input-bg);
 }
 .decide__input::placeholder {
-  color: #6b7682;
+  color: var(--placeholder);
 }
 .decide :focus-visible {
-  outline-color: #fff;
+  outline-color: var(--on-primary);
 }
 .decide__error {
-  color: #fff;
+  color: var(--on-primary);
   font-size: 13px;
   font-weight: 600;
 }
@@ -369,7 +369,7 @@ li:first-child > .queue-item {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: var(--primary);
+  background: var(--primary-fill);
 }
 .legend__item--red::before {
   background: var(--dot-red);
@@ -492,8 +492,8 @@ li:first-child > .queue-item {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--primary);
-  box-shadow: 0 0 0 2px #fff;
+  background: var(--primary-fill);
+  box-shadow: 0 0 0 2px var(--surface);
 }
 .marker--red .marker__dot {
   background: var(--dot-red);
@@ -502,8 +502,8 @@ li:first-child > .queue-item {
   background: var(--dot-amber);
 }
 .selected-card {
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
   border-radius: var(--r-card-lg);
   padding: 20px 24px;
   display: flex;
@@ -512,14 +512,14 @@ li:first-child > .queue-item {
   align-items: center;
 }
 .selected-card :focus-visible {
-  outline-color: #fff;
+  outline-color: var(--on-primary);
 }
 .selected-card__days {
   flex: 0 0 auto;
   width: 76px;
   height: 76px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--on-hero-soft);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -687,7 +687,7 @@ a.kpi .kpi__sub {
 .hbar__fill {
   display: block;
   height: 100%;
-  background: var(--primary);
+  background: var(--primary-fill);
   border-radius: var(--r-pill);
 }
 .hbar__value {
@@ -1257,8 +1257,8 @@ a.kpi .kpi__sub {
     border: 1px solid var(--border);
   }
   .decide__delegate .btn--on-dark {
-    background: var(--primary);
-    color: #fff;
+    background: var(--primary-fill);
+    color: var(--on-primary);
   }
   /*
    * Reject / Approve are pinned to the bottom of the screen. `position: fixed` only works while
@@ -1290,8 +1290,8 @@ a.kpi .kpi__sub {
   }
   .decide__actions .decide__approve {
     flex: 2 1 0;
-    background: var(--primary);
-    color: #fff;
+    background: var(--primary-fill);
+    color: var(--on-primary);
     font-weight: 700;
   }
   /* Renewals: the timeline needs width, so a phone gets the list as cards. */
@@ -1355,8 +1355,8 @@ a.kpi .kpi__sub {
     height: 44px;
     border-radius: 12px;
     border: 0;
-    background: var(--primary);
-    color: #fff;
+    background: var(--primary-fill);
+    color: var(--on-primary);
     font-size: 15px;
   }
   /* A contract the user cannot decide on: a quieter "Open contract". */

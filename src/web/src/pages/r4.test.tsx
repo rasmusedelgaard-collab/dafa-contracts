@@ -133,3 +133,17 @@ describe('Storage problems (the app is the only door)', () => {
     expect(calls).toBe(2);
   });
 });
+
+describe('Theme (owner item I)', () => {
+  it('Dark in My settings applies at once, is saved for the user and kept for the next page load', async () => {
+    const user = userEvent.setup();
+    const api = renderApp('/preferences', USER.jon);
+    const group = await screen.findByRole('radiogroup', { name: 'Theme' });
+    await user.click(within(group).getByRole('radio', { name: 'Dark' }));
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+    expect(localStorage.getItem('dafa.theme')).toBe('dark');
+    await waitFor(async () => expect((await api.getPreferences()).theme).toBe('dark'));
+    await user.click(within(group).getByRole('radio', { name: 'Light' }));
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+  });
+});

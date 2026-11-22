@@ -64,3 +64,35 @@ describe('lazy pages after a deploy (owner item A4)', () => {
     expect(reloadOnce(later.api)).toBe(true);
   });
 });
+
+describe('themes (owner item I)', () => {
+  it('the light and dark token sets define the same keys, and no other stylesheet hard-codes a color', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const dir = join(__dirname, '..', 'styles');
+    const css = readFileSync(join(dir, 'tokens.css'), 'utf8');
+    const block = (selector: string) => {
+      const start = css.indexOf(`${selector} {`);
+      const end = css.indexOf('\n}', start);
+      return new Set<string>([...css.slice(start, end).matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1] ?? ''));
+    };
+    const light = block(':root');
+    const dark = block(":root[data-theme='dark']");
+    const layout = ['--r-card', '--r-card-lg', '--r-hero', '--r-control', '--r-control-sm', '--r-pill', '--font', '--sidebar', '--gutter', '--ease'];
+    const colorKeys = [...light].filter((k) => !layout.includes(k));
+    expect(colorKeys.filter((k) => !dark.has(k))).toEqual([]);
+    expect([...dark].filter((k) => !light.has(k))).toEqual([]);
+    for (const f of readdirSync(dir).filter((x) => x.endsWith('.css') && x !== 'tokens.css')) {
+      const text = readFileSync(join(dir, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      expect(text.match(/#[0-9a-fA-F]{3,8}\b|rgba?\(/g) ?? [], f).toEqual([]);
+    }
+  });
+
+  it('resolves system to the device setting', async () => {
+    const { resolveTheme } = await import('./theme');
+    expect(resolveTheme('system', true)).toBe('dark');
+    expect(resolveTheme('system', false)).toBe('light');
+    expect(resolveTheme('dark', false)).toBe('dark');
+    expect(resolveTheme('light', true)).toBe('light');
+  });
+});

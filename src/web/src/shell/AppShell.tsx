@@ -8,6 +8,7 @@ import { GlobalSearch } from './GlobalSearch';
 import { NotificationBell } from './NotificationBell';
 import { UserSwitcher } from './UserSwitcher';
 import { BrandMark } from './Brand';
+import { applyTheme } from '../lib/theme';
 
 interface NavItem {
   to: string;
@@ -171,8 +172,19 @@ function readStoredScope(userId: string): string | null {
   }
 }
 
+/** Item I: the signed-in user's theme from `me/preferences` (localStorage only bridges the first paint). */
+function useUserTheme() {
+  const api = useApi();
+  const prefs = useQuery({ queryKey: qk.preferences, queryFn: () => api.getPreferences(), staleTime: 5 * 60_000, retry: false });
+  const theme = prefs.data?.theme;
+  useEffect(() => {
+    if (theme) applyTheme(theme);
+  }, [theme]);
+}
+
 /** Sidebar + top bar + routed page; the sidebar becomes a bottom tab bar under 720px. */
 export function AppShell() {
+  useUserTheme();
   const me = useMe();
   const perms = permissions(me);
   const counts = useNavCounts();
