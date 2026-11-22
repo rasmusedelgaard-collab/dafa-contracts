@@ -1,0 +1,254 @@
+name: CI
+
+# Builds and tests the SPA and the API, then produces the deployable publish folder.
+# The "Deploy test" workflow (deploy-test.yml) consumes the `api-publish` artifact of this
+# workflow and refers to it by the name "CI" - keep the name and artifact names in sync.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
+  SOLUTION: Dafa.Contracts.sln
+  API_PROJECT: src/api/Dafa.Contracts.Api/Dafa.Contracts.Api.csproj
+  # monsterasp.net runs application pools as 32-bit by default and its own GitHub Actions
+  # guide publishes with win-x86. Change both the site's "Bitness" setting and this value together.
+  PUBLISH_RUNTIME: ${{ vars.PUBLISH_RUNTIME || 'win-x86' }}
+  # 'false' = framework-dependent (uses the .NET 10 runtime installed on the host).
+  # Set the repository variable PUBLISH_SELF_CONTAINED to 'true' if the host lacks .NET 10.
+  PUBLISH_SELF_CONTAINED: ${{ vars.PUBLISH_SELF_CONTAINED || 'false' }}
+
+jobs:
+  web:
+    name: web (lint, test, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: src/web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build (real API mode)
+        env:
+          VITE_API_MODE: real
+        run: npm run build
+
+      - name: Upload SPA build
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: src/web/dist
+          if-no-files-found: error
+          retention-days: 14
+
+  api:
+    name: api (build, test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      # setup-dotnet's built-in cache needs packages.lock.json files; this works without them.
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props', '**/Directory.Build.props', '**/packages.lock.json', 'global.json', 'nuget.config') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore
+        id: restore
+        run: |
+          mkdir -p artifacts/logs
+          dotnet restore "$SOLUTION" \
+            "-flp:LogFile=artifacts/logs/restore-errors.log;ErrorsOnly"
+
+      - name: Build
+        id: build
+        run: |
+          dotnet build "$SOLUTION" --configuration Release --no-restore \
+            -p:TreatWarningsAsErrors=false \
+            "-flp:LogFile=artifacts/logs/build-errors.log;ErrorsOnly" \
+            "-flp1:LogFile=artifacts/logs/build-warnings.log;WarningsOnly"
+
+      - name: Restore/build failure summary
+        if: failure() && (steps.restore.outcome == 'failure' || steps.build.outcome == 'failure')
+        run: |
+          {
+            echo "## API restore/build failed"
+            echo
+            for f in artifacts/logs/restore-errors.log artifacts/logs/build-errors.log; do
+              if [ -s "$f" ]; then
+                echo "### $(basename "$f") ($(sort -u "$f" | wc -l) unique lines)"
+                echo
+                echo '```text'
+                # Strip the runner's absolute path so file names read relative to the repo.
+                sort -u "$f" | sed "s#${GITHUB_WORKSPACE}/##g" | head -n 300
+                echo '```'
+                echo
+              fi
+            done
+          } > artifacts/logs/failure-summary.md
+          cat artifacts/logs/failure-summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "==================== COMPILE / RESTORE ERRORS ===================="
+          cat artifacts/logs/failure-summary.md
+          echo "=================================================================="
+
+      - name: Test
+        id: test
+        run: |
+          dotnet test "$SOLUTION" --configuration Release --no-build \
+            --logger "trx;LogFileName=test-results.trx" \
+            --logger "console;verbosity=normal" \
+            --results-directory artifacts/test-results
+
+      - name: Test summary
+        if: always() && (steps.test.outcome == 'success' || steps.test.outcome == 'failure')
+        run: python3 .github/scripts/trx_summary.py artifacts/test-results
+
+      - name: Upload test results (trx)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: artifacts/test-results
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-logs
+          path: artifacts/logs
+          if-no-files-found: ignore
+          retention-days: 14
+
+  infra:
+    name: infra (Bicep compile check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # Compile only - nothing is deployed and no Azure sign-in is needed.
+      - name: Compile Bicep
+        run: |
+          az bicep install
+          az bicep build --file infra/main.bicep --stdout > /dev/null
+          az bicep build-params --file infra/main.example.bicepparam --stdout > /dev/null
+          echo "Bicep template and example parameters compile." >> "$GITHUB_STEP_SUMMARY"
+
+  package:
+    name: package (publish API + SPA)
+    needs: [web, api]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nuget-publish-${{ runner.os }}-${{ env.PUBLISH_RUNTIME }}-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props', '**/Directory.Build.props', '**/packages.lock.json', 'global.json', 'nuget.config') }}
+          restore-keys: |
+            nuget-publish-${{ runner.os }}-${{ env.PUBLISH_RUNTIME }}-
+            nuget-${{ runner.os }}-
+
+      - name: Download SPA build into wwwroot
+        uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: src/api/Dafa.Contracts.Api/wwwroot
+
+      - name: Publish
+        id: publish
+        run: |
+          mkdir -p artifacts/logs
+          dotnet publish "$API_PROJECT" --configuration Release \
+            --runtime "$PUBLISH_RUNTIME" --self-contained "$PUBLISH_SELF_CONTAINED" \
+            -p:TreatWarningsAsErrors=false \
+            --output artifacts/publish \
+            "-flp:LogFile=artifacts/logs/publish-errors.log;ErrorsOnly"
+
+      - name: Publish failure summary
+        if: failure() && steps.publish.outcome == 'failure'
+        run: |
+          {
+            echo "## Publish failed"
+            echo
+            echo '```text'
+            if [ -s artifacts/logs/publish-errors.log ]; then
+              sort -u artifacts/logs/publish-errors.log | sed "s#${GITHUB_WORKSPACE}/##g" | head -n 300
+            else
+              echo "No error log was written; see the Publish step output."
+            fi
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Add build info and verify output
+        run: |
+          set -euo pipefail
+          cd artifacts/publish
+          missing=0
+          for f in Dafa.Contracts.Api.dll web.config wwwroot/index.html; do
+            if [ ! -f "$f" ]; then echo "::error::Publish output is missing $f"; missing=1; fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          # Public, non-sensitive marker so a deployment can be matched to a commit.
+          printf '{"commit":"%s","ref":"%s","run":"%s","builtAt":"%s"}\n' \
+            "$GITHUB_SHA" "$GITHUB_REF_NAME" "$GITHUB_RUN_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > wwwroot/build-info.json
+          {
+            echo "## Package"
+            echo
+            echo "- Runtime: \`$PUBLISH_RUNTIME\`, self-contained: \`$PUBLISH_SELF_CONTAINED\`"
+            echo "- Files: $(find . -type f | wc -l), size: $(du -sh . | cut -f1)"
+            echo "- Commit: \`$GITHUB_SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload publish folder
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-publish
+          path: artifacts/publish
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 30

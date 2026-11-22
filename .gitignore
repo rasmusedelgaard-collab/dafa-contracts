@@ -1,0 +1,33 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+TestResults/
+*.db
+*.db-shm
+*.db-wal
+App_Data/
+
+# Node / frontend
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# SPA build output copied into the API host at publish
+src/api/Dafa.Contracts.Api/wwwroot/*
+!src/api/Dafa.Contracts.Api/wwwroot/.gitkeep
+
+# Local config and secrets
+.env
+.env.*
+appsettings.*.local.json
+secrets.json
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

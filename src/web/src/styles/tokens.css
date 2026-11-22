@@ -1,0 +1,56 @@
+/* Design tokens from docs/BUILD_BRIEF.md section 6 and docs/design/*.dc.html */
+:root {
+  --primary: #00456c;
+  --primary-hover: #002a42;
+  --page: #f4f6f9;
+  --surface: #ffffff;
+  --text: #1d2733;
+  --text-2: #5b6672;
+  --text-3: #3f4a56;
+  --label: #8a94a0;
+  --hairline: #eef1f5;
+  --border: #d5dde6;
+  --border-soft: #e2e7ee;
+  --nav-border: #e6ebf1;
+  --tint: #e6f0f8;
+  --tint-2: #eef4f9;
+  --track: #e9eef4;
+  --row-hover: #f7f9fc;
+  --avatar-bg: #dbe8f2;
+  --suggest-bg: #f5f9fc;
+  --suggest-border: #9fc2dc;
+
+  --red-bg: #fbe9e7;
+  --red-fg: #9b2c1f;
+  --amber-bg: #fdf1d6;
+  --amber-fg: #7a5300;
+  --green-bg: #e3f4ea;
+  --green-fg: #1e6b3a;
+  --blue-bg: #e6f0f8;
+  --blue-fg: #00456c;
+  --gray-bg: #eef1f5;
+  --gray-fg: #3f4a56;
+
+  --dot-green: #1e8a4c;
+  --dot-amber: #c88a00;
+  --dot-blue: #00456c;
+  --dot-gray: #8a94a0;
+  --dot-red: #9b2c1f;
+  --bar-soft: #7fa9c7;
+  --bar-idle: #dbe3ea;
+
+  --shadow-card: 0 0 0 1px rgba(16, 24, 40, 0.05), 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px rgba(16, 24, 40, 0.05);
+  --shadow-lift: 0 0 0 1px rgba(16, 24, 40, 0.05), 0 12px 28px rgba(16, 24, 40, 0.1);
+  --shadow-pop: 0 0 0 1px rgba(16, 24, 40, 0.06), 0 12px 32px rgba(16, 24, 40, 0.16);
+
+  --r-card: 18px;
+  --r-card-lg: 20px;
+  --r-hero: 24px;
+  --r-control: 12px;
+  --r-control-sm: 10px;
+  --r-pill: 999px;
+
+  --font: 'Avenir Next', 'Avenir Next LT Pro', 'Inter', -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  --sidebar: 224px;
+  --ease: 160ms ease;
+}

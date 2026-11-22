@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Home – DAFA Contracts v2</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#f4f6f9;-webkit-font-smoothing:antialiased}
+a{color:#00456c}a:hover{color:#002a42}
+.row:hover{background:#f7f9fc}
+.pill:hover{background:#e3edf5}
+.nav a:hover{background:#f1f5f9}a:focus-visible,button:focus-visible{outline:2px solid #00456c;outline-offset:2px}button{transition:background-color .15s ease}
+@media (prefers-reduced-motion: no-preference){
+button,a,.nav a svg{transition:transform .16s ease,box-shadow .16s ease,filter .16s ease,background-color .16s ease}
+button:hover{filter:brightness(0.96)}
+button[style*="background: #00456c"]:hover,a[style*="background: #00456c"]:hover{filter:brightness(1.14)}
+button:active,a[style*="height: 44px"]:active{transform:scale(0.97)}
+.nav a:hover svg{transform:translateX(2px)}
+.lift:hover{transform:translateY(-2px);box-shadow:0 0 0 1px rgba(16,24,40,0.05),0 12px 28px rgba(16,24,40,0.10)!important}
+.row,.trow,.drow,.q{transition:background-color .16s ease}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+main>div>*{animation:rise .4s ease both}
+main>div>*:nth-child(2){animation-delay:.05s}main>div>*:nth-child(3){animation-delay:.1s}main>div>*:nth-child(4){animation-delay:.15s}main>div>*:nth-child(5){animation-delay:.2s}
+}
+</style>
+</helmet>
+<div style="display: flex; flex-wrap: wrap; min-height: 100vh; font-family: 'Avenir Next', 'Avenir Next LT Pro', 'Inter', -apple-system, 'Helvetica Neue', Arial, sans-serif; color: #1d2733; background: #f4f6f9; letter-spacing: -0.005em; font-variant-numeric: tabular-nums">
+  <nav class="nav" aria-label="Main" style="flex: 1 1 224px; max-width: 100%; background: #ffffff; color: #1d2733; border-right: 1px solid #e6ebf1; padding: 24px 14px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px"><div style="display: flex; align-items: center; gap: 12px; padding: 0 12px 14px"><span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 11px; background: #00456c; color: #ffffff; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v5h5M9 13h6M9 17h6"></path></svg></span><span style="display: flex; flex-direction: column"><span style="font-size: 14px; font-weight: 700; letter-spacing: -0.01em">DAFA Contracts</span><span style="font-size: 12px; color: #5b6672">Group workspace</span></span></div><span style="padding: 10px 12px 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #8a94a0">Work</span><a href="Home.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #00456c; font-weight: 600; background: #e6f0f8"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"></path></svg>My work<span style="margin-left: auto; background: #00456c; color: #ffffff; border-radius: 999px; padding: 1px 8px; font-size: 12px; font-weight: 700">5</span></a><a href="Register.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v5h5M9 13h6M9 17h6"></path></svg>Contracts</a><a href="Renewals.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="15" rx="2"></rect><path d="M4 10h16M9 3v4M15 3v4"></path></svg>Renewals</a><a href="Approvals.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4 10-10"></path></svg>Approvals<span style="margin-left: auto; background: #e9eef4; color: #00456c; border-radius: 999px; padding: 1px 8px; font-size: 12px; font-weight: 700">3</span></a><span style="padding: 10px 12px 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #8a94a0">Manage</span><a href="#" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"></path></svg>Overview</a><a href="#" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg>Settings</a><div style="flex: 1 1 auto; min-height: 24px"></div><div style="display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 14px; background: #f4f6f9"><span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 999px; background: #00456c; color: #ffffff; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center">R</span><span style="display: flex; flex-direction: column"><span style="font-size: 13px; font-weight: 600">Rasmus</span><span style="font-size: 12px; color: #5b6672">Group management</span></span></div></nav>
+  <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+    <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 14px 32px">
+      <label for="q" style="position: absolute; left: -9999px">Search</label>
+      <div style="flex: 1 1 360px; max-width: 560px; display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 16px; background: #ffffff; border: 1px solid #e2e7ee; border-radius: 12px">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#5b6672" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>
+        <input id="q" type="search" placeholder="Search contracts, suppliers, documents" style="flex: 1 1 auto; border: 0; outline: none; font: inherit; font-size: 14px; color: #1d2733; background: transparent">
+        <span style="font-size: 12px; color: #5b6672; border: 1px solid #e2e7ee; border-radius: 6px; padding: 2px 6px">Ctrl K</span>
+      </div>
+      <div style="flex: 1 1 0"></div>
+      <label for="scope" style="position: absolute; left: -9999px">Legal entity scope</label>
+      <select id="scope" style="height: 44px; padding: 0 14px; border: 1px solid #e2e7ee; border-radius: 12px; background: #ffffff; font: inherit; font-size: 13px; font-weight: 600; color: #1d2733">
+        <option>All entities</option><option>DAFA A/S</option><option>DAFA Building Solutions A/S</option><option>DAFA Sverige AB</option><option>DAFA Deutschland GmbH</option><option>DAFA Polska sp. z o.o.</option>
+      </select>
+      <a href="NewContract.dc.html" style="display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 20px; background: #00456c; color: #ffffff; text-decoration: none; border-radius: 12px; font-size: 14px; font-weight: 600">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>New contract</a>
+    </header>
+    <div style="max-width: 1240px; width: 100%; box-sizing: border-box; padding: 4px 32px 40px; display: flex; flex-direction: column; gap: 18px">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <span style="font-size: 13px; color: #5b6672">Sunday 22 November</span>
+        <h1 style="margin: 0; font-size: 30px; line-height: 1.1; font-weight: 700; letter-spacing: -0.02em">Good morning, Rasmus</h1>
+      </div>
+      <section aria-label="Summary" style="background: #00456c; color: #ffffff; border-radius: 24px; padding: 24px; display: flex; flex-wrap: wrap; gap: 18px; align-items: center">
+        <div style="flex: 2 1 360px; display: flex; flex-direction: column; gap: 10px">
+          <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.8">This week</span>
+          <span style="font-size: 28px; font-weight: 700; line-height: 1.12; letter-spacing: -0.02em">2 decisions need you</span>
+          <span style="font-size: 14px; opacity: 0.9">One renewal with 23 days to the notice deadline, and one approval waiting for 2 days.</span>
+          <a href="Record.dc.html" style="align-self: flex-start; margin-top: 8px; display: inline-flex; align-items: center; height: 44px; padding: 0 20px; border-radius: 12px; background: #ffffff; color: #00456c; text-decoration: none; font-size: 14px; font-weight: 700">Start with the most urgent</a>
+        </div>
+        <div style="flex: 1 1 300px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+          <div style="background: rgba(255,255,255,0.10); border-radius: 18px; padding: 20px; display: flex; flex-direction: column; gap: 6px"><span style="font-size: 12px; opacity: 0.85">Renewing in 90 days</span><span style="font-size: 24px; font-weight: 700; letter-spacing: -0.02em">DKK [x]m</span><span style="font-size: 12px; opacity: 0.85">[n] contracts</span></div>
+          <div style="background: rgba(255,255,255,0.10); border-radius: 18px; padding: 20px; display: flex; flex-direction: column; gap: 6px"><span style="font-size: 12px; opacity: 0.85">Your contracts</span><span style="font-size: 24px; font-weight: 700; letter-spacing: -0.02em">[n]</span><span style="font-size: 12px; opacity: 0.85">owner, delegate, responsible</span></div>
+        </div>
+      </section>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px">
+        <a href="NewContract.dc.html" class="lift" style="display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-radius: 16px; background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); text-decoration: none; color: #1d2733; font-size: 14px; font-weight: 600"><span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 10px; background: #e6f0f8; color: #00456c; display: flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"></path></svg></span>Upload a contract</a>
+        <a href="NewContract.dc.html" class="lift" style="display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-radius: 16px; background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); text-decoration: none; color: #1d2733; font-size: 14px; font-weight: 600"><span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 10px; background: #e6f0f8; color: #00456c; display: flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M12 11v6M9 14h6"></path></svg></span>Start from a template</a>
+        <a href="Register.dc.html" class="lift" style="display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-radius: 16px; background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); text-decoration: none; color: #1d2733; font-size: 14px; font-weight: 600"><span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 10px; background: #e6f0f8; color: #00456c; display: flex; align-items: center; justify-content: center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg></span>Find a contract</a>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start">
+        <section style="flex: 2 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 14px">
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+            <h2 style="margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -0.01em">My work</h2>
+            <div role="group" aria-label="Filter tasks" style="margin-left: auto; display: inline-flex; background: #e9eef4; border-radius: 10px; padding: 3px">
+              <sc-for list="{{tabs}}" as="t" hint-placeholder-count="3">
+                <button type="button" onClick="{{t.pick}}" aria-pressed="{{t.on}}" style="height: 34px; padding: 0 14px; border: 0; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; background: {{t.bg}}; color: {{t.fg}}; cursor: pointer">{{t.label}}</button>
+              </sc-for>
+            </div>
+          </div>
+          <div style="background: #ffffff; border-radius: 18px; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); overflow: hidden">
+            <sc-for list="{{items}}" as="i" hint-placeholder-count="5">
+              <div class="row" style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 12px 18px; border-bottom: 1px solid #eef1f5">
+                <span aria-hidden="true" style="flex: 0 0 auto; width: 42px; height: 42px; border-radius: 12px; background: {{i.iconBg}}; color: {{i.iconFg}}; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700"><sc-if value="{{i.isRenew}}" hint-placeholder-val="{{ true }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v4h-4"></path></svg></sc-if><sc-if value="{{i.isApprove}}" hint-placeholder-val="{{ false }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4 10-10"></path></svg></sc-if><sc-if value="{{i.isOther}}" hint-placeholder-val="{{ false }}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg></sc-if></span>
+                <div style="flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 3px">
+                  <a href="Record.dc.html" style="font-size: 14px; font-weight: 600; color: #1d2733; text-decoration: none">{{i.title}}</a>
+                  <span style="font-size: 12px; color: #5b6672">{{i.meta}}</span>
+                </div>
+                <span style="font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: {{i.pillBg}}; color: {{i.pillFg}}">{{i.pill}}</span>
+                <button type="button" style="height: 36px; padding: 0 16px; border: 0; border-radius: 10px; background: #00456c; color: #ffffff; font: inherit; font-size: 13px; font-weight: 600">{{i.action}}</button>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+        <aside style="flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+          <section style="background: #ffffff; border-radius: 18px; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); padding: 16px 18px; display: flex; flex-direction: column; gap: 16px">
+            <div style="display: flex; align-items: baseline; justify-content: space-between"><h2 style="margin: 0; font-size: 15px; font-weight: 700">Notice deadlines</h2><a href="#" style="font-size: 13px; text-decoration: none; font-weight: 600">Timeline</a></div>
+            <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; align-items: end; height: 120px">
+              <sc-for list="{{bars}}" as="b" hint-placeholder-count="6">
+                <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; justify-content: flex-end">
+                  <span style="font-size: 12px; font-weight: 700">{{b.n}}</span>
+                  <div style="width: 100%; max-width: 28px; height: {{b.h}}; border-radius: 8px; background: {{b.c}}"></div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px">
+              <sc-for list="{{bars}}" as="b" hint-placeholder-count="6"><span style="font-size: 12px; color: #5b6672; text-align: center">{{b.m}}</span></sc-for>
+            </div>
+          </section>
+          <section style="background: #ffffff; border-radius: 18px; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); padding: 16px 18px; display: flex; flex-direction: column; gap: 12px">
+            <h2 style="margin: 0; font-size: 15px; font-weight: 700">Recently opened</h2>
+            <a href="Record.dc.html" style="font-size: 14px; text-decoration: none; color: #1d2733">Raw material supply – rubber compounds</a>
+            <a href="Record.dc.html" style="font-size: 14px; text-decoration: none; color: #1d2733">Freight framework – Nordics</a>
+            <a href="Record.dc.html" style="font-size: 14px; text-decoration: none; color: #1d2733">Warehouse lease – Jönköping</a>
+          </section>
+        </aside>
+      </div>
+      <p style="margin: 0; font-size: 12px; color: #5b6672">Sample data.</p>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(p) { super(p); this.state = { tab: 'all' }; }
+  renderVals() {
+    var self = this, tab = this.state.tab;
+    var red = ['#fbe9e7', '#9b2c1f'], amber = ['#fdf1d6', '#7a5300'], blue = ['#e6f0f8', '#00456c'], gray = ['#eef1f5', '#3f4a56'];
+    var all = [
+      { k: 'renew', icon: 'RN', title: 'Raw material supply – rubber compounds', meta: 'DAFA A/S · Purchasing · auto-renews 12 months', pill: 'Notice in 23 days', p: red, action: 'Decide' },
+      { k: 'approve', icon: 'AP', title: 'ERP software subscription', meta: 'DAFA Group A/S · IT · Legal approving in parallel', pill: 'Your approval', p: blue, action: 'Review' },
+      { k: 'renew', icon: 'RN', title: 'Freight framework – Nordics', meta: 'DAFA A/S · Logistics', pill: 'Notice in 59 days', p: amber, action: 'Decide' },
+      { k: 'oblig', icon: 'OB', title: 'Annual price adjustment – freight', meta: 'Obligation · due 1 Jan 2027', pill: 'Due in 40 days', p: amber, action: 'Mark done' },
+      { k: 'oblig', icon: 'DA', title: '3 contracts missing a notice period', meta: 'DAFA Building Solutions A/S', pill: 'Missing data', p: gray, action: 'Complete' }
+    ];
+    var items = all.filter(function (x) { return tab === 'all' || (tab === 'renew' && x.k === 'renew') || (tab === 'approve' && x.k === 'approve'); }).map(function (x) {
+      return { isRenew: x.k === 'renew', isApprove: x.k === 'approve', isOther: x.k === 'oblig', title: x.title, meta: x.meta, pill: x.pill, pillBg: x.p[0], pillFg: x.p[1], iconBg: x.p[0], iconFg: x.p[1], action: x.action };
+    });
+    var defs = [['all', 'All'], ['renew', 'Renewals'], ['approve', 'Approvals']];
+    return {
+      items: items,
+      tabs: defs.map(function (d) { var on = d[0] === tab; return { label: d[1], on: on ? 'true' : 'false', bg: on ? '#ffffff' : 'transparent', fg: on ? '#00456c' : '#3f4a56', pick: function () { self.setState({ tab: d[0] }); } }; }),
+      bars: [
+        { m: 'Dec', n: 3, h: '60%', c: '#9b2c1f' }, { m: 'Jan', n: 5, h: '100%', c: '#00456c' }, { m: 'Feb', n: 4, h: '80%', c: '#00456c' },
+        { m: 'Mar', n: 1, h: '20%', c: '#7fa9c7' }, { m: 'Apr', n: 2, h: '40%', c: '#7fa9c7' }, { m: 'May', n: 2, h: '40%', c: '#7fa9c7' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

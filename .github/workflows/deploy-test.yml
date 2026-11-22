@@ -1,0 +1,274 @@
+name: Deploy test
+
+# Deploys the `api-publish` artifact produced by the CI workflow to the TEST site on
+# monsterasp.net using Web Deploy (MSDeploy), the method monsterasp.net documents:
+#   https://help.monsterasp.net/websites/git-deploy/github-actions
+#   https://help.monsterasp.net/websites/deploy/command-line
+# Step-by-step instructions for setting this up: docs/DEPLOY_TEST.md
+#
+# TEST DATA ONLY. The site runs with Auth:Mode=Dev (no real authentication).
+#
+# Note: GitHub only starts `workflow_run` and shows the "Run workflow" button for workflow
+# files that exist on the default branch (main).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ci_run_id:
+        description: 'CI run ID to deploy (leave empty for the latest successful CI run on the selected branch)'
+        required: false
+        type: string
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: deploy-test
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy to monsterasp.net (test)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      WEBDEPLOY_URL: ${{ secrets.MONSTERASP_WEBDEPLOY_URL }}
+      WEBDEPLOY_SITE: ${{ secrets.MONSTERASP_WEBDEPLOY_SITE }}
+      WEBDEPLOY_USERNAME: ${{ secrets.MONSTERASP_WEBDEPLOY_USERNAME }}
+      WEBDEPLOY_PASSWORD: ${{ secrets.MONSTERASP_WEBDEPLOY_PASSWORD }}
+      DB_CONNECTION_STRING: ${{ secrets.MONSTERASP_DB_CONNECTION_STRING }}
+      SITE_URL: ${{ vars.MONSTERASP_SITE_URL }}
+      # monsterasp.net's documented msdeploy command uses -allowUntrusted. Set the repository
+      # variable MONSTERASP_ALLOW_UNTRUSTED_CERT to 'false' to require a trusted certificate.
+      ALLOW_UNTRUSTED_CERT: ${{ vars.MONSTERASP_ALLOW_UNTRUSTED_CERT || 'true' }}
+    steps:
+      - name: Check deployment secrets
+        id: secrets
+        shell: pwsh
+        run: |
+          $required = [ordered]@{
+            MONSTERASP_WEBDEPLOY_URL        = $env:WEBDEPLOY_URL
+            MONSTERASP_WEBDEPLOY_SITE       = $env:WEBDEPLOY_SITE
+            MONSTERASP_WEBDEPLOY_USERNAME   = $env:WEBDEPLOY_USERNAME
+            MONSTERASP_WEBDEPLOY_PASSWORD   = $env:WEBDEPLOY_PASSWORD
+            MONSTERASP_DB_CONNECTION_STRING = $env:DB_CONNECTION_STRING
+          }
+          $missing = @($required.Keys | Where-Object { [string]::IsNullOrWhiteSpace($required[$_]) })
+          if ($missing.Count -gt 0) {
+            $list = $missing -join ', '
+            Write-Host "::notice title=Deploy skipped::Repository secrets not set: $list. Nothing was deployed. See docs/DEPLOY_TEST.md."
+            @(
+              '## Deploy skipped'
+              ''
+              'Nothing was deployed because these repository secrets are not set:'
+              ''
+              ($missing | ForEach-Object { "- ``$_``" })
+              ''
+              'Add them under **Settings > Secrets and variables > Actions > New repository secret**, then run this workflow again. Step-by-step guide: `docs/DEPLOY_TEST.md`.'
+            ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            "configured=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            Write-Host "All deployment secrets are present."
+            "configured=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+
+      - name: Find the CI run to deploy
+        id: run
+        if: steps.secrets.outputs.configured == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+          TRIGGER_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_RUN_ID: ${{ inputs.ci_run_id }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:EVENT_NAME -eq 'workflow_run') {
+            $runId = $env:TRIGGER_RUN_ID
+            $sha = $env:TRIGGER_SHA
+          } elseif (-not [string]::IsNullOrWhiteSpace($env:INPUT_RUN_ID)) {
+            if ($env:INPUT_RUN_ID -notmatch '^\d+$') { throw "ci_run_id must be a number." }
+            $runId = $env:INPUT_RUN_ID
+            $sha = gh run view $runId --repo $env:GITHUB_REPOSITORY --json headSha --jq '.headSha'
+          } else {
+            $json = gh run list --repo $env:GITHUB_REPOSITORY --workflow ci.yml --branch $env:BRANCH `
+              --status success --limit 1 --json databaseId,headSha
+            $runs = @($json | ConvertFrom-Json)
+            if ($runs.Count -eq 0) {
+              throw "No successful CI run found on branch '$($env:BRANCH)'. Wait for CI to pass, or pass ci_run_id."
+            }
+            $runId = $runs[0].databaseId
+            $sha = $runs[0].headSha
+          }
+          if ([string]::IsNullOrWhiteSpace("$runId")) { throw "Could not determine which CI run to deploy." }
+          Write-Host "Deploying CI run $runId (commit $sha)."
+          "id=$runId" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Download published app
+        if: steps.secrets.outputs.configured == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: api-publish
+          path: publish
+          run-id: ${{ steps.run.outputs.id }}
+          github-token: ${{ github.token }}
+
+      # Test-mode settings. ASP.NET Core under IIS runs as "Production" unless told otherwise,
+      # so appsettings.Production.json is loaded on top of appsettings.json. The file is created
+      # here (never committed) so the connection string only exists in GitHub secrets and on the host.
+      # Environment variables set in the monsterasp.net control panel still override this file.
+      - name: Write test-mode appsettings.Production.json
+        if: steps.secrets.outputs.configured == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = Join-Path 'publish' 'appsettings.Production.json'
+
+          function Merge-Hashtable([hashtable]$target, [hashtable]$source) {
+            foreach ($key in $source.Keys) {
+              if ($target.ContainsKey($key) -and $target[$key] -is [hashtable] -and $source[$key] -is [hashtable]) {
+                Merge-Hashtable $target[$key] $source[$key]
+              } else {
+                $target[$key] = $source[$key]
+              }
+            }
+          }
+
+          $settings = @{}
+          if (Test-Path $path) {
+            $existing = Get-Content $path -Raw | ConvertFrom-Json -AsHashtable
+            if ($existing -is [hashtable]) { $settings = $existing }
+          }
+
+          # The connection string is written under the common key names so the deploy does not
+          # depend on which one the API reads (see the backend section of docs/STATUS.md).
+          $overrides = @{
+            Auth              = @{ Mode = 'Dev' }
+            Database          = @{ Provider = 'SqlServer'; ConnectionString = $env:DB_CONNECTION_STRING }
+            ConnectionStrings = @{ Default = $env:DB_CONNECTION_STRING; DefaultConnection = $env:DB_CONNECTION_STRING }
+            Storage           = @{ Mode = 'Local' }
+            Ai                = @{ Mode = 'Heuristic' }
+            Suppliers         = @{ Mode = 'Seed' }
+            Notifications     = @{ Mode = 'Outbox' }
+            Seed              = @{ DemoData = $true }
+          }
+          Merge-Hashtable $settings $overrides
+
+          $settings | ConvertTo-Json -Depth 20 | Set-Content -Path $path -Encoding utf8NoBOM
+          Write-Host "Wrote $path (keys: $(($settings.Keys | Sort-Object) -join ', '))."
+
+      - name: Locate Web Deploy (msdeploy.exe)
+        if: steps.secrets.outputs.configured == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidates = @(
+            "$env:ProgramFiles\IIS\Microsoft Web Deploy V3\msdeploy.exe",
+            "${env:ProgramFiles(x86)}\IIS\Microsoft Web Deploy V3\msdeploy.exe"
+          )
+          $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) {
+            Write-Host "msdeploy.exe not found on the runner; installing Web Deploy with Chocolatey."
+            choco install webdeploy --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Could not install Web Deploy (choco exit code $LASTEXITCODE)." }
+            $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $exe) { throw "msdeploy.exe not found after installation." }
+          Write-Host "Using $exe"
+
+          # Accept either the server address (https://siteXXXX.siteasp.net:8172) or the full endpoint.
+          $url = $env:WEBDEPLOY_URL.Trim()
+          if ($url -notmatch '^https?://') { $url = "https://$url" }
+          if ($url -notmatch 'msdeploy\.axd') {
+            $url = "$($url.TrimEnd('/'))/msdeploy.axd?site=$($env:WEBDEPLOY_SITE.Trim())"
+          }
+          Write-Host "::add-mask::$url"
+
+          $untrusted = if ($env:ALLOW_UNTRUSTED_CERT -eq 'false') { '' } else { '-allowUntrusted' }
+
+          "MSDEPLOY_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "MSDEPLOY_URL=$url" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "MSDEPLOY_UNTRUSTED=$untrusted" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "MSDEPLOY_SOURCE=$((Resolve-Path 'publish').Path)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # Same arguments as monsterasp.net's documented command, plus:
+      #  -enableRule:AppOffline  takes the app offline during the sync so files are not locked;
+      #  -skip ... App_Data      keeps files uploaded on the test site (Storage:Mode=Local) across deploys;
+      #  -retryAttempts          rides out short network errors.
+      # Run with cmd (as in the vendor's .bat example) because msdeploy's quoting is unreliable from PowerShell.
+      - name: Deploy with Web Deploy
+        if: steps.secrets.outputs.configured == 'true'
+        shell: cmd
+        run: >-
+          "%MSDEPLOY_EXE%"
+          -verb:sync
+          -source:contentPath="%MSDEPLOY_SOURCE%"
+          -dest:contentPath="%WEBDEPLOY_SITE%",computerName="%MSDEPLOY_URL%",userName="%WEBDEPLOY_USERNAME%",password="%WEBDEPLOY_PASSWORD%",authtype="Basic",includeAcls="False"
+          %MSDEPLOY_UNTRUSTED%
+          -disableLink:AppPoolExtension
+          -disableLink:ContentExtension
+          -disableLink:CertificateExtension
+          -enableRule:AppOffline
+          -skip:objectName=dirPath,absolutePath="\\App_Data$"
+          -skip:objectName=filePath,absolutePath="\\App_Data\\.*"
+          -retryAttempts:3
+          -retryInterval:5000
+
+      - name: Verify /healthz
+        if: steps.secrets.outputs.configured == 'true'
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SITE_URL)) {
+            Write-Host "::notice title=Health check skipped::Repository variable MONSTERASP_SITE_URL is not set. Open <your site address>/healthz in a browser to verify."
+            exit 0
+          }
+          $base = $env:SITE_URL.Trim().TrimEnd('/')
+          if ($base -notmatch '^https?://') { $base = "http://$base" }
+          $url = "$base/healthz"
+          $ok = $false
+          $last = ''
+          # First start creates the database and seeds demo data, so allow a few minutes.
+          for ($i = 1; $i -le 18; $i++) {
+            try {
+              $response = Invoke-WebRequest -Uri $url -TimeoutSec 60 -SkipHttpErrorCheck
+              $last = "HTTP $($response.StatusCode)"
+              if ($response.StatusCode -eq 200) { $ok = $true; break }
+            } catch {
+              $last = $_.Exception.Message
+            }
+            Write-Host "Attempt ${i}: $last - retrying in 10 s"
+            Start-Sleep -Seconds 10
+          }
+          if (-not $ok) {
+            Write-Host "::error title=Health check failed::$url did not return HTTP 200 (last result: $last). Check Logs for the website in the monsterasp.net control panel."
+            exit 1
+          }
+          Write-Host "$url returned HTTP 200."
+
+      - name: Deployment summary
+        if: steps.secrets.outputs.configured == 'true' && success()
+        shell: pwsh
+        env:
+          CI_RUN_ID: ${{ steps.run.outputs.id }}
+          CI_SHA: ${{ steps.run.outputs.sha }}
+        run: |
+          @(
+            '## Deployed to the monsterasp.net test site'
+            ''
+            "- CI run: ``$($env:CI_RUN_ID)``"
+            "- Commit: ``$($env:CI_SHA)``"
+            '- Mode: `Auth:Mode=Dev`, `Database:Provider=SqlServer`, `Seed:DemoData=true`'
+            ''
+            '**Test data only.** Dev sign-in has no real authentication - never upload real contracts to this site.'
+          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
