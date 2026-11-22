@@ -5,6 +5,7 @@ import { ApiError, type Api } from '../api/api';
 import { createMockApi } from '../api/mock/mockApi';
 import { USER } from '../api/mock/seed';
 import { browser, readAccessCode, storeAccessCode } from '../app/signin';
+import { openPicker, pick } from '../test/pickers';
 import { renderApp, renderWith, TODAY } from '../test/renderApp';
 
 const ERP = 'ERP software subscription';
@@ -62,13 +63,13 @@ describe('Approvals', () => {
     const api = renderApp('/approvals');
     await user.click(await screen.findByRole('button', { name: 'Delegate' }));
     const picker = screen.getByLabelText('Delegate to');
-    const names = within(picker).getAllByRole('option').map((o) => o.textContent);
+    const names = await openPicker(user, picker);
     expect(names).toContain('Karen Lindberg');
     expect(names).not.toContain('Rasmus Holm'); // yourself
     expect(names).not.toContain('Søren Dahl'); // owner of the contract
     expect(names).not.toContain('Emma Nygaard'); // reader
     expect(screen.getByRole('button', { name: 'Delegate step' })).toBeDisabled();
-    await user.selectOptions(picker, 'Karen Lindberg');
+    await pick(user, picker, 'Karen Lindberg');
     await user.click(screen.getByRole('button', { name: 'Delegate step' }));
     expect(await screen.findByText('Approval step delegated')).toBeInTheDocument();
     expect(rasStep(api).status).toBe('Delegated');
@@ -199,7 +200,7 @@ describe('Settings', () => {
     await user.selectOptions(within(dialog).getByLabelText('Stage 1, approver 1: role'), 'Legal');
     await user.click(within(dialog).getByRole('button', { name: 'Add stage' }));
     await user.selectOptions(within(dialog).getByLabelText('Stage 2, approver 1: kind'), 'Specific person');
-    await user.selectOptions(within(dialog).getByLabelText('Stage 2, approver 1: person'), 'Karen Lindberg');
+    await pick(user, within(dialog).getByLabelText('Stage 2, approver 1: person'), 'Karen Lindberg');
     await user.click(within(dialog).getByRole('button', { name: 'Add rule' }));
 
     expect(await screen.findByText('Added rule "NDA fast track"')).toBeInTheDocument();

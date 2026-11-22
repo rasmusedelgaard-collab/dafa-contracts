@@ -1,9 +1,14 @@
-import { useEffect, useId, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { listDays, qk, useApi, useAppConfig, useLookups, useReminderSettings } from '../app/context';
+import { useId, type ReactNode } from 'react';
+import { listDays, useAppConfig, useLookups, useReminderSettings } from '../app/context';
 import { fieldsForType, rulesForType } from '../lib/customFields';
 import { CustomFieldInput, TagPicker } from './CustomFields';
-import { Button, Field, Pill, Segmented, Select, Textarea, TextInput } from '../components';
+import { CounterpartyPicker, PersonPicker } from './Pickers';
+import type { LookupUser } from '../api/types';
+import { Button, Field, NumberInput, Pill, Segmented, Select, Textarea, TextInput } from '../components';
+import { canonicalAmount } from '../lib/displayFormat';
+
+/** Older drafts and AI suggestions may hold "1,250,000": keep digits and the "." decimal. */
+const toCanonical = (text: string) => (/^-?\d*(\.\d*)?$/.test(text) ? text : canonicalAmount(text.replace(/,/g, ''), 2, 'en-US'));
 import type { ContractDraft, DraftErrors, DraftField } from '../lib/validation';
 
 export interface SuggestionState {
@@ -30,6 +35,11 @@ export interface ContractFormProps {
   applyTypeDefaults?: boolean;
   /** Show the tag picker (New contract and Edit details when the user may tag). */
   showTags?: boolean;
+  /**
+   * Edit details on an older or imported contract that has no master counterparty: the name the
+   * contract keeps until a counterparty is picked from the list.
+   */
+  storedCounterparty?: string | null;
 }
 
 const YES_NO = [
@@ -38,20 +48,10 @@ const YES_NO = [
 ];
 const toYesNo = (v: boolean | null) => (v === null ? null : v ? 'yes' : 'no');
 
-function useDebounced<T>(value: T, ms: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = window.setTimeout(() => setDebounced(value), ms);
-    return () => window.clearTimeout(t);
-  }, [value, ms]);
-  return debounced;
-}
-
 /** The contract details form, shared by New contract (step 2) and Edit details. */
-export function ContractForm({ draft, errors, onPatch, suggestions, flat, lockedFields, applyTypeDefaults, showTags }: ContractFormProps) {
+export function ContractForm({ draft, errors, onPatch, suggestions, flat, lockedFields, applyTypeDefaults, showTags, storedCounterparty }: ContractFormProps) {
   const onChange = <K extends DraftField>(field: K, value: ContractDraft[K]) => onPatch({ [field]: value } as Partial<ContractDraft>);
   const locked = (field: string) => lockedFields?.includes(field) ?? false;
-  const api = useApi();
   const reminderSettings = useReminderSettings();
   const lookups = useLookups();
   const config = useAppConfig();
@@ -59,13 +59,8 @@ export function ContractForm({ draft, errors, onPatch, suggestions, flat, locked
   /** A field the contract type makes required (Settings > Field rules) is not marked optional. */
   const ruleRequired = (field: string) => (typeRules?.required as string[] | undefined)?.includes(field) ?? false;
   const extraFields = fieldsForType(config.customFields, draft.typeId);
-  const listId = useId();
   const groupId = useId();
 
-  const supplierQuery = useDebounced(draft.counterpartyName.trim(), 200);
-  const suppliers = useQuery({ queryKey: qk.suppliers(supplierQuery), queryFn: () => api.getSuppliers(supplierQuery), staleTime: 60_000 });
-
-  const users = lookups.users.filter((u) => u.isActive !== false || [draft.ownerId, draft.delegateId, draft.responsibleId].includes(u.id)).map((u) => ({ value: u.id, label: u.name }));
   const refs = (list: { id: string; name: string }[]) => list.map((x) => ({ value: x.id, label: x.name }));
 
   /** Label tag and accept button for a field that carries an AI suggestion. */
@@ -105,11 +100,17 @@ export function ContractForm({ draft, errors, onPatch, suggestions, flat, locked
     return { suggested: false };
   };
 
-  const text = (field: 'title' | 'noticePeriodDays' | 'renewalMonths' | 'annualValue' | 'totalValue' | 'paymentTerms' | 'priceAdjustment' | 'governingLaw' | 'liabilityCap' | 'exclusivity', label: string, opts: { optional?: boolean; hint?: string; numeric?: boolean; full?: boolean; placeholder?: string } = {}) => {
+  const text = (field: 'title' | 'noticePeriodDays' | 'renewalMonths' | 'annualValue' | 'totalValue' | 'paymentTerms' | 'priceAdjustment' | 'governingLaw' | 'liabilityCap' | 'exclusivity', label: string, opts: { optional?: boolean; hint?: string; numeric?: boolean; amount?: boolean; full?: boolean; placeholder?: string } = {}) => {
     const s = ai(field, label);
     return (
       <Field label={label} optional={opts.optional && !ruleRequired(field)} error={errors[field]} hint={opts.hint} tag={s.tag} after={s.after} className={opts.full ? 'form-grid__full' : undefined}>
-        {(p) => <TextInput {...p} suggested={s.suggested} disabled={locked(field)} inputMode={opts.numeric ? 'decimal' : undefined} placeholder={opts.placeholder} value={draft[field]} onChange={(e) => onChange(field, e.target.value)} />}
+        {(p) =>
+          opts.amount ? (
+            <NumberInput {...p} suggested={s.suggested} disabled={locked(field)} placeholder={opts.placeholder} value={toCanonical(draft[field])} onValueChange={(v) => onChange(field, v)} />
+          ) : (
+            <TextInput {...p} suggested={s.suggested} disabled={locked(field)} inputMode={opts.numeric ? 'decimal' : undefined} placeholder={opts.placeholder} value={draft[field]} onChange={(e) => onChange(field, e.target.value)} />
+          )
+        }
       </Field>
     );
   };
@@ -119,6 +120,16 @@ export function ContractForm({ draft, errors, onPatch, suggestions, flat, locked
     return (
       <Field label={label} optional={opts.optional && !ruleRequired(field)} error={errors[field]} tag={s.tag} after={s.after}>
         {(p) => <Select {...p} suggested={s.suggested} disabled={locked(field)} value={draft[field]} onChange={(e) => onChange(field, e.target.value)} options={options} placeholder={opts.placeholder ?? (opts.optional ? 'None' : 'Choose')} />}
+      </Field>
+    );
+  };
+
+  /** Person type-ahead (owner item C): type part of a name and click a match. */
+  const person = (field: 'ownerId' | 'delegateId' | 'responsibleId', label: string, opts: { optional?: boolean; filter?: (u: LookupUser) => boolean } = {}) => {
+    const s = ai(field, label);
+    return (
+      <Field label={label} optional={opts.optional && !ruleRequired(field)} error={errors[field]} tag={s.tag} after={s.after}>
+        {(p) => <PersonPicker {...p} suggested={s.suggested} disabled={locked(field)} value={draft[field] || null} filter={opts.filter} clearLabel={`Clear ${label.toLowerCase()}`} onChange={(id) => onChange(field, id ?? '')} />}
       </Field>
     );
   };
@@ -166,28 +177,33 @@ export function ContractForm({ draft, errors, onPatch, suggestions, flat, locked
     <div className={`form-grid${flat ? ' form-grid--flat' : ''}`}>
       <h2 className="form-section">Contract</h2>
       {text('title', 'Title', { full: true, placeholder: 'For example: Freight framework – Nordics' })}
-      <Field label="Counterparty" error={errors.counterpartyName} tag={cp.tag} after={cp.after} hint={locked('counterpartyName') ? undefined : 'Pick a supplier from the list or type a new name.'}>
+      <Field
+        label="Counterparty"
+        error={errors.counterpartyName ?? errors.supplierId}
+        tag={cp.tag}
+        after={cp.after}
+        hint={
+          !draft.supplierId && storedCounterparty
+            ? locked('counterpartyName')
+              ? `“${storedCounterparty}” is kept as it is. It is not linked to the counterparty list; an administrator can link it.`
+              : `“${storedCounterparty}” is not linked to the counterparty list. Pick it from the list${config.canCreateCounterparty ? ' or create it' : ''}, or leave this as it is to keep the name.`
+            : locked('counterpartyName')
+              ? undefined
+              : !draft.supplierId && draft.counterpartyName
+                ? `“${draft.counterpartyName}” is not chosen yet: pick it from the list${config.canCreateCounterparty ? ' or create it' : ''}.`
+                : 'Type part of the name and pick the counterparty from the list.'
+        }
+      >
         {(p) => (
-          <TextInput
+          <CounterpartyPicker
             {...p}
             suggested={cp.suggested}
             disabled={locked('counterpartyName')}
-            list={listId}
-            autoComplete="off"
-            value={draft.counterpartyName}
-            onChange={(e) => {
-              const name = e.target.value;
-              const match = suppliers.data?.find((s) => s.name.toLowerCase() === name.trim().toLowerCase());
-              onPatch({ counterpartyName: name, supplierId: match?.id ?? null });
-            }}
+            value={{ supplierId: draft.supplierId, name: draft.counterpartyName }}
+            onChange={(v) => onPatch({ supplierId: v.supplierId, counterpartyName: v.name })}
           />
         )}
       </Field>
-      <datalist id={listId}>
-        {(suppliers.data ?? []).map((s) => (
-          <option key={s.id} value={s.name} />
-        ))}
-      </datalist>
       <Field label="Contract type" error={errors.typeId} tag={ai('typeId', 'Contract type').tag} after={ai('typeId', 'Contract type').after}>
         {(p) => (
           <Select
@@ -218,9 +234,9 @@ export function ContractForm({ draft, errors, onPatch, suggestions, flat, locked
       {select('departmentId', 'Department', refs(lookups.departments.filter((x) => x.isActive !== false || x.id === draft.departmentId)))}
 
       <h2 className="form-section">People</h2>
-      {select('ownerId', 'Owner', users)}
-      {select('delegateId', 'Delegate', users, { optional: true })}
-      {select('responsibleId', 'Responsible', users, { optional: true })}
+      {person('ownerId', 'Owner', { filter: (u) => !u.roles || u.roles.includes('ContractOwner') || u.roles.includes('Admin') })}
+      {person('delegateId', 'Delegate', { optional: true })}
+      {person('responsibleId', 'Responsible', { optional: true })}
       <Field label="Reminders go to" error={errors.reminderRecipient} hint={`${listDays(reminderSettings.noticeDays)} days before the notice deadline.`}>
         {(p) => (
           <Select
@@ -254,8 +270,8 @@ export function ContractForm({ draft, errors, onPatch, suggestions, flat, locked
 
       <h2 className="form-section">Value</h2>
       {select('currency', 'Currency', lookups.currencies.map((c) => ({ value: c, label: c })))}
-      {text('annualValue', 'Annual value', { numeric: true, hint: 'Annual or total value is required. Enter 0 if there is none.' })}
-      {text('totalValue', 'Total value', { numeric: true, optional: true, hint: 'Decides the approval route when filled in.' })}
+      {text('annualValue', 'Annual value', { amount: true, hint: 'Annual or total value is required. Enter 0 if there is none.' })}
+      {text('totalValue', 'Total value', { amount: true, optional: true, hint: 'Decides the approval route when filled in.' })}
       {yesNo('changeOfControl', 'Change-of-control clause', 'Can the counterparty terminate or change terms if DAFA changes owner?')}
 
       <h2 className="form-section">More terms</h2>

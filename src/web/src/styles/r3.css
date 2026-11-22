@@ -36,8 +36,8 @@
     max-width: 280px;
     padding: 6px 10px;
     border-radius: 8px;
-    background: var(--text);
-    color: #fff;
+    background: var(--inverse-bg);
+    color: var(--on-inverse);
     font-size: 12px;
     font-weight: 500;
     line-height: 1.35;
@@ -109,6 +109,22 @@
 .chip--input.chip--on input::placeholder {
   color: var(--primary);
 }
+.chip__clear {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-right: -8px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--primary);
+  cursor: pointer;
+}
+.chip__clear:hover {
+  background: var(--tint);
+}
 .check--chip {
   height: 36px;
   padding: 0 14px;
@@ -161,8 +177,8 @@
   height: 30px;
   padding: 0 6px 0 12px;
   border-radius: var(--r-pill);
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
   font-size: 13px;
   font-weight: 600;
 }
@@ -173,12 +189,12 @@
   height: 22px;
   border: 0;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.18);
-  color: #fff;
+  background: var(--on-hero-soft);
+  color: var(--on-primary);
   cursor: pointer;
 }
 .crumb button:hover {
-  background: rgba(255, 255, 255, 0.32);
+  background: var(--on-hero-strong);
 }
 
 /* ---------- Charts ---------- */
@@ -266,7 +282,7 @@ button.blist__row:hover,
 .blist__fill {
   display: block;
   height: 100%;
-  background: var(--primary);
+  background: var(--primary-fill);
   border-radius: 0 4px 4px 0;
 }
 .blist__fill--good {
@@ -287,16 +303,16 @@ button.blist__row:hover,
 
 /* Stacked month columns. Segments: urgency colours, validated for CVD separation; a 2px surface gap between them. */
 .seg-high {
-  background: #b3261e;
+  background: var(--seg-high);
 }
 .seg-medium {
-  background: #d18f00;
+  background: var(--seg-medium);
 }
 .seg-low {
-  background: #2f7bbf;
+  background: var(--seg-low);
 }
 .seg-done {
-  background: #a9b4c0;
+  background: var(--seg-done);
 }
 .chart-legend {
   display: flex;
@@ -453,7 +469,7 @@ button.blist__row:hover,
 .qcols__bar {
   width: 100%;
   max-width: 40px;
-  background: var(--primary);
+  background: var(--primary-fill);
   border-radius: 4px 4px 0 0;
 }
 .qcols__label {
@@ -547,8 +563,8 @@ button.blist__row:hover,
   color: var(--red-fg);
 }
 .tag--purple {
-  background: #efe7f7;
-  color: #5b2d86;
+  background: var(--purple-bg);
+  color: var(--purple-fg);
 }
 .tag button {
   border: 0;
@@ -651,7 +667,7 @@ a.hit__title:hover {
   margin-top: 4px;
 }
 mark {
-  background: #fff1b8;
+  background: var(--mark-bg);
   color: inherit;
   border-radius: 3px;
   padding: 0 1px;
@@ -694,7 +710,7 @@ mark {
   padding: 0 5px;
   border-radius: var(--r-pill);
   background: var(--red-fg);
-  color: #fff;
+  color: var(--on-danger);
   font-size: 12px;
   font-weight: 700;
   display: grid;
@@ -817,8 +833,8 @@ mark {
   font-weight: 500;
 }
 .list-row--hit {
-  background: #fff8db;
-  box-shadow: inset 3px 0 0 #d18f00;
+  background: var(--flash-bg);
+  box-shadow: inset 3px 0 0 var(--flash-line);
 }
 .comments {
   display: flex;
@@ -968,8 +984,8 @@ mark {
   align-items: center;
   gap: 10px 14px;
   padding: 10px 16px;
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
   border-radius: var(--r-card);
   font-size: 14px;
 }
@@ -1025,8 +1041,8 @@ mark {
 }
 .wizard-steps li[data-state='current'] .wizard-steps__n,
 .wizard-steps li[data-state='done'] .wizard-steps__n {
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
 }
 .import-drop {
   display: flex;

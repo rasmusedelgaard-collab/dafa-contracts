@@ -298,6 +298,8 @@ public class ValidationTests
         input.EntityId = world.EntityA;
         input.DepartmentId = world.Purchasing;
         input.OwnerId = world.Owner;
+        // Release 4: the counterparty is a master record chosen from the list.
+        input.SupplierId = world.DefaultSupplier;
 
         var id = await world.As(world.Owner).Commands.CreateAsync(input);
 

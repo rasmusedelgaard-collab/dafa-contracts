@@ -3,10 +3,12 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { apiMode } from '../api';
 import { accessLabel, permissions, qk, useApi, useAppConfig, useLookups, useMe, useScope } from '../app/context';
-import { Avatar, ButtonLink, Icon, Select, Skeleton, type IconName } from '../components';
+import { Avatar, ButtonLink, Icon, RouteErrorBoundary, Select, Skeleton, type IconName } from '../components';
 import { GlobalSearch } from './GlobalSearch';
 import { NotificationBell } from './NotificationBell';
 import { UserSwitcher } from './UserSwitcher';
+import { BrandMark } from './Brand';
+import { applyTheme } from '../lib/theme';
 
 interface NavItem {
   to: string;
@@ -25,6 +27,7 @@ function useNavCounts() {
 function Sidebar({ work, manage, onUser }: { work: NavItem[]; manage: NavItem[]; onUser: () => void }) {
   const me = useMe();
   const lookups = useLookups();
+  const config = useAppConfig();
   const link = (item: NavItem) => (
     <NavLink key={item.to} to={item.to} end={item.end} className="nav-link">
       <Icon name={item.icon} />
@@ -39,14 +42,8 @@ function Sidebar({ work, manage, onUser }: { work: NavItem[]; manage: NavItem[];
   );
   return (
     <nav className="sidebar" aria-label="Main">
-      <Link to="/" className="brand">
-        <span className="brand__mark" aria-hidden="true">
-          <Icon name="doc" size={18} />
-        </span>
-        <span className="stack">
-          <span className="brand__name">DAFA Contracts</span>
-          <span className="caption">Group workspace</span>
-        </span>
+      <Link to="/" className="brand" aria-label="DAFA Contracts, home">
+        <BrandMark branding={config.branding} />
       </Link>
       <span className="nav-group">Work</span>
       {work.map(link)}
@@ -68,6 +65,9 @@ function Sidebar({ work, manage, onUser }: { work: NavItem[]; manage: NavItem[];
   );
 }
 
+/** Top-bar scope value while a link or saved view names several legal entities. */
+const SEVERAL = '\u0000several';
+
 function TopBar({ onUser }: { onUser: () => void }) {
   const me = useMe();
   const lookups = useLookups();
@@ -79,10 +79,10 @@ function TopBar({ onUser }: { onUser: () => void }) {
       <Select
         className="scope-select"
         aria-label="Legal entity scope"
-        value={scope.entityId}
-        onChange={(e) => scope.setEntityId(e.target.value)}
+        value={scope.entityIds.length > 1 ? SEVERAL : scope.entityId}
+        onChange={(e) => (e.target.value === SEVERAL ? undefined : scope.setEntityId(e.target.value))}
         placeholder="All entities"
-        options={lookups.entities.map((e) => ({ value: e.id, label: e.name }))}
+        options={[...(scope.entityIds.length > 1 ? [{ value: SEVERAL, label: `${scope.entityIds.length} legal entities` }] : []), ...lookups.entities.map((e) => ({ value: e.id, label: e.name }))]}
       />
       <NotificationBell />
       {/* Pages add their own actions here, beside "New contract" (the register's Export). */}
@@ -126,6 +126,7 @@ const STARTED = 'dafa.started';
  */
 function useStartPreferences() {
   const config = useAppConfig();
+  const me = useMe();
   const scope = useScope();
   const navigate = useNavigate();
   const location = useLocation();
@@ -141,13 +142,49 @@ function useStartPreferences() {
       /* storage unavailable */
     }
     if (started) return;
-    if (config.defaultEntityId && !scope.entityId) scope.setEntityId(config.defaultEntityId);
-    if (location.pathname === '/' && config.landingPage !== 'home') navigate(`/${config.landingPage}`, { replace: true });
-  }, [config.loaded, config.defaultEntityId, config.landingPage, scope, navigate, location.pathname]);
+    // The scope lives only in the URL, so the landing page navigation must carry it itself.
+    // Order: the link's own scope, else the user's last scope on this device, else their default.
+    const stored = readStoredScope(me.id);
+    const entity = scope.entityIds.length > 0 ? null : stored !== null ? stored || null : config.defaultEntityId || null;
+    if (location.pathname === '/' && config.landingPage !== 'home') navigate(`/${config.landingPage}${entity ? `?entity=${encodeURIComponent(entity)}` : location.search}`, { replace: true });
+    else if (entity) scope.setEntityId(entity);
+  }, [config.loaded, config.defaultEntityId, config.landingPage, scope, navigate, location.pathname, location.search, me.id]);
+
+  // Remember the scope per user on this device (restored at the next session start).
+  const current = scope.entityIds.length === 1 ? (scope.entityIds[0] ?? '') : '';
+  useEffect(() => {
+    if (!done.current) return;
+    try {
+      localStorage.setItem(`${SCOPE_KEY}.${me.id}`, current);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [current, me.id]);
+}
+
+const SCOPE_KEY = 'dafa.scope';
+/** The user's last scope on this device: an id, '' (explicitly all entities) or null (never set). */
+function readStoredScope(userId: string): string | null {
+  try {
+    return localStorage.getItem(`${SCOPE_KEY}.${userId}`);
+  } catch {
+    return null;
+  }
+}
+
+/** Item I: the signed-in user's theme from `me/preferences` (localStorage only bridges the first paint). */
+function useUserTheme() {
+  const api = useApi();
+  const prefs = useQuery({ queryKey: qk.preferences, queryFn: () => api.getPreferences(), staleTime: 5 * 60_000, retry: false });
+  const theme = prefs.data?.theme;
+  useEffect(() => {
+    if (theme) applyTheme(theme);
+  }, [theme]);
 }
 
 /** Sidebar + top bar + routed page; the sidebar becomes a bottom tab bar under 720px. */
 export function AppShell() {
+  useUserTheme();
   const me = useMe();
   const perms = permissions(me);
   const counts = useNavCounts();
@@ -198,7 +235,9 @@ export function AppShell() {
               </div>
             }
           >
-            <Outlet context={{ openUser: () => setSwitching(true) }} />
+            <RouteErrorBoundary key={location.pathname}>
+              <Outlet context={{ openUser: () => setSwitching(true) }} />
+            </RouteErrorBoundary>
           </Suspense>
         </main>
       </div>

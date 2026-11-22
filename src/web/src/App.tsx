@@ -1,28 +1,30 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Route, Routes } from 'react-router-dom';
 import { ApiError } from './api/api';
 import type { DevConfig } from './api/types';
 import { qk, ScopeProvider, SessionProvider, useApi, useLookupsQuery, useMeQuery, useSessionActions } from './app/context';
 import { browser, currentPath, entraLoginUrl, isSignedOut, markSignedOut, readAccessCode, redirectedRecently, storeAccessCode } from './app/signin';
-import { isThrottled, THROTTLED_MESSAGE } from './lib/errors';
-import { Avatar, Button, Card, ErrorState, Field, Icon, Skeleton, SkeletonRows, TextInput, useToast } from './components';
+import { isThrottled, NO_ACCESS_MESSAGE, THROTTLED_MESSAGE } from './lib/errors';
+import { lazyPage } from './lib/lazyPage';
+import { Avatar, Button, Card, ErrorState, Field, Icon, RouteErrorBoundary, Skeleton, SkeletonRows, TextInput, useToast } from './components';
 import { Home } from './pages/Home';
 import { NotFound } from './pages/NotFound';
 import { Register } from './pages/Register';
 import { AppShell } from './shell/AppShell';
+import { BrandMark, useBranding } from './shell/Brand';
 
 // Split by route: Home and the register load with the shell, everything else on demand.
-const Record = lazy(() => import('./pages/record/Record').then((m) => ({ default: m.Record })));
-const NewContract = lazy(() => import('./pages/newcontract/NewContract').then((m) => ({ default: m.NewContract })));
-const Approvals = lazy(() => import('./pages/Approvals').then((m) => ({ default: m.Approvals })));
-const Renewals = lazy(() => import('./pages/renewals/Renewals').then((m) => ({ default: m.Renewals })));
-const Overview = lazy(() => import('./pages/overview/Overview').then((m) => ({ default: m.Overview })));
-const Search = lazy(() => import('./pages/search/Search').then((m) => ({ default: m.Search })));
-const PersonPage = lazy(() => import('./pages/search/People').then((m) => ({ default: m.PersonPage })));
-const CounterpartyPage = lazy(() => import('./pages/search/People').then((m) => ({ default: m.CounterpartyPage })));
-const Preferences = lazy(() => import('./pages/Preferences').then((m) => ({ default: m.Preferences })));
-const Settings = lazy(() => import('./pages/settings/Settings').then((m) => ({ default: m.Settings })));
+const Record = lazyPage(() => import('./pages/record/Record').then((m) => m.Record));
+const NewContract = lazyPage(() => import('./pages/newcontract/NewContract').then((m) => m.NewContract));
+const Approvals = lazyPage(() => import('./pages/Approvals').then((m) => m.Approvals));
+const Renewals = lazyPage(() => import('./pages/renewals/Renewals').then((m) => m.Renewals));
+const Overview = lazyPage(() => import('./pages/overview/Overview').then((m) => m.Overview));
+const Search = lazyPage(() => import('./pages/search/Search').then((m) => m.Search));
+const PersonPage = lazyPage(() => import('./pages/search/People').then((m) => m.PersonPage));
+const CounterpartyPage = lazyPage(() => import('./pages/search/People').then((m) => m.CounterpartyPage));
+const Preferences = lazyPage(() => import('./pages/Preferences').then((m) => m.Preferences));
+const Settings = lazyPage(() => import('./pages/settings/Settings').then((m) => m.Settings));
 
 function Splash() {
   return (
@@ -38,17 +40,12 @@ function Splash() {
 }
 
 function SignInCard({ title, children }: { title: string; children: ReactNode }) {
+  const branding = useBranding();
   return (
     <div className="center-page">
       <Card className="center-card">
         <div className="brand" style={{ padding: 0 }}>
-          <span className="brand__mark" aria-hidden="true">
-            <Icon name="doc" size={18} />
-          </span>
-          <span className="stack">
-            <span className="brand__name">DAFA Contracts</span>
-            <span className="caption">Group workspace</span>
-          </span>
+          <BrandMark branding={branding} />
         </div>
         <h1 className="h2">{title}</h1>
         {children}
@@ -225,6 +222,20 @@ function DevSignIn({ config }: { config: DevConfig }) {
   );
 }
 
+/** Entra mode: the person is signed in with a DAFA account that has no (active) user in the app. */
+function NoAccess({ onRetry }: { onRetry: () => void }) {
+  return (
+    <SignInCard title="No access">
+      <p className="secondary" role="alert">
+        {NO_ACCESS_MESSAGE}
+      </p>
+      <Button variant="secondary" block onClick={onRetry}>
+        Try again
+      </Button>
+    </SignInCard>
+  );
+}
+
 function StartError({ text, onRetry }: { text: string; onRetry: () => void }) {
   return (
     <div className="center-page">
@@ -250,6 +261,13 @@ export function App() {
       const mode: DevConfig = config.data ?? { authMode: 'Dev', accessCodeRequired: false };
       return mode.authMode === 'Entra' ? <EntraSignIn /> : <DevSignIn config={mode} />;
     }
+    // Review finding M6: signed in, but the account is unknown to the app or deactivated.
+    if (me.error instanceof ApiError && me.error.status === 403) {
+      if (config.isLoading) return <Splash />;
+      // Dev mode: the demo user was deactivated; another one can be chosen.
+      if (config.data?.authMode !== 'Entra') return <DevSignIn config={config.data ?? { authMode: 'Dev', accessCodeRequired: false }} />;
+      return <NoAccess onRetry={() => void me.refetch()} />;
+    }
     return <StartError text="The server did not answer. Check your connection and try again." onRetry={() => void me.refetch()} />;
   }
   if (lookups.isError) return <StartError text="The reference data could not be loaded." onRetry={() => void lookups.refetch()} />;
@@ -260,6 +278,7 @@ export function App() {
     <SessionProvider key={me.data.id} me={me.data} lookups={lookups.data}>
       <ScopeProvider>
         <Suspense fallback={<Splash />}>
+          <RouteErrorBoundary>
           <Routes>
             <Route path="/contracts/new" element={<NewContract />} />
             <Route element={<AppShell />}>
@@ -278,6 +297,7 @@ export function App() {
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>
+          </RouteErrorBoundary>
         </Suspense>
       </ScopeProvider>
     </SessionProvider>

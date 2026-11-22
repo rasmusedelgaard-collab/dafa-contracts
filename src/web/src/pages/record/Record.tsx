@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { apiMode } from '../../api';
 import { ApiError } from '../../api/api';
-import { qk, useApi, useAppConfig, useInvalidateContracts, useMe } from '../../app/context';
+import { permissions, qk, useApi, useInvalidateContracts, useMe } from '../../app/context';
 import type { ContractDetail, ContractReminder, Obligation, RenewalDecision } from '../../api/types';
 import { Avatar, Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Icon, Pill, Segmented, Skeleton, StatusPill, useToast } from '../../components';
 import { ApprovalRoute, DecisionForm, Deviations } from '../../features/Approval';
@@ -13,6 +13,9 @@ import { fileExtension, formatFileSize, formatMoney, saveBlob } from '../../lib/
 import { EditDetailsDialog, LinkDialog, ObligationDialog, SignDialog, SubmitDialog, UploadDialog } from './dialogs';
 import { AdditionalDetails, CommentsTab, CompareDialog, TagsCard, WatchButton } from './collab';
 import { PersonLink } from '../../features/columns';
+import { useFileError } from '../../features/fileErrors';
+import { SendForSignatureDialog, SignatureAction, SignatureCard } from '../../features/Signature';
+import { canRecordManualSignature } from '../../lib/signature';
 
 type Tab = 'overview' | 'obligations' | 'approvals' | 'comments' | 'activity';
 const TABS: { value: Tab; label: string }[] = [
@@ -27,6 +30,7 @@ type Dialog =
   | { kind: 'renewal'; initial?: RenewalDecision }
   | { kind: 'edit' }
   | { kind: 'sign' }
+  | { kind: 'esign' }
   | { kind: 'submit' }
   | { kind: 'upload' }
   | { kind: 'link' }
@@ -84,12 +88,12 @@ function Ring({ days, window: span }: { days: number; window: number }) {
   const shown = Math.abs(days);
   return (
     <svg role="img" aria-label={days >= 0 ? `${days} days left of the ${span}-day reminder window` : `${shown} days past the notice deadline`} width="88" height="88" viewBox="0 0 120 120" style={{ flex: '0 0 auto' }}>
-      <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="10" />
-      {fraction > 0 ? <circle cx="60" cy="60" r="50" fill="none" stroke="#ffffff" strokeWidth="10" strokeLinecap="round" strokeDasharray={`${fraction * circumference} ${circumference}`} transform="rotate(-90 60 60)" /> : null}
-      <text x="60" y="62" textAnchor="middle" fontSize={shown > 999 ? 26 : 34} fontWeight="700" fill="#ffffff">
+      <circle cx="60" cy="60" r="50" fill="none" style={{ stroke: 'var(--on-hero-soft)' }} strokeWidth="10" />
+      {fraction > 0 ? <circle cx="60" cy="60" r="50" fill="none" strokeWidth="10" strokeLinecap="round" style={{ stroke: 'var(--on-hero)' }} strokeDasharray={`${fraction * circumference} ${circumference}`} transform="rotate(-90 60 60)" /> : null}
+      <text x="60" y="62" textAnchor="middle" fontSize={shown > 999 ? 26 : 34} fontWeight="700" style={{ fill: 'var(--on-hero)' }}>
         {shown}
       </text>
-      <text x="60" y="82" textAnchor="middle" fontSize="12" fill="#ffffff">
+      <text x="60" y="82" textAnchor="middle" fontSize="12" style={{ fill: 'var(--on-hero)' }}>
         {days >= 0 ? 'days left' : 'days over'}
       </text>
     </svg>
@@ -97,6 +101,7 @@ function Ring({ days, window: span }: { days: number; window: number }) {
 }
 
 function StatusCard({ c, open, setTab }: { c: ContractDetail; open: (d: Dialog) => void; setTab: (t: Tab) => void }) {
+  const manualSign = canRecordManualSignature(c, useMe());
   const wrap = (eyebrow: string, title: string, actions?: ReactNode, ring?: ReactNode, note?: ReactNode) => (
     <Card tone="primary" className="notice-card" aria-label="Status">
       {ring}
@@ -144,12 +149,17 @@ function StatusCard({ c, open, setTab }: { c: ContractDetail; open: (d: Dialog) 
     );
   }
   if (c.status === 'Approved') {
+    const out = c.signature?.status === 'Sent';
     return wrap(
       'Approved',
-      'Mark the contract as signed when both parties have signed',
-      c.canEdit ? (
+      out ? 'Out for signature: see the Signature card' : c.canSendForSignature ? 'Send it for signature, or record a signature made outside the app' : 'Record the signature when both parties have signed',
+      out ? undefined : c.canSendForSignature ? (
+        <Button variant="on-dark" size="md" onClick={() => open({ kind: 'esign' })}>
+          Send for signature
+        </Button>
+      ) : manualSign ? (
         <Button variant="on-dark" size="md" onClick={() => open({ kind: 'sign' })}>
-          Mark as signed
+          Record manual signature
         </Button>
       ) : undefined,
     );
@@ -255,14 +265,14 @@ function Facts({ c }: { c: ContractDetail }) {
 
 function Documents({ c, open }: { c: ContractDetail; open: (d: Dialog) => void }) {
   const api = useApi();
-  const toast = useToast();
+  const fileError = useFileError();
   // `?doc=<id>` (from search): the document is marked in the list.
   const [params] = useSearchParams();
   const highlight = params.get('doc');
   const download = useMutation({
     mutationFn: (id: string) => api.getDocumentContent(id),
     onSuccess: (file) => saveBlob(file.blob, file.fileName),
-    onError: (e) => toast.error(e, 'The document could not be downloaded. Try again.'),
+    onError: (e, id) => fileError(e, 'The document could not be downloaded. Try again.', () => download.mutate(id)),
   });
   return (
     <Card clip aria-labelledby="documents-heading">
@@ -528,6 +538,7 @@ function Overview({ c, open, setTab }: { c: ContractDetail; open: (d: Dialog) =>
           ) : null}
           <Facts c={c} />
           <AdditionalDetails c={c} onEdit={c.canEdit && c.status !== 'InApproval' ? () => open({ kind: 'edit' }) : undefined} />
+          <SignatureCard c={c} />
           <Documents c={c} open={open} />
           <div className="split" style={{ alignItems: 'stretch' }}>
             <Card pad className="stack" style={{ flex: '1 1 260px', minWidth: 0, padding: '14px 18px' }}>
@@ -684,11 +695,11 @@ function RecordSkeleton() {
 export function Record() {
   const { id = '' } = useParams();
   const api = useApi();
+  const me = useMe();
   const toast = useToast();
   const invalidate = useInvalidateContracts();
   const [params, setParams] = useSearchParams();
   const [dialog, setDialog] = useState<Dialog>(null);
-  const config = useAppConfig();
 
   const tabParam = params.get('tab');
   const tab: Tab = TABS.some((t) => t.value === tabParam) ? (tabParam as Tab) : 'overview';
@@ -754,12 +765,9 @@ export function Record() {
         </div>
         <div className="row-flex record-actions" style={{ gap: 10 }}>
           <WatchButton c={c} />
-          {config.features.eSign && c.status === 'Approved' && c.canEdit ? (
-            <Button variant="secondary" disabled title="No e-signature provider is connected yet">
-              Send for e-signature
-            </Button>
-          ) : null}
-          {c.storeUrl ? (
+          <SignatureAction c={c} onOpen={() => setDialog({ kind: 'esign' })} />
+          {/* The app is the only door to storage: only administrators get the direct SharePoint link. */}
+          {c.storeUrl && permissions(me).canSeeSettings ? (
             <a className="btn btn--secondary" href={c.storeUrl} target="_blank" rel="noreferrer">
               Open in SharePoint
             </a>
@@ -771,8 +779,10 @@ export function Record() {
           ) : null}
           {c.status === 'Draft' && c.canEdit ? (
             <Button onClick={() => setDialog({ kind: 'submit' })}>Submit for approval</Button>
-          ) : c.status === 'Approved' && c.canEdit ? (
-            <Button onClick={() => setDialog({ kind: 'sign' })}>Mark as signed</Button>
+          ) : c.status === 'Approved' && canRecordManualSignature(c, me) && c.signature?.status !== 'Sent' ? (
+            <Button variant={c.canSendForSignature ? 'secondary' : 'primary'} onClick={() => setDialog({ kind: 'sign' })}>
+              Record manual signature
+            </Button>
           ) : c.canDecideRenewal && c.endDate === null && c.renewalDecision === null ? (
             <Button variant="secondary" onClick={() => setDialog({ kind: 'renewal', initial: 'GiveNotice' })}>
               Give notice
@@ -800,6 +810,7 @@ export function Record() {
       {dialog?.kind === 'edit' ? <EditDetailsDialog contract={c} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'submit' ? <SubmitDialog contract={c} submitting={submit.isPending} onSubmit={() => submit.mutate()} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'sign' ? <SignDialog contract={c} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === 'esign' ? <SendForSignatureDialog c={c} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'upload' ? <UploadDialog contract={c} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'link' ? <LinkDialog contract={c} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'compare' ? <CompareDialog c={c} onClose={() => setDialog(null)} /> : null}

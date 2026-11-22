@@ -8,8 +8,8 @@
   padding: 0 20px;
   border: 0;
   border-radius: var(--r-control);
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
   font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
@@ -17,7 +17,7 @@
   flex: 0 0 auto;
 }
 .btn:hover {
-  color: #fff;
+  color: var(--on-primary);
 }
 .btn--md {
   height: 38px;
@@ -59,23 +59,23 @@
 .btn--danger {
   background: var(--surface);
   color: var(--red-fg);
-  border: 1px solid #e6b8b1;
+  border: 1px solid var(--danger-border);
 }
 .btn--danger:hover {
   color: var(--red-fg);
 }
 .btn--on-dark {
-  background: #fff;
-  color: var(--primary);
+  background: var(--hero-btn-bg);
+  color: var(--hero-btn-fg);
   font-weight: 700;
 }
 .btn--on-dark:hover {
-  color: var(--primary);
+  color: var(--hero-btn-fg);
 }
 .btn--on-dark-ghost {
   background: transparent;
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  color: var(--on-hero);
+  border: 1px solid var(--on-hero-line);
 }
 .btn--block {
   width: 100%;
@@ -147,8 +147,8 @@
   box-shadow: none;
 }
 .card--primary {
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
   box-shadow: none;
   border-radius: var(--r-card-lg);
 }
@@ -297,8 +297,8 @@
   height: 38px;
 }
 .avatar--solid {
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
   font-size: 13px;
 }
 
@@ -347,8 +347,8 @@
   width: 56px;
   height: 56px;
   border-radius: 16px;
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
 }
 
 /* ---------- Field ---------- */
@@ -410,13 +410,13 @@
 .select {
   appearance: none;
   padding-right: 36px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%231d2733' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-image: var(--chevron);
   background-repeat: no-repeat;
   background-position: right 14px center;
 }
 .input::placeholder,
 .textarea::placeholder {
-  color: #6b7682;
+  color: var(--placeholder);
 }
 .input:focus-visible,
 .select:focus-visible,
@@ -471,7 +471,7 @@
   max-width: 220px;
   text-overflow: ellipsis;
   field-sizing: content;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%231d2733' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-image: var(--chevron);
   background-repeat: no-repeat;
   background-position: right 12px center;
 }
@@ -618,7 +618,7 @@
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgba(16, 24, 40, 0.42);
+  background: var(--overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -728,8 +728,8 @@
   gap: 12px;
   padding: 12px 12px 12px 16px;
   border-radius: 14px;
-  background: var(--text);
-  color: #fff;
+  background: var(--inverse-bg);
+  color: var(--on-inverse);
   font-size: 14px;
   box-shadow: var(--shadow-pop);
 }
@@ -746,8 +746,8 @@
   height: 28px;
   border: 0;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
+  background: var(--on-inverse-soft);
+  color: var(--on-inverse);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -804,7 +804,7 @@
 .skeleton {
   display: block;
   border-radius: 8px;
-  background: linear-gradient(90deg, #e9eef4 25%, #f4f6f9 37%, #e9eef4 63%);
+  background: linear-gradient(90deg, var(--skeleton-a) 25%, var(--skeleton-b) 37%, var(--skeleton-a) 63%);
   background-size: 400% 100%;
   min-height: 12px;
 }

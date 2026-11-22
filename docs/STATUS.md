@@ -495,3 +495,223 @@ Fixed after looking: KPI row wrapping at 1440, list-header layout, register cont
 - Overview's counterparty filter is a type-ahead over the first 20 matches; the register has no counterparty chip (it accepts `counterparty=` from links).
 - Tooltips on chart marks are CSS hover/focus tooltips; on touch devices the value is in the accessible label and the list, not in a tap tooltip.
 - No screen-reader pass, no Firefox/Safari/real phone run; `e2e:demo` is still not in CI.
+
+## Frontend fix: filters can be removed again (2026-11-22)
+
+Scope: `src/web`, this section. `src/api` not touched.
+
+Owner's report: "If I add an entity to the overview, I cannot remove it from the filters again."
+
+**Root cause.** The top-bar entity scope (`ScopeProvider`, `app/context.tsx`) kept its own copy of `?entity=` in component state and had an effect that wrote that copy back into the URL whenever the parameter was missing. Overview's entity filter is the same `entity` parameter. React Router applies URL changes in a transition, so when a removal cleared the copy (`adopt('')`), the next render still saw the old URL and re-adopted the entity; when the URL change landed, the effect put `?entity=` back. Every removal path for the entity (breadcrumb, Clear all, filter bar "All", top bar "All entities", browser back) was undone, on Overview, the register and the search page.
+
+**Fix.** The URL is now the only state for the scope: `ScopeProvider` reads `entity` from the URL; it only remembers the last value per path and carries it over when the user moves to a *different* page without one. `adopt` is gone; `setEntityId` only writes the URL. The register reads every filter from the URL (repeated parameters included) and its entity select writes `entity` in the same update as the rest. `ChipSelect` takes a list: several values (or one the options do not list, e.g. an inactive owner) show "<label>: N selected" and "All" can always be chosen. The top bar shows "N legal entities" for several. Overview's counterparty chip has a clear button; removing a custom date range resets the Dates control; an emptied custom field is dropped from the filter (never sent as `cf.<key>=`). The landing-page redirect carries the default entity in its URL.
+
+**Backend check (not changed).** `ContractFilterParser`: absent or empty id/date/number/boolean parameters are "no filter" (empty entries are skipped), so removal never 400s. One gap: an empty custom-field value (`cf.riskLevel=` in a query, or `"cf": {"riskLevel": null}`/`""` in the data-room JSON) is kept as a filter on `""` and matches nothing. The frontend never sends one (`qs` drops empty values, `applyDrill` drops empty `cf` keys); the backend should ideally skip blank `cf.*` values too.
+
+| Command | Result |
+|---|---|
+| `npm run lint` | exit 0, no warnings |
+| `npm test` | exit 0, 15 files, 292 tests (new `pages/filters.test.tsx` 40: every entity add/remove path, each filter type by chip and Clear all, repeated parameters, register and search; 2 new in `lib/r3.test.ts`) |
+| `npm run build`, `VITE_API_MODE=real npm run build`, `npm run build:demo` | exit 0; no `mockApi` chunk in the real build |
+| `npm run e2e:demo` | exit 0 at 390 and 1440 px, motion on; new: entity added with the filter bar and with a chart drill-down, removed with the breadcrumb and with Clear all, totals back to 44 contracts / DKK 60.7m |
+
+Note: filter-bar selects replace the history entry (as before); browser back undoes chart/tile drill-downs, which push.
+
+## Backend release 4 (2026-11-22)
+
+Scope: `src/api`, `tests`, `docs/RUNBOOK.md`, `docs/DEPLOY_TEST.md`, this section, a section in `docs/DECISIONS.md`. `src/web` not touched. No git commands run.
+
+Committed in 8e46125 (+ 901510e, 82c90bc, 56e775a); CI green with 314 backend tests.
+
+### Built, by item of the owner's feedback
+
+1. **Filters.** An empty value is "no filter" for every parameter, custom fields included (`cf.key=`, JSON `null`/`""`). `entityId` (repeatable) is accepted and applied after the access filter on `home`, `renewals`, `approvals/mine`, `overview`, `search` (palette), `search/full`. New `ContractFilter` parameters: `title`, `contractNo`, `counterpartyName`, `delegateId`, `responsibleId`, `currency`, `annualValueMin/Max`, `totalValueMin/Max`, `noticeFrom/To`, `endFrom/To`, `startFrom/To`, `signedFrom/To`, `createdFrom/To`, repeated `cf.<key>` (any of), `cf.<key>.min/.max`. `GET contracts/distinct` gives the values of a column under the current filter (the column's own filter left out), counted over the contracts the caller may see.
+2. **Pickers.** `GET people` (type-ahead, role filter, inactive excluded). `POST counterparties` for non-admins per the general setting `counterpartyCreation` (AdminOnly default / ContractOwners / AllUsers; 409 `duplicate` with `existingId`). `POST contracts` requires an active `supplierId`; the name always comes from the master record; an existing counterparty cannot be removed again; owner, delegate and responsible must be active users. `AppConfig.canCreateCounterparty`.
+3. **Templates.** Template categories (CRUD, order, in-use protection), templates with `categoryId`, `typeIds`, `language`, `updatedAt`; `GET templates` filtered to active templates in active categories, with optional `categoryId`, `typeId`, `language`, `q`; `GET template-categories`; `GET templates/{id}/preview` (placeholders with label and sample, excerpt).
+4. **Branding and formats.** Logo upload / replace / delete in three variants (full, compact, dark): PNG, JPEG, WebP, SVG, 1 MB, recognised by content; dangerous SVG refused; served anonymously with ETag, immutable caching on the versioned address, CSP and nosniff; in `app-config`, `dev/config` and `GET branding`. Number and date format defaults `da-DK` / `dd-MM-yyyy` for new installations. Personal `theme` preference (light default / dark / system).
+5. **Legal entity mapping.** Site address and management group on legal entities, library name and group on departments, link state, `test-link` for both, `GET admin/access-mapping`. The SharePoint store and the Graph directory sync **read these mappings** (no name conventions, no configuration list). RUNBOOK section 4c explains the three-way link and adding a new legal entity end to end.
+6. **E-signature.** Permission `canSendForSignature` with optional entity limit (administrators get nothing implicitly); settings; `SignatureRequest` / `Signatory`; send, resend, cancel, simulate; webhook `POST api/esign/webhooks/{provider}` (shared secret, the only route exempt from `X-Requested-With`); hourly `SignatureSync` job (status polling, reminders, expiry); completion stores the signed PDF as Main, sets signed date and method, Approved becomes Active. Providers behind `ISignatureProvider`: **Simulated** complete; **DocuSign** and **Penneo** written against their REST documentation, isolated in one file, **never run**. Manual "record signature" kept (owner, delegate, admin).
+7. **Settings reliability.** Roles and rights were already read from the database on every request; `me` now uses the same mapping everywhere and carries the new fields. Every `/api` answer gets `Cache-Control: no-store` unless the action sets its own, and the SPA shell `no-cache`. No admin GET depends on an earlier request (job rows and settings are created on first read). Tests sign in freshly before each admin GET and change a role mid-session.
+
+Plus the SharePoint hardening (below) and the theme / dark logo additions.
+
+### Contract alignment (docs/CONTRACT_V4.md)
+
+Routes, parameter names, JSON field names, status codes and problem types follow CONTRACT_V4 sections 1 to 9a. Not checked against `src/web/src/api/types.ts` line by line (frontend scope); field names were taken from the contract text.
+
+#### Contract mismatches (release 4)
+
+Deliberate, each also in DECISIONS:
+
+- **SVG logos** are not "stored as is" unconditionally: a file with scripts, event handlers, `foreignObject`, external references or embedded HTML is refused with 400 `file`. Accepted files are stored unchanged and served with the headers the contract names.
+- **`provider`** in `PUT admin/esign-settings`: only a provider whose server configuration is present can be chosen (400 `provider` otherwise); `Simulated` only when `Signing:AllowSimulated` allows it (default: only with Dev sign-in).
+- **Partially signed** is stored internally but reported as `Sent`, as the contract's status list has no such value. Extra field `signedCount`.
+- **Completion** moves the contract to Active only from `Approved`. A Draft or Active contract sent with `requireApproved=false` gets the signed document, date and method but keeps its status (a draft must not skip approval).
+- **`POST contracts/{id}/sign`** is also refused (409 `signature-state`) while a signature request is open, and still needs the ContractOwner role or Admin as before.
+- **Test link in test mode** returns `Linked` with the contract's detail text; in SharePoint mode a missing library is reported as `Error` on the department, and the entity result lists missing libraries in `details`.
+- **Reconciliation run** is always synchronous (budget 50 s, 2000 findings) and never answers `Running`; when it stops early, `status` is `Completed` and `error` says how far it got. `Orphan` is only detected in folders of contracts whose folder ids are stored (uploads made after this release); `Mismatch` in SharePoint mode compares size, content tag and name (the hash is compared in Local mode, where the file is read).
+- **`counterpartyCreation`** also accepts the brief's words `Admins` and `Everyone` on input and stores the contract's values.
+- **Value ranges** (`annualValueMin/Max`, `totalValueMin/Max`): a contract without that value never matches a range.
+- **`GET watching`** is not entity-scoped (the contract scopes "Watching" inside `home`, which is).
+- **StorageProblem** notifications are outbox and in-app rows to administrators outside the notification catalogue (no template, cannot be switched off).
+
+Additions the frontend can ignore: `SignatureRequest.createdById`, `signedCount`, `statusMessage`; `GET signature-requests/{id}`; `AppConfig.theme`; `PersonOption.departmentNames`; `GET templates?categoryId=&typeId=&language=&q=`; audit actions `signature.resent`, `signature.expired`, `storage.reconciled`, `storage.file-missing`, `document.upload-failed`, `approval.log-saved`; webhook headers (`X-Dafa-Webhook-Secret`, `X-Dafa-Signature`, `X-DocuSign-Signature-1`).
+
+### SharePoint hardening (REVIEW_SHAREPOINT "Do now")
+
+| # | Item | State | Notes |
+|---|---|---|---|
+| 1 | Graph client: retry with Retry-After, backoff with jitter, per-try timeouts, circuit breaker, User-Agent | done | `GraphResilienceHandler`, client "graph"; mail uses its own plain client "graph-mail" (no retries, no breaker; a failed mail is retried by the reminder job as before) |
+| 1 | Exceptions become 503 `storage-unavailable` (+ Retry-After) and 404 `file-missing` | done | middleware; `FileNotFoundException` from the local store is mapped too |
+| 2 | No store call on contract detail and lists | done | `storeUrl` is the stored folder link, administrators only |
+| 2 | Final approval does not fail when the store is down | done | `ApprovalInstances.LogPending`; `UploadCleanup` writes the log later |
+| 3 | Silent fallbacks removed, `storage-not-configured` | done | no default site, no first library; unmapped = refused |
+| 4 | Never overwrite; versioned names; upload only after the contract number is final; idempotent folder creation; folder ids and link on the contract | done | `conflictBehavior=fail` everywhere; a draft whose file cannot be stored is kept, with `document.upload-failed` in its log |
+| 5 | Per document: site id, drive id, item id, path, cTag, eTag, size, SHA-256 | done | rows from before this release have none of these (reconciliation falls back to size only for them in SharePoint mode) |
+| 6 | Text extraction backfill retries with capped attempts and backoff | done | status `Retry`, 15 min doubling, 6 attempts; a missing file fails at once |
+| 7 | Streamed downloads; upload session above 10 MB | partial | downloads are streamed; uploads are still buffered in memory (25 MB limit) and an interrupted upload session is restarted, not resumed |
+| 8 | Nightly reconciliation (report only), admin endpoints, storage health | done | job `StorageReconciliation` daily 02:00; see the mismatch list for limits |
+| 9 | Graph sign-in with certificate or managed identity besides the secret | done, never run | `Graph:Auth`; the client assertion is built by hand (no MSAL); only the App Service / Container Apps identity endpoint (`IDENTITY_ENDPOINT`), not the VM metadata endpoint |
+| 9 | Docs: RUNBOOK 5.2 to 5.5 and 5.7, DEPLOY_TEST | done | app-only, `Sites.Selected`, no user access to libraries, permissions as used in code, first-run checklist |
+| - | `DocumentWriter` comment corrected | done | |
+| - | Data room: throttle-aware pacing per file | not done | exports use the same client (retries, breaker) but no extra pacing |
+| - | Log the Graph `request-id` on errors | not done | |
+| - | Alert before the client secret expires | not done | documented in RUNBOOK 5.2 |
+| - | Automatic move of files when entity or department changes | not done, by decision | reported as `MisplacedFolder` |
+
+All of the Graph code (store, link probe, directory sync, token provider with certificate and managed identity) is tested against a scripted HTTP handler only. **It has never run against a tenant**; RUNBOOK 5.7 is the checklist for the first run.
+
+### Configuration keys (new or changed)
+
+| Key | Default | Meaning |
+|---|---|---|
+| `Signing:AllowSimulated` | empty = allowed only when `Auth:Mode=Dev` | whether the Simulated provider can be chosen |
+| `Signing:Webhook:Secret` | empty = webhook route answers 404 | shared secret, at least 24 characters |
+| `Signing:DocuSign:BaseUrl`, `:AuthServer`, `:AccountId`, `:IntegrationKey`, `:UserId`, `:PrivateKeyPath` | none | DocuSign (JWT grant) |
+| `Signing:Penneo:BaseUrl`, `:ApiKey`, `:ApiSecret` | none | Penneo |
+| `Graph:Auth` | `ClientSecret` | `ClientSecret`, `Certificate` or `ManagedIdentity` |
+| `AzureAd:ClientCertificateThumbprint`, `AzureAd:ClientCertificatePath`, `AzureAd:ClientCertificatePassword` | none | certificate sign-in to Graph |
+| `AzureAd:ManagedIdentityClientId` | none | user-assigned managed identity |
+| `Graph:MaxAttempts`, `Graph:MetadataTimeoutSeconds`, `Graph:ContentTimeoutSeconds` | 4, 30, 180 | retries and timeouts |
+
+No longer read: `Signature:Provider` (the provider is an admin setting), `SharePoint:Sites`, `SharePoint:DefaultSiteId` (the mapping is in the database). The table rows for these in the "Backend phase 1" section above are out of date. **The test site needs no new setting.**
+
+### Schema (SchemaUpgrader, additive and idempotent)
+
+- **Step 3 "release 4".** Tables: `TemplateCategories`, `BrandingAssets`, `SignatureRequests`, `Signatories`. Columns: `LegalEntities` (`SharePointSiteUrl`, `SharePointSiteId`, `ManagementGroupId`, `ManagementGroupName`, `LinkStatus`, `LinkCheckedAt`, `LinkMessage`); `Departments` (`LibraryName`, `GroupId`, `GroupName`, `LinkStatus`, `LinkCheckedAt`, `LinkMessage`); `Users` (`CanSendForSignature` NOT NULL default 0, `SignatureEntityIdsJson`, `HomeEntityId`); `Templates` (`CategoryId`, `ContractTypeIdsJson`, `Language`); `UserPreferences.Theme` (NOT NULL default `'light'`). Indexes ensured on `Templates`, `SignatureRequests` (incl. a filtered unique index "one open request per contract", `[Status] < 3`), `Signatories`.
+- **Step 4 "storage hardening".** Table `StorageReconciliationReports`. Columns: `Documents` (`SiteId`, `DriveId`, `ItemId`, `RelativePath`, `ETag`, `CTag`, `ContentHash`, all nullable); `Contracts` (`StoreDriveId`, `StoreFolderId`, `StoreFolderUrl`, nullable); `ApprovalInstances.LogPending` (NOT NULL default 0); `DocumentTexts` (`Attempts` NOT NULL default 0, `NextAttemptAt` nullable).
+- Tests: `Release4SchemaTests` upgrades a database with the release 3 schema, checks the columns and defaults, and runs the upgrader twice (Sqlite). **The SQL Server path of both steps is desk-checked only**; the filtered index is the statement to watch in the first deployment log (a failing index is a warning, the app still starts, but then "one open request per contract" is only enforced by the service).
+- Demo seed, once per database: three template categories, Simulated e-signature, signing permission for Lars Winther (all entities) and Jonas Berg (two entities).
+
+### Tests
+
+70 new test methods in four files, plus updates to existing tests where the rules changed (schema versions 1 to 4, 16 notification events, 10 jobs, contracts need a `supplierId`).
+
+- `Release4Tests.cs` (27): filters and empty values, entity scope, distinct values scoped by access, pickers and counterparty rules, template categories and filtering, logo type / size / SVG rejection and the dark variant, org links and access mapping, theme, settings right after sign-in, schema upgrade from release 3 and idempotency.
+- `Release4SignatureTests.cs` (12): permission and entity limit, require-approved, input validation, the simulated flow to Active (parallel and sequential), decline, cancel, resend, reminders, expiry, webhook events, manual signature, the generated PDF.
+- `StorageHardeningTests.cs` (20): retry and Retry-After with a fake handler, circuit breaker, no fallback site or library, no overwrite, upload session, streamed download, hash stored, backfill retry, reconciliation report, contract detail and final approval with the store down, problem responses.
+- `Release4ApiTests.cs` (11, over HTTP): every admin GET right after sign-in, `me` after a role change, empty parameters on every list, logo upload and anonymous caching, theme, signing permission and the simulated flow, webhook secret (own host with the secret set), storage endpoints, `storeUrl` for administrators only.
+
+### Most likely to fail compilation or a first test run
+
+1. `Infrastructure/Providers/AccessTokenProvider.cs`: `X509CertificateLoader.LoadPkcs12FromFile`, certificate store lookup, hand-built client assertion (RS256, `x5t`).
+2. `Infrastructure/Providers/SignatureProviders.cs`: DocuSign JWT (`RSA.ImportFromPem`), multipart and JSON shapes; largest never-run file.
+3. `Infrastructure/Providers/GraphClient.cs`, `DocumentStores.cs`, `DirectoryAndSignature.cs`: `HttpRequestOptionsKey`, `ContentRangeHeaderValue`, tuple-valued `ConcurrentDictionary`.
+4. `Core/Abstractions/Interfaces.cs`: default interface methods on `IDocumentStore`.
+5. `Core/Services/SignatureService.cs` (about 1250 lines), `StorageServices.cs` (a local function declared inside a loop that captures loop variables), `ContractFilterEngine.cs`, `PickerServices.cs`.
+6. `Core/Dtos/DtosRelease3.cs`: `AdminUserInput.EntityId` as a non-nullable `JsonElement` (model binding and validation of an omitted value).
+7. `Infrastructure/Data/AppDbContext.cs` + `SchemaUpgrader.cs`: a named filtered unique index next to a plain index on `SignatureRequests.ContractId`; the filter text on SQL Server versus Sqlite.
+8. `Api/Controllers/Release4Controllers.cs`: `HMACSHA256.HashData`, `Request.HasJsonContentType`, `Content("null", ...)`; `Api/Hosting/HostingSupport.cs`.
+9. Tests: `StorageHardeningTests.cs` (fake Graph drive parses request addresses; `DefaultHttpContext` with the exception middleware), `Release4ApiTests.cs` (assumptions about seeded contracts of Lars Winther in DAFA A/S and Jonas Berg in DAFA Polska; header parsing), `Release4SignatureTests.cs` (notification counts), and overload resolution of `HomeAsync()` in older tests.
+10. Behaviour, not compilation: older tests that create contracts without a counterparty were updated where found; one that was missed will fail with 400 `supplierId`.
+
+### Not done / known gaps
+
+- DocuSign and Penneo have never been called. Simulated is the only provider that has even been desk-tested end to end.
+- `restrictToAuthorised`: internal signers are matched by user id, external ones only by name (case-insensitive), which anyone typing the request can satisfy; treat it as a reminder, not a control, for external signatories.
+- Upload sessions are not resumed; uploads are buffered in memory.
+- The reconciliation does not page through libraries looking for stray folders; it only looks inside known contract folders.
+- No per-file pacing in data room exports; no Graph `request-id` in logs; no secret-expiry alert; Purview and tenant settings are out of scope.
+- Changing a contract's entity or department does not move files.
+- `GET watching` is not entity-scoped.
+- The number and date formats are settings only; CSV exports still use the server's fixed formats.
+- Missing-file alerts are recorded once per document version (not repeated daily).
+
+## Frontend release 4 (2026-11-22)
+
+Scope: `src/web`, `docs/CONTRACT_V4.md` (new, written first for the backend), this section and the frontend section of `docs/DECISIONS.md`. `src/api` not touched.
+
+### Items
+| Item | State | What was built |
+|---|---|---|
+| A1 Overview entity filter cannot be removed | Done | Root cause in `ScopeProvider` (see "Frontend fix" above): the URL is now the only state. |
+| A2 Search entity back to "All" | Done | Same root cause; Search sends `entityId` repeatable and its Entity select can always be set to All. |
+| A3 Top-bar scope | Done | One model: `?entity=` (repeatable) = scope, sent as `entityId` by Home, Contracts, Renewals, Approvals (page; nav badges stay unscoped), Overview, Search page and the Ctrl+K palette (client parameter names checked against `client.ts`). Removable "Showing <entity>" chip on Home, Renewals and Approvals (Overview/register/search show it in their own filters). Persisted per user on the device (`dafa.scope.<userId>`), else the server default (`defaultEntityId`). Renewals no longer filters only in the browser. |
+| A4 Settings sometimes blank | Done (frontend) | Lazy pages reload once after a failed chunk import (deploy removed old hashed files; loop guard 60 s), then a "A new version is available – Reload" screen; a route error boundary keeps the shell; every Settings section shows an error with Retry instead of an endless skeleton (General, Currencies, Tags, Jobs, import history/fields, sync runs). Deployment request in CONTRACT_V4 §9: keep previous `assets/*` one release or serve `index.html` no-cache. |
+| B Register header filters | Done | Filter button in every column header (text contains; counterparty contains or pick; entity/department/type/status/owner/delegate/responsible/tags multi-select with search from `GET contracts/distinct`; values min/max DKK; dates from/to; custom fields by type; renewal/change of control yes/no). Active = filled icon + removable chip; in the URL, saved views and export. |
+| C Person and counterparty pickers | Done | `Combobox` (ARIA combobox/listbox, keyboard, clear button, no free text), `PersonPicker` (name/e-mail/initials, shows department · entity, inactive hidden) and `CounterpartyPicker` (master data, "Create new counterparty" dialog when `canCreateCounterparty`; a duplicate picks the existing one). Used in New contract, Edit details, obligations (2), delegate (2), bulk reassign, users reassign/effective access, holiday cover, approval rules, Person custom fields, e-signature, Overview owner/counterparty filters, Search person filter. A suggested name is matched to the master on extract. |
+| D Number formats | Done | `NumberInput` with thousand separators while typing (caret kept), canonical text in state, numbers to the API; amounts, custom Number/Money, header filters, approval rule bands, rule tester, due-diligence threshold, e-sign expiry. General settings date and number formats now apply to every formatted date and number. |
+| E Template categories | Done | Settings > Template categories (add, edit, order up/down, active, delete when empty); template dialog: category, contract types (several), language, active; New contract: category chips, search, description, category · language · types, field preview. |
+| F Logo | Done | Settings > General: logo, dark-theme logo, compact icon (PNG/SVG/JPG/WebP, 1 MB), previews on light and dark, Replace/Remove. Shown as `<img>` (never inlined), transparent, max 40 px high, in the sidebar and on the sign-in screen. The compact icon is stored and offered but not yet placed in the phone header. |
+| G Entity/SharePoint/Entra link | Done | Legal entities: site URL, resolved site id (read-only), management group, link state with last check and "Test link"; Departments: library and group with "Test link"; Settings > Access mapping matrix with warnings. Marked "Used in SharePoint mode" in test mode. |
+| H E-signature | Done (Simulated) | User right "Can send for signature" (+ per entity) in Users and access; Settings > E-signature (provider, message, order, reminders, expiry, require approved, authorised signatories per entity). Record: "Send for signature" (documents, DAFA/external signatories, order, message, preview), Signature card (status per signatory, resend, cancel, "Simulate signing"/decline in Simulated mode); completion stores the signed document and activates the contract. Others see "Ask a colleague with signing rights". "Mark as signed" is now "Record manual signature" for owner, delegate and admins. DocuSign/Penneo are only settings on the frontend. |
+| I Light/dark theme | Done | My settings > Appearance: Light, Dark, System; saved via `me/preferences` (`theme`), copied to localStorage and applied before first paint by `public/theme-init.js` (sign-in included). Every color is a token; a test checks both token sets have the same keys and that no other stylesheet has a hard-coded color. |
+| Storage | Done | `storage-unavailable` → "SharePoint is busy. Try again in a moment." with Retry; `file-missing` sentence; `storage-not-configured` shows the server text, admins get "Open Access mapping"; on document upload/download, extract, template download, data room, signature send. Settings > Storage health (state, last success/failure, failures 24 h) and the latest reconciliation report with "Run check now". "Open in SharePoint" only for admins. |
+
+### Contrast (WCAG ratios, computed)
+Dark: text 13.96 on surface / 15.43 on page; secondary 7.41 / 8.19; label 5.48; links/primary #5aa9d6 6.32 on surface, 5.01 on tint; white on primary fill #2a72a3 5.21 (hover 6.84); white on hero #0d3a5a 11.86; pills red 7.91, amber 8.13, green 7.94, blue 7.33, gray 8.34; placeholder 6.13; chart marks high 5.68, medium 8.56, low 6.32, decided 3.74, bar 4.18 (all ≥ 3:1). Light (changed so every text passes): label #66717d 4.97 (was 3.08), amber dot and "31–90 days" segment #a87300 4.10 (was 2.75), "decided" segment #8593a2 3.14 (was 2.10), soft bar #5f8fb2 3.47 (was 2.50).
+
+### Results of the last run here (src/web)
+| Command | Result |
+|---|---|
+| `npm run lint` | exit 0, no warnings |
+| `npm test` | exit 0, 17 files, 312 tests (new: `pages/filters.test.tsx` 42, `pages/r4.test.tsx` 9, `lib/r4.test.ts` 8) |
+| `npm run build` / `VITE_API_MODE=real npm run build` | exit 0; no `mockApi` chunk and no sample-data strings in the real build |
+| `npm run build:demo` | exit 0 |
+| `npm run e2e:demo` | exit 0 at 390 and 1440 px, motion on; new release 4 journey: Search entity back to All, top-bar scope chip removal (1440), register header filter with separators and chip removal (1440), counterparty/owner pickers need a click, template category, e-signature denied for Henrik and simulated end-to-end for Rasmus, SVG logo in the sidebar (1440, transparent, 32 px), dark theme switch (page rgb(15,22,32)). |
+
+Screens looked at: dark at 1440 (Home, Contracts, Overview, Renewals, Approvals, Search, New contract, My settings, Settings General/E-signature/Access mapping/Storage/Entities/Template categories), dark at 390 (Home, Contracts, record, approval), light at 1920 (Contracts with header filters, Overview, New contract, Settings). Fixed after looking: select chevrons invisible in dark (now a token), logo preview captions, chevrons on category chips.
+
+### Not done / known gaps
+- Nothing ran against the real API; CONTRACT_V4 is the shape the backend engineer implements.
+- Person pickers search the users already in lookups (instant, no request); `GET people` is in the contract for later.
+- Compact logo not yet used in the phone header; theme screenshots of every Settings section at 390 not taken.
+- Header filters are not offered in the phone card list (filters there: the chips and selects above).
+- The dataviz CVD validator was not re-run for the changed light amber/gray chart colors (contrast was computed).
+
+## Release 4 alignment fixes (2026-11-22)
+
+Fixes for `docs/REVIEW_ALIGNMENT_R4.md` (frontend client against the real API). Frontend only, except one read-only field on the API. The mock now answers as the API does in each of these places, so the tests exercise the real behaviour.
+
+| Finding | Status | What changed |
+|---|---|---|
+| H1 department link wiped on rename/deactivate | Fixed | Settings > Departments sends the department's existing `documentLibrary` and `groupId` with every update. The other settings forms were checked (legal entities, contract types, template categories, templates, tags, currencies, counterparties, users, custom fields, sync sources, general, notification and e-signature settings): each sends the whole item. |
+| H2 Edit details without a master counterparty | Fixed | The counterparty is required on create and when the contract already has one; a contract without one keeps its name and can be saved (the field says so). |
+| M1 generic "One or more fields are invalid." | Fixed | `lib/errors.ts`: a 400 shows the first message of each field in `errors` (`errorMessage`, `fieldErrors`, `fieldError`); forms map the keys to their fields. |
+| M2 signer row errors | Fixed | `signers[0].userId`, `$.signers[0].userId` and `Signers[0].UserId` are read as `signers.0.userId`; a refused field brings the dialog back from the preview. |
+| M3 New contract upload | Fixed | Only `.pdf` and `.docx` with a clear message; Documents keeps the wide list. |
+| M4 Record manual signature | Fixed | Offered only when the user can edit the contract. |
+| M5 `requireApproved` off | Fixed | "Send for signature" is offered on Draft and Active too. `app-config.eSign.requireApproved` added on the API (one field, `ESignConfigDto`); the frontend also works without it through `canSendForSignature`. |
+| M6 403 on `me` (Entra) | Fixed | "Your account does not have access to DAFA Contracts. Contact an administrator." |
+| M7 session ended | Fixed | A 401 on any query or mutation asks `me` again once; its 401 shows sign-in (Dev: access code/user picker; Entra: redirect with the current path, with the existing loop guard). The page stays the same after signing in again. |
+| L1 Resend/Cancel/Simulate | Fixed | Shown to the sender, colleagues with the signing right for the entity and administrators. |
+| L2 e-signature toggle in General | Fixed | Read-only line, derived from the provider, with a link to Settings > E-signature. |
+| L3 template upload | Fixed | `.docx` only. |
+| L4 column-filter counts | Fixed | The active tab (`view`) is sent; the API cannot count within the free-text search, so the list says so when a search text is active. |
+| L5 counterparty picker | Fixed | VAT number and external id matches are shown; a duplicate found by VAT number is chosen under its master name. |
+| L6 approval log | Fixed | Not offered as a document to sign. |
+
+Needs a live check, made safe from the client:
+- **User without a home legal entity:** the client sends `entityId: ""` (never JSON null); the API clears on both. `Release4ApiTests.Me_ReflectsARoleChange_OnTheVeryNextRequest` now checks `""` and `null` over HTTP.
+- **Export selected:** the API has only `GET contracts/export`, so the ids are sent in several requests that each keep the URL under 2000 characters, and the CSV answers are joined into one file (`lib/exportSelected.ts`).
+- **Template upload:** the client uses one path, the multipart `POST admin/templates` (no `Content-Type` of its own, so the browser adds the boundary); the JSON action is not used by the frontend. A test pins the request shape.
+- **Still open:** the first request after sign-in on the hosted site (cookie `Secure` behind the HTTPS front end), and one real upload of a template and a 45+ row "Export selected" on the test site.
+
+Backend files touched: `Dtos/DtosRelease4.cs` and `Services/PersonalService.cs` (`eSign.requireApproved` in `app-config`), `tests/.../Release4ApiTests.cs` (two blocks of assertions). Not compiled here (no .NET SDK); GitHub Actions compiles and runs them.
+
+| Command (src/web) | Result |
+|---|---|
+| `npm run lint` | exit 0, no warnings |
+| `npm test` | exit 0, 19 files, 353 tests (new: `lib/r4align.test.ts` 20, `pages/r4align.test.tsx` 21) |
+| `npm run build` / `VITE_API_MODE=real npm run build` / `npm run build:demo` | exit 0 |
+| `npm run e2e:demo` | exit 0 at 390 and 1440 px; new step: the owner edits an active contract without a master counterparty and saves |

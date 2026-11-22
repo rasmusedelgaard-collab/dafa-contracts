@@ -2,7 +2,7 @@
 // It enforces the access model for the selected demo user (see access.ts) so screens built
 // on it behave like they will against the real API.
 import type { Api } from '../api';
-import { conflict, forbidden, invalid, notFound, problem } from './problems';
+import { conflict, forbidden, invalid, invalidFields, notFound, problem } from './problems';
 import type {
   ApprovalInstance,
   ApprovalPreview,
@@ -47,12 +47,14 @@ import {
 } from '../../lib/dates';
 import { toDkk } from '../../lib/format';
 import { validateInput } from '../../lib/validation';
+import { qs } from '../client';
 import { canCreate, canDecideRenewal, canEdit, canSee, isAdmin, isOnContract } from './access';
 import { newId, type ApprovalRec, type ContractRec, type Db, type DocumentRec, type ObligationRec, type StepRec, type UserRec } from './db';
 import { makePdf, makeRtf } from './files';
 import { filterRows, queryRows, sortRows, toCsv, type RegisterRow } from './query';
 import { createSeed } from './seed';
 import { createR3, type MockCtx } from './r3';
+import { createR4 } from './r4';
 import { validateCustomFields, rulesForType, validateStandardRules, enforcesRequired, displayValue } from '../../lib/customFields';
 import { matchesAll, terms as searchTerms } from '../../lib/search';
 import type { NotificationEvent, RenewalItem } from '../types';
@@ -330,6 +332,11 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     departmentId: c.departmentId,
     typeId: c.typeId,
     peopleIds: [c.ownerId, c.delegateId, c.responsibleId].filter((x): x is Id => !!x),
+    delegateId: c.delegateId,
+    responsibleId: c.responsibleId,
+    currency: c.currency,
+    annualDkk: c.annualValue === null ? 0 : rateDkk(c.annualValue, c.currency),
+    totalDkk: c.totalValue === null ? 0 : rateDkk(c.totalValue, c.currency),
   });
 
   function toApproval(a: ApprovalRec): ApprovalInstance {
@@ -840,7 +847,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
 
   function buildExtract(file: File, u: UserRec): ExtractResult {
     const ext = /\.([a-z0-9]+)$/i.exec(file.name)?.[1]?.toLowerCase() ?? '';
-    if (!['pdf', 'docx', 'doc'].includes(ext)) throw invalid('Upload a PDF or Word file (.pdf, .docx).', { file: ['Unsupported file type'] });
+    if (!['pdf', 'docx'].includes(ext)) throw invalid('Upload a PDF or Word file (.pdf, .docx).', { file: ['Unsupported file type'] });
     if (file.size > 25 * 1024 * 1024) throw invalid('The file is larger than 25 MB.', { file: ['File too large'] });
     // Like the API's reading limits: a very large file is stored, but not read for suggestions.
     if (file.size > READ_LIMIT_BYTES) {
@@ -934,11 +941,29 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     if (!input.description?.trim()) errors.description = ['Required'];
     if (!userOf(input.responsibleId)) errors.responsibleId = ['Required'];
     if (input.frequencyMonths !== null && !(input.frequencyMonths >= 1)) errors.frequencyMonths = ['Must be at least 1 month'];
-    if (Object.keys(errors).length) throw invalid('Check the obligation.', errors);
+    if (Object.keys(errors).length) throw invalidFields(errors);
   }
 
-  function checkRefs(input: ContractInput, status: ContractRec['status'] | null): void {
+  /**
+   * Validates a contract input as the API does and returns it with the counterparty name the API
+   * would store. Release 4 (CONTRACT_V4 section 3): the counterparty is a master record chosen from
+   * the list. A new contract needs one; a counterparty cannot be removed; an older or imported
+   * contract without one keeps its name (a typed name is ignored) until one is chosen.
+   */
+  function checkRefs(input: ContractInput, existing: ContractRec | null): ContractInput {
+    const status = existing?.status ?? null;
     const errors = validateInput(input);
+    delete errors.counterpartyName;
+    let counterpartyName = input.counterpartyName;
+    if (input.supplierId) {
+      const supplier = byId(db.suppliers, input.supplierId);
+      const unchanged = existing?.supplierId === input.supplierId;
+      if (!supplier) errors.supplierId = ['Choose a counterparty from the list.'];
+      else if (supplier.isActive === false && !unchanged) errors.supplierId = [`${supplier.name} is inactive. Choose an active counterparty from the list.`];
+      else counterpartyName = unchanged && existing ? existing.counterpartyName : supplier.name;
+    } else if (!existing) errors.supplierId = ['Choose a counterparty from the list.'];
+    else if (existing.supplierId) errors.supplierId = ['Choose a counterparty from the list. A counterparty cannot be removed from a contract.'];
+    else counterpartyName = existing.counterpartyName;
     const ref = (field: string, ok: boolean) => {
       if (!ok && !errors[field]) errors[field] = ['Unknown value'];
     };
@@ -958,11 +983,13 @@ export function createMockApi(options: MockOptions = {}): MockApi {
       for (const [k, v] of Object.entries(ruleErrors)) if (!errors[k]) errors[k] = [v as string];
     }
     if (input.tagIds?.some((id) => !db.tags.some((t) => t.id === id))) errors.tagIds = ['Unknown tag'];
-    if (Object.keys(errors).length) throw invalid('Some fields are missing or not valid.', errors);
+    if (Object.keys(errors).length) throw invalidFields(errors);
+    return { ...input, supplierId: input.supplierId ?? null, counterpartyName };
   }
 
+  /** `input` comes from `checkRefs`. */
   function applyInput(c: ContractRec, input: ContractInput): void {
-    const supplier = byId(db.suppliers, input.supplierId) ?? db.suppliers.find((s) => s.name.toLowerCase() === input.counterpartyName.trim().toLowerCase());
+    const supplier = byId(db.suppliers, input.supplierId);
     Object.assign(c, {
       title: input.title.trim(),
       typeId: input.typeId,
@@ -1108,10 +1135,14 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     runJobs: () => runJobs(false),
   };
   const r3 = createR3(ctx);
+  const r4 = createR4(ctx);
+  /** Release 4: the top-bar entity scope (`entityId`, repeatable); empty = no filter. */
+  const inScope = (cs: ContractRec[], scope?: Id[]) => (scope?.length ? cs.filter((c) => scope.includes(c.entityId)) : cs);
 
   const api: MockApi = {
     db,
     ...r3.top,
+    ...r4.top,
 
     getMe: () => run(() => toMe(me())),
 
@@ -1136,12 +1167,12 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         return db.suppliers.filter((s) => s.isActive && (!needle || s.name.toLowerCase().includes(needle))).slice(0, 20).map((s) => ({ id: s.id, name: s.name, country: s.country, vatNo: s.vatNo }));
       }),
 
-    getHome: () =>
+    getHome: (scope) =>
       run(() => {
         const u = me();
         const t = today();
-        const mine = visible(u);
-        const tasks = buildTasks(u);
+        const mine = inScope(visible(u), scope);
+        const tasks = buildTasks(u).filter((x) => !scope?.length || !x.contractId || scope.includes(byId(db.contracts, x.contractId)?.entityId ?? ''));
         const renewalsThisWeek = tasks.filter((x) => x.kind === 'Renewal' && x.urgency === 'high').length;
         const approvalsWaiting = tasks.filter((x) => x.kind === 'Approval').length;
         const due = mine.filter((c) => {
@@ -1154,7 +1185,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           renewalsThisWeek,
           approvalsWaiting,
           renewingIn90: { count: due.length, valueDkk: Math.round(due.reduce((sum, c) => sum + annualDkk(c), 0)) },
-          myContracts: db.contracts.filter((c) => isOnContract(u, c) && c.status !== 'Expired' && c.status !== 'Terminated').length,
+          myContracts: inScope(db.contracts, scope).filter((c) => isOnContract(u, c) && c.status !== 'Expired' && c.status !== 'Terminated').length,
           tasks,
           noticeByMonth: months.map((month) => ({
             month,
@@ -1162,24 +1193,24 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           })),
           recent: (db.recent[u.id] ?? [])
             .map((id) => byId(db.contracts, id))
-            .filter((c): c is ContractRec => !!c && sees(u, c))
+            .filter((c): c is ContractRec => !!c && sees(u, c) && (!scope?.length || scope.includes(c.entityId)))
             .slice(0, 3)
             .map((c) => ({ id: c.id, title: c.title })),
         };
       }),
 
-    search: (q) =>
+    search: (q, scope) =>
       run(() => {
         const u = me();
         const needle = q.trim().toLowerCase();
         if (needle.length < 2) return [];
-        const contracts = visible(u)
+        const contracts = inScope(visible(u), scope)
           .filter((c) => [c.title, c.counterpartyName, c.contractNo].some((v) => v.toLowerCase().includes(needle)))
           .slice(0, 6)
           .map((c) => ({ kind: 'Contract' as const, id: c.id, title: c.title, subtitle: `${c.counterpartyName} · ${nameOf(db.entities, c.entityId)}` }));
         const ts = searchTerms(q);
         const contractList = contracts.slice(0, 4);
-        const visibleIds = new Map(visible(u).map((c) => [c.id, c]));
+        const visibleIds = new Map(inScope(visible(u), scope).map((c) => [c.id, c]));
         const docs = db.documents
           .filter((d) => visibleIds.has(d.contractId) && matchesAll([d.name, d.text], ts))
           .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt))
@@ -1204,6 +1235,8 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     exportContracts: (query = {}) =>
       run(() => {
         const u = me();
+        // As the hosted site: the web server refuses a query string over 2048 characters (IIS default).
+        if (qs(query).length > 2048) throw problem(404, 'Not Found', 'The request URL is too long.');
         const rows = sortRows(filterRows(visible(u).map((c) => toRow(c, u)), query, u.id, { today: today(), customFields: db.customFields }), query.sort);
         audit('RegisterExported', null, `Exported ${rows.length} contracts to CSV`);
         const columns = (query as { columns?: string[] }).columns;
@@ -1224,7 +1257,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
       run(() => {
         const u = me();
         if (!canCreate(u)) throw forbidden('Your role does not allow creating contracts.');
-        checkRefs(input, null);
+        input = checkRefs(input, null);
         const createdAt = today();
         const c: ContractRec = {
           id: newId(),
@@ -1268,7 +1301,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         const u = me();
         const c = editable(id, u);
         if (c.status === 'InApproval') throw conflict('The contract is in approval and cannot be changed until the approval is finished.');
-        checkRefs(input, c.status);
+        input = checkRefs(input, c);
         const changed = lockedFieldsOf(c, u).filter((f) => (input[f] ?? null) !== (c[f] ?? null));
         if (changed.length > 0) throw conflict(`${LOCKED_MESSAGE} Locked: ${changed.map((f) => LOCK_LABELS[f] ?? f).join(', ')}.`, 'locked-fields');
         const before = keyTerms(c);
@@ -1289,7 +1322,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         const cfErrors = validateCustomFields(db.customFields, c.typeId, c.customFields, true, (id) => !!userOf(id), db.currencies);
         const ruleErrors = validateStandardRules(rulesForType(db.fieldRules, c.typeId), { ...c, openEnded: c.endDate === null });
         const all = [...Object.values(cfErrors), ...Object.values(ruleErrors)];
-        if (all.length) throw invalid(`Complete the contract before you submit it: ${all.join(', ').toLowerCase()}.`, Object.fromEntries(Object.entries({ ...cfErrors, ...ruleErrors }).map(([k, v]) => [k, [v as string]])));
+        if (all.length) throw invalidFields(Object.fromEntries(Object.entries({ ...cfErrors, ...ruleErrors }).map(([k, v]) => [k, [v as string]])));
         startApproval(c, u.id);
         c.status = 'InApproval';
         audit('ApprovalStarted', c.id, 'Submitted for approval');
@@ -1301,6 +1334,8 @@ export function createMockApi(options: MockOptions = {}): MockApi {
       run(() => {
         const u = me();
         const c = editable(id, u);
+        // As the API: edit rights first, then owner, delegate or administrator (not the responsible person).
+        if (!isAdmin(u) && c.ownerId !== u.id && c.delegateId !== u.id) throw forbidden('Only the contract owner, the delegate or an administrator can record a signature.');
         if (c.status !== 'Approved') throw conflict('Only an approved contract can be marked as signed.');
         if (!input.signedDate || !/^\d{4}-\d{2}-\d{2}$/.test(input.signedDate)) throw invalid('Enter the date the contract was signed.', { signedDate: ['Required'] });
         if (input.signedDate > today()) throw invalid('The signing date cannot be in the future.', { signedDate: ['Cannot be in the future'] });
@@ -1512,11 +1547,12 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         return { uploadId, fileName };
       }),
 
-    getMyApprovals: () =>
+    getMyApprovals: (scope) =>
       run(() => {
         const u = me();
         const t = today();
         return myPendingSteps(u)
+          .filter(({ c }) => !scope?.length || scope.includes(c.entityId))
           .map(({ a, step, c }): MyApproval => ({ instance: toApproval(a), stepId: step.id, waitingDays: step.pendingSince ? daysBetween(step.pendingSince, t) : 0, contract: toDetail(c, u) }))
           .sort((x, y) => y.waitingDays - x.waitingDays);
       }),
@@ -1601,12 +1637,12 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         };
       }),
 
-    getRenewals: (months = 12) =>
+    getRenewals: (months = 12, scope) =>
       run(() => {
         const u = me();
         const t = today();
         const until = addMonths(t, months);
-        return visible(u)
+        return inScope(visible(u), scope)
           .filter((c) => c.status === 'Active')
           .map((c) => ({ c, deadline: deadlineOf(c) }))
           // Also the deadlines that passed without a decision while the contract is still running.
@@ -1626,10 +1662,10 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           }));
       }),
 
-    getOverview: () =>
+    getOverview: (scope) =>
       run(() => {
         const u = me();
-        const all = visible(u);
+        const all = inScope(visible(u), scope);
         const live = all.filter(isLive);
         const t = today();
         const group = <K extends string>(items: ContractRec[], key: (c: ContractRec) => K, value: (c: ContractRec) => number) => {
@@ -1721,9 +1757,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           audit('SettingsChanged', null, 'Retention rule deleted');
         }),
 
-      getDepartments: () => run(() => (admin(), departmentsCrud.list())),
       createDepartment: (input) => run(() => (admin(), departmentsCrud.create(input.name))),
-      updateDepartment: (id, input) => run(() => (admin(), departmentsCrud.update(id, input.name))),
       deleteDepartment: (id) => run(() => (admin(), departmentsCrud.remove(id))),
 
       getContractTypes: () => run(() => (admin(), typesCrud.list())),
@@ -1737,7 +1771,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           admin();
           if (!input.name?.trim()) throw invalid('Enter a name for the template.', { name: ['Required'] });
           if (!file) throw invalid('Choose the Word file for the template.', { file: ['Required'] });
-          if (!/\.(docx|dotx)$/i.test(file.name)) throw invalid('Templates must be Word files (.docx or .dotx).', { file: ['Must be a Word file'] });
+          if (!/\.docx$/i.test(file.name)) throw invalid('A template must be a Word document (.docx).', { file: ['Must be a Word file'] });
           if (db.templates.some((x) => x.name.toLowerCase() === input.name.trim().toLowerCase())) throw conflict('A template with that name already exists.');
           const t = { id: newId(), name: input.name.trim(), description: input.description?.trim() ?? '', typeId: input.typeId, fileName: file.name, blob: file as Blob, placeholders: ['title', 'entity', 'counterparty', 'startDate', 'endDate'], body: `${input.name.trim().toUpperCase()}\n\nbetween {{entity}} and {{counterparty}}\n\n{{title}}\n\nTerm: {{startDate}} to {{endDate}}.` };
           db.templates.push(t);
@@ -1818,6 +1852,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         }),
 
       ...r3.admin,
+      ...r4.admin,
       getHolidayCover: () => run(() => (admin(), db.holidayCover.map(toCover))),
       updateHolidayCover: (input) =>
         run(() => {
@@ -1862,5 +1897,5 @@ export function createMockApi(options: MockOptions = {}): MockApi {
   const departmentsCrud = namedCrud(db.departments, 'department', (id) => db.contracts.some((c) => c.departmentId === id) || db.users.some((u) => u.departmentIds.includes(id)));
   const typesCrud = namedCrud(db.contractTypes, 'contract type', (id) => db.contracts.some((c) => c.typeId === id));
 
-  return api;
+  return r4.decorate(api);
 }

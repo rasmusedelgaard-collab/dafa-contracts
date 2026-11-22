@@ -9,6 +9,7 @@ import { RenewalDialog } from '../../features/RenewalDialog';
 import { addDays, formatDate, monthShort, noticeLabel, todayIso } from '../../lib/dates';
 import { formatMoneyCompact, plural } from '../../lib/format';
 import { buildLanes, isOverdue, markerUrgency, onAxis, timelineAxis, type LaneGrouping, type Marker } from '../../lib/timeline';
+import { ScopeChip } from '../../shell/ScopeChip';
 
 // One extra month is requested so the last column of the axis (which starts on the 1st of this month) is complete.
 const MONTHS = 12;
@@ -107,15 +108,15 @@ export function Renewals() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [decideFor, setDecideFor] = useState<string | null>(null);
 
-  const renewals = useQuery({ queryKey: qk.renewals(MONTHS + 1), queryFn: () => api.getRenewals(MONTHS + 1) });
+  const renewals = useQuery({ queryKey: [...qk.renewals(MONTHS + 1), scope.entityIds], queryFn: () => api.getRenewals(MONTHS + 1, scope.entityIds) });
 
   // "Today" as the API sees it, so the axis and the day counts agree.
   const first = renewals.data?.[0];
   const today = first ? addDays(first.noticeDeadline, -first.daysToNotice) : todayIso();
   const items = useMemo(() => {
-    const scoped = (renewals.data ?? []).filter((i) => !scope.entityId || i.entityId === scope.entityId);
-    return onAxis(scoped, timelineAxis(today, MONTHS)).sort((a, b) => a.noticeDeadline.localeCompare(b.noticeDeadline));
-  }, [renewals.data, scope.entityId, today]);
+    // Release 4: the API applies the entity scope (`entityId`).
+    return onAxis(renewals.data ?? [], timelineAxis(today, MONTHS)).sort((a, b) => a.noticeDeadline.localeCompare(b.noticeDeadline));
+  }, [renewals.data, today]);
 
   const selected = items.find((i) => i.id === selectedId) ?? items[0] ?? null;
   const overdue = items.filter(isOverdue).length;
@@ -138,6 +139,7 @@ export function Renewals() {
           </>
         ) : null}
       </div>
+      <ScopeChip />
 
       {renewals.isLoading ? (
         <Card pad role="status" aria-label="Loading renewals" className="stack" style={{ gap: 14 }}>
@@ -153,7 +155,7 @@ export function Renewals() {
           <EmptyState
             icon="calendar"
             title="No notice deadlines in the next 12 months"
-            text={scope.entityId ? 'No active contract in the selected legal entity has a notice deadline in this period. Choose "All entities" in the top bar to see the rest.' : 'Active contracts with an end date and a notice period show up here when their deadline comes within 12 months.'}
+            text={scope.entityIds.length ? 'No active contract in the selected legal entity has a notice deadline in this period. Choose "All entities" in the top bar to see the rest.' : 'Active contracts with an end date and a notice period show up here when their deadline comes within 12 months.'}
             action={
               <ButtonLink to="/contracts" variant="secondary" size="md">
                 Browse contracts

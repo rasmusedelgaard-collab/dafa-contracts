@@ -18,7 +18,7 @@ export type RenewalDecision = 'Renew' | 'Renegotiate' | 'GiveNotice' | 'LetExpir
 export type LinkKind = 'Amendment' | 'Appendix' | 'Framework' | 'Related';
 export type DocumentKind = 'Main' | 'Appendix' | 'Amendment' | 'ApprovalLog' | 'Other';
 
-export interface Me {
+export interface Me extends UserV4 {
   id: Id;
   name: string;
   email: string;
@@ -35,7 +35,7 @@ export interface NamedRef {
   name: string;
 }
 
-export interface LookupUser {
+export interface LookupUser extends UserV4 {
   id: Id;
   name: string;
   initials: string;
@@ -205,6 +205,7 @@ export interface ContractDetail
   extends Omit<ContractListItem, keyof ContractListItemV3>,
     Omit<ContractFields, 'changeOfControl'>,
     ContractDetailV3,
+    ContractDetailV4,
     Pick<ContractListItemV3, 'annualValueDkk' | 'totalValueDkk' | 'delegateName' | 'responsibleName' | 'counterpartyId' | 'createdAt' | 'hasSignedDocument'> {
   /** null when it was never filled in (then "Change of control" is in `missingData`). */
   changeOfControl: boolean | null;
@@ -356,7 +357,7 @@ export interface ExtractResult {
   note?: string | null;
 }
 
-export interface Template {
+export interface Template extends TemplateV4 {
   id: Id;
   name: string;
   description: string;
@@ -469,7 +470,7 @@ export interface NameInput {
   name: string;
 }
 
-export interface TemplateInput {
+export interface TemplateInput extends TemplateV4 {
   name: string;
   description: string;
   typeId: Id | null;
@@ -532,6 +533,8 @@ export type HolidayCoverInput = Pick<HolidayCover, 'userId' | 'deputyId' | 'from
 
 /** `GET dev/config` (anonymous): how this site signs users in. */
 export interface DevConfig {
+  /** Release 4: logo for the sign-in screen. */
+  branding?: Branding;
   authMode: 'Dev' | 'Entra';
   /** Dev mode only: a shared access code must be entered before the demo-user picker. */
   accessCodeRequired: boolean;
@@ -614,7 +617,7 @@ export type DateField = 'notice' | 'end' | 'start' | 'created' | 'signed';
  * A parameter given several times (`entityId=a&entityId=b`) matches ANY of its values; different
  * parameters must ALL match. Unknown ids simply match nothing.
  */
-export interface ContractFilter {
+export interface ContractFilter extends ContractFilterV4 {
   q?: string;
   /** Explicit contract ids (e.g. "export selected"). */
   id?: Id[];
@@ -659,7 +662,7 @@ export interface ContractFilter {
    */
   includeEnded?: boolean;
   /** Custom-field filters, sent as `cf.<key>=<value>`; MultiChoice matches if the value is one of the selected options; YesNo uses "true"/"false". */
-  cf?: Record<string, string>;
+  cf?: Record<string, string | string[]>;
 }
 
 export type ContractSortFieldV3 =
@@ -826,7 +829,7 @@ export interface FullSearchQuery {
   group?: SearchGroup;
   /** Contracts where this person has any role (owner, delegate, responsible), or documents uploaded by them. */
   personId?: Id;
-  entityId?: Id;
+  entityId?: Id | Id[];
   departmentId?: Id;
   typeId?: Id;
   documentKind?: DocumentKind;
@@ -1217,7 +1220,7 @@ export interface FieldRules {
 
 // ----- Reference data admin -----
 
-export interface LegalEntity {
+export interface LegalEntity extends LegalEntityLinkFields {
   id: Id;
   name: string;
   /** ISO 3166 alpha-2. */
@@ -1227,7 +1230,7 @@ export interface LegalEntity {
   isActive: boolean;
   contractCount: number;
 }
-export type LegalEntityInput = Pick<LegalEntity, 'name' | 'country' | 'currency' | 'isActive'>;
+export type LegalEntityInput = Pick<LegalEntity, 'name' | 'country' | 'currency' | 'isActive' | 'sharePointSiteUrl' | 'managementGroupId'>;
 
 /** Release 3: departments and types can also be deactivated (inactive = not offered for new contracts). */
 export interface NamedRefV3 extends NamedRef {
@@ -1254,7 +1257,7 @@ export type TagInput = Pick<Tag, 'name' | 'color' | 'description'>;
 
 // ----- Users and access (admin) -----
 
-export interface AdminUser {
+export interface AdminUser extends UserV4 {
   id: Id;
   name: string;
   email: string;
@@ -1273,7 +1276,7 @@ export interface AdminUser {
   /** Contracts where the user has any role (unscoped). */
   contractCount: number;
 }
-export type AdminUserInput = Pick<AdminUser, 'name' | 'email' | 'title' | 'roles' | 'departmentIds' | 'managedEntityIds' | 'isGroupManagement' | 'isActive'>;
+export type AdminUserInput = Pick<AdminUser, 'name' | 'email' | 'title' | 'roles' | 'departmentIds' | 'managedEntityIds' | 'isGroupManagement' | 'isActive' | 'entityId' | 'canSendForSignature' | 'signatureEntityIds'>;
 
 export type AccessRule = 'Department' | 'EntityManagement' | 'GroupManagement' | 'OnContract' | 'Admin' | 'CurrentApprover';
 export interface AccessReason {
@@ -1428,7 +1431,7 @@ export const DATA_QUALITY_FIELDS = [
 ] as const;
 export type DataQualityField = (typeof DATA_QUALITY_FIELDS)[number] | `cf.${string}`;
 
-export interface AppSettings {
+export interface AppSettings extends AppSettingsV4 {
   appName: string;
   dateFormat: DateFormat;
   numberFormat: NumberFormat;
@@ -1590,7 +1593,11 @@ export interface DataRoomExport {
 
 // ----- Personal settings -----
 
+export type ThemePreference = 'light' | 'dark' | 'system';
+
 export interface UserPreferences {
+  /** Release 4 (item I). Default 'light'. */
+  theme?: ThemePreference;
   digest: DigestFrequency;
   /** Per event; events the user is not a recipient of by default may be listed too. */
   events: { event: NotificationEvent; label: string; email: boolean; teams: boolean; inApp: boolean }[];
@@ -1603,7 +1610,7 @@ export interface UserPreferences {
 }
 
 /** `GET app-config` for every signed-in user: what forms and pages need from the admin settings. */
-export interface AppConfig {
+export interface AppConfig extends AppConfigV4 {
   appName: string;
   dateFormat: DateFormat;
   numberFormat: NumberFormat;
@@ -1621,4 +1628,292 @@ export interface AppConfig {
   rates: Record<string, number>;
   /** Shared data-room export allowed for the caller (Admin, group or entity management). */
   canExportDataRoom: boolean;
+}
+
+// =====================================================================================
+// Release 4 (docs/CONTRACT_V4.md)
+// =====================================================================================
+
+/** Contract filter additions for register header filters (CONTRACT_V4 §2). */
+export interface ContractFilterV4 {
+  title?: string;
+  contractNo?: string;
+  counterpartyName?: string;
+  delegateId?: Id | Id[];
+  responsibleId?: Id | Id[];
+  currency?: string | string[];
+  /** DKK, inclusive. */
+  annualValueMin?: number;
+  annualValueMax?: number;
+  totalValueMin?: number;
+  totalValueMax?: number;
+  noticeFrom?: string;
+  noticeTo?: string;
+  endFrom?: string;
+  endTo?: string;
+  startFrom?: string;
+  startTo?: string;
+  signedFrom?: string;
+  signedTo?: string;
+  createdFrom?: string;
+  createdTo?: string;
+}
+
+export type DistinctColumn = 'counterparty' | 'type' | 'entity' | 'department' | 'owner' | 'delegate' | 'responsible' | 'status' | 'currency' | 'tags' | `cf.${string}`;
+export interface DistinctValue {
+  value: string;
+  label: string;
+  count: number;
+}
+export interface DistinctValues {
+  column: DistinctColumn;
+  values: DistinctValue[];
+  truncated: boolean;
+}
+
+/** Type-ahead result for person pickers (`GET people?q=`). */
+export interface PersonOption {
+  id: Id;
+  name: string;
+  initials: string;
+  email: string;
+  title: string | null;
+  departmentName: string | null;
+  entityName: string | null;
+  isActive: boolean;
+}
+export interface PeopleQuery {
+  q?: string;
+  limit?: number;
+  role?: Exclude<Role, 'Reader'>;
+  includeInactive?: boolean;
+}
+
+export type CounterpartyCreation = 'AdminOnly' | 'ContractOwners' | 'AllUsers';
+export type CounterpartyCreateInput = Pick<Counterparty, 'name' | 'country' | 'vatNo' | 'kind' | 'city' | 'email' | 'phone'>;
+
+// ----- Template categories (E) -----
+export type TemplateLanguage = 'da' | 'en' | 'sv' | 'de' | 'pl' | 'it' | 'zh';
+export interface TemplateCategory {
+  id: Id;
+  name: string;
+  description: string;
+  order: number;
+  isActive: boolean;
+  templateCount: number;
+}
+export type TemplateCategoryInput = Pick<TemplateCategory, 'name' | 'description' | 'isActive'>;
+/** Fields release 4 adds to `Template` and `TemplateInput`. */
+export interface TemplateV4 {
+  categoryId?: Id | null;
+  categoryName?: string | null;
+  /** Empty = every contract type. */
+  typeIds?: Id[];
+  language?: TemplateLanguage | null;
+  isActive?: boolean;
+  updatedAt?: string;
+}
+export interface TemplatePlaceholder {
+  name: string;
+  label: string;
+  sample: string;
+}
+export interface TemplatePreviewInfo {
+  id: Id;
+  name: string;
+  description: string;
+  placeholders: TemplatePlaceholder[];
+  excerpt: string;
+}
+
+// ----- Branding (F) -----
+export type LogoVariant = 'full' | 'compact' | 'dark';
+export interface Branding {
+  logoUrl: string | null;
+  compactLogoUrl: string | null;
+  /** Optional logo for the dark theme (item I); null = use `logoUrl`. */
+  darkLogoUrl?: string | null;
+  version: string;
+}
+
+// ----- SharePoint / Entra link (G) -----
+export type LinkState = 'NotLinked' | 'Linked' | 'Error';
+export interface LinkStatus {
+  state: LinkState;
+  checkedAt: string | null;
+  message: string | null;
+}
+export interface LegalEntityLinkFields {
+  sharePointSiteUrl?: string | null;
+  sharePointSiteId?: string | null;
+  managementGroupId?: string | null;
+  managementGroupName?: string | null;
+  link?: LinkStatus;
+}
+export interface DepartmentAdmin extends NamedRefV3 {
+  documentLibrary?: string | null;
+  groupId?: string | null;
+  groupName?: string | null;
+  link?: LinkStatus;
+}
+export interface DepartmentInputV4 extends NameInputV3 {
+  documentLibrary?: string | null;
+  groupId?: string | null;
+}
+export interface LinkTestResult {
+  link: LinkStatus;
+  siteId: string | null;
+  groupName: string | null;
+  details: string[];
+}
+export interface AccessMappingCell {
+  entityId: Id;
+  departmentId: Id;
+  siteUrl: string | null;
+  library: string | null;
+  entityGroupName: string | null;
+  departmentGroupName: string | null;
+  contractCount: number;
+  warnings: string[];
+}
+export interface AccessMapping {
+  mode: 'Local' | 'SharePoint';
+  entities: NamedRef[];
+  departments: NamedRef[];
+  cells: AccessMappingCell[];
+  warnings: string[];
+}
+
+// ----- E-signature (H) -----
+export type ESignProvider = 'None' | 'Simulated' | 'DocuSign' | 'Penneo';
+export type SigningOrder = 'Sequential' | 'Parallel';
+export interface AuthorisedSignatories {
+  entityId: Id;
+  userIds: Id[];
+  externalNames: string[];
+}
+export interface ESignSettings {
+  provider: ESignProvider;
+  defaultMessage: string;
+  defaultOrder: SigningOrder;
+  reminderDays: number[];
+  expiryDays: number;
+  requireApproved: boolean;
+  authorisedSignatories: AuthorisedSignatories[];
+  restrictToAuthorised: boolean;
+  providerAccount: string | null;
+}
+export type SignatureRequestStatus = 'Draft' | 'Sent' | 'Completed' | 'Declined' | 'Expired' | 'Cancelled';
+export type SignerStatus = 'Waiting' | 'Sent' | 'Viewed' | 'Signed' | 'Declined' | 'Expired';
+export interface Signer {
+  id: Id;
+  kind: 'Internal' | 'External';
+  userId: Id | null;
+  name: string;
+  email: string;
+  order: number;
+  status: SignerStatus;
+  at: string | null;
+  declineReason: string | null;
+}
+export interface SignatureRequest {
+  id: Id;
+  contractId: Id;
+  status: SignatureRequestStatus;
+  provider: ESignProvider;
+  order: SigningOrder;
+  message: string;
+  documentIds: Id[];
+  createdBy: string;
+  /** The sender's user id (the real API sends it; older answers may not). */
+  createdById?: Id;
+  createdAt: string;
+  sentAt: string | null;
+  completedAt: string | null;
+  expiresAt: string | null;
+  signers: Signer[];
+  signedDocumentId: Id | null;
+}
+export interface SignerInput {
+  kind: 'Internal' | 'External';
+  userId?: Id | null;
+  name?: string;
+  email?: string;
+  order: number;
+}
+export interface SignatureRequestInput {
+  documentIds: Id[];
+  signers: SignerInput[];
+  order: SigningOrder;
+  message: string;
+}
+export interface SimulateSignatureInput {
+  signerId: Id;
+  action: 'View' | 'Sign' | 'Decline';
+  reason?: string;
+}
+export interface SignaturePermissions {
+  canSend: boolean;
+  reason: string | null;
+  permittedUsers: PersonOption[];
+}
+/** Fields release 4 adds to users (`AdminUser`, `AdminUserInput`, `Me`, `LookupUser`). */
+export interface UserV4 {
+  entityId?: Id | null;
+  canSendForSignature?: boolean;
+  signatureEntityIds?: Id[];
+}
+/** Fields release 4 adds to `AppSettings`. */
+export interface AppSettingsV4 {
+  counterpartyCreation?: CounterpartyCreation;
+}
+/** Fields release 4 adds to `AppConfig`. */
+export interface AppConfigV4 {
+  branding?: Branding;
+  storageMode?: 'Local' | 'SharePoint';
+  /** `requireApproved` false: drafts and active contracts can be sent for signature too. Absent on older APIs. */
+  eSign?: { provider: ESignProvider; enabled: boolean; requireApproved?: boolean };
+  canCreateCounterparty?: boolean;
+}
+/** Fields release 4 adds to `ContractDetail`. */
+export interface ContractDetailV4 {
+  signature?: SignatureRequest | null;
+  canSendForSignature?: boolean;
+}
+
+// ----- Storage (CONTRACT_V4 §9a) -----
+export const STORAGE_PROBLEMS = {
+  unavailable: 'urn:dafa:problem:storage-unavailable',
+  fileMissing: 'urn:dafa:problem:file-missing',
+  notConfigured: 'urn:dafa:problem:storage-not-configured',
+} as const;
+export type StorageState = 'Healthy' | 'Degraded' | 'Down' | 'NotConfigured';
+export interface StorageHealth {
+  mode: 'Local' | 'SharePoint';
+  state: StorageState;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastError: string | null;
+  checkedAt: string;
+  recentFailures: number;
+  details: string[];
+}
+export type ReconciliationKind = 'MissingFile' | 'Orphan' | 'Mismatch' | 'MisplacedFolder';
+export interface ReconciliationItem {
+  kind: ReconciliationKind;
+  contractId: Id | null;
+  contractNo: string | null;
+  documentId: Id | null;
+  path: string;
+  detail: string;
+}
+export interface ReconciliationReport {
+  id: Id;
+  startedAt: string;
+  finishedAt: string | null;
+  status: 'Running' | 'Completed' | 'Failed';
+  error: string | null;
+  checkedDocuments: number;
+  checkedFolders: number;
+  items: ReconciliationItem[];
 }

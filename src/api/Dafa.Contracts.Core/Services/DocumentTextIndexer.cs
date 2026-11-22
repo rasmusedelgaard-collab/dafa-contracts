@@ -101,12 +101,27 @@ public class DocumentTextIndexer
         return row;
     }
 
-    /// <summary>Indexes up to <paramref name="max"/> documents that have no text row yet. Returns how many were indexed.</summary>
+    /// <summary>How long to wait before the next try: 15 minutes, doubling, at most a day.</summary>
+    public static TimeSpan Backoff(int attempts)
+    {
+        var minutes = 15d * Math.Pow(2, Math.Clamp(attempts - 1, 0, 10));
+        return TimeSpan.FromMinutes(Math.Min(minutes, 24 * 60));
+    }
+
+    /// <summary>
+    /// Indexes up to <paramref name="max"/> documents that have no text row yet, and retries the
+    /// ones whose file could not be read earlier (status Retry, when their next attempt is due).
+    /// A store that is down is not a reason to give up on a document: it is retried with a
+    /// growing pause, DocumentText.MaxAttempts times. Only a file that is really gone, or that
+    /// still cannot be read after all attempts, ends as Failed. Returns how many were indexed.
+    /// </summary>
     public async Task<int> BackfillAsync(int max = DefaultBatch, CancellationToken cancellationToken = default)
     {
+        var now = _clock.UtcNow;
         var texts = _db.DocumentTexts.AsNoTracking();
+        var due = _db.DocumentTexts.AsNoTracking().Where(t => t.Status == "Retry" && (t.NextAttemptAt == null || t.NextAttemptAt <= now));
         var pending = await _db.Documents.AsNoTracking()
-            .Where(d => !texts.Any(t => t.DocumentId == d.Id))
+            .Where(d => !texts.Any(t => t.DocumentId == d.Id) || due.Any(t => t.DocumentId == d.Id))
             .OrderBy(d => d.UploadedAt)
             .Take(Math.Max(1, max))
             .ToListAsync(cancellationToken);
@@ -127,19 +142,26 @@ public class DocumentTextIndexer
             }
             catch (Exception ex)
             {
-                // A missing or unreadable file is recorded, so it is not retried every run.
-                _db.DocumentTexts.Add(new DocumentText
+                var documentId = document.Id;
+                var row = await _db.DocumentTexts.FirstOrDefaultAsync(t => t.DocumentId == documentId, cancellationToken);
+                if (row is null)
                 {
-                    DocumentId = document.Id,
-                    ContractId = document.ContractId,
-                    Status = "Failed",
-                    Note = ex.Message.Length > 400 ? ex.Message.Substring(0, 400) : ex.Message,
-                    ExtractedAt = _clock.UtcNow
-                });
+                    row = new DocumentText { DocumentId = document.Id, ContractId = document.ContractId };
+                    _db.DocumentTexts.Add(row);
+                }
+                row.Attempts++;
+                var gone = ex is FileNotFoundException || ex is Dafa.Contracts.Core.Common.StorageFileMissingException;
+                var giveUp = gone || row.Attempts >= DocumentText.MaxAttempts;
+                row.Status = giveUp ? "Failed" : "Retry";
+                row.NextAttemptAt = giveUp ? null : _clock.UtcNow.Add(Backoff(row.Attempts));
+                var note = (gone ? "The file is missing from storage. " : "Attempt " + row.Attempts + " of " + DocumentText.MaxAttempts + ": ") + ex.Message;
+                row.Note = note.Length > 400 ? note.Substring(0, 400) : note;
+                row.ExtractedAt = _clock.UtcNow;
                 await _db.SaveChangesAsync(cancellationToken);
                 continue;
             }
-            await IndexAsync(document, content, cancellationToken);
+            var indexed = await IndexAsync(document, content, cancellationToken);
+            indexed.NextAttemptAt = null;
             await _db.SaveChangesAsync(cancellationToken);
             count++;
         }

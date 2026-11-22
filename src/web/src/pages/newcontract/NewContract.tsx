@@ -2,17 +2,21 @@ import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError } from '../../api/api';
+import { errorMessage, fieldErrors } from '../../lib/errors';
 import { permissions, qk, useApi, useAppConfig, useInvalidateContracts, useLookups, useMe, useReminderSettings, useScope } from '../../app/context';
 import type { ContractDetail, ExtractResult, LinkKind, ObligationInput, Template } from '../../api/types';
-import { Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Field, Icon, Pill, Select, Skeleton, TextInput, useToast } from '../../components';
+import { Button, ButtonLink, Card, CardTitle, EmptyState, Field, Icon, Pill, Select, Skeleton, TextInput, useToast } from '../../components';
 import { Deviations, RoutePreview } from '../../features/Approval';
 import { ContractForm } from '../../features/ContractForm';
-import { UPLOAD_ACCEPT, uploadError } from '../../lib/uploads';
+import { INTAKE_ACCEPT, intakeUploadError } from '../../lib/uploads';
 import { formatDate, formatDayMonth, noticeDeadline, reminderSchedule } from '../../lib/dates';
 import { fileExtension, formatFileSize, formatMoney, plural } from '../../lib/format';
 import { applySuggestions } from '../../lib/suggestions';
 import { draftToInput, emptyDraft, hasErrors, parseAmount, parseWhole, routeValue, validateDraft, type ContractDraft, type DraftErrors } from '../../lib/validation';
 import { LINK_KINDS } from '../record/dialogs';
+import { PersonPicker } from '../../features/Pickers';
+import { TemplateChooser } from '../../features/TemplateChooser';
+import { useFileError } from '../../features/fileErrors';
 
 const STEPS = ['Upload', 'Details', 'Links and obligations', 'Approval'] as const;
 
@@ -61,11 +65,8 @@ function ValueBands({ value }: { value: number }) {
 // ---------------------------------------------------------------------------
 
 function StartStep({ onFile, reading, onTemplate, onManual, preferTemplate }: { onFile: (f: File) => void; reading: boolean; onTemplate: (t: Template) => void; onManual: () => void; preferTemplate: boolean }) {
-  const api = useApi();
   const inputRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
-  const templates = useQuery({ queryKey: qk.templates, queryFn: () => api.getTemplates() });
-
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setOver(false);
@@ -88,7 +89,7 @@ function StartStep({ onFile, reading, onTemplate, onManual, preferTemplate }: { 
           </span>
         ) : (
           <>
-            <span style={{ fontWeight: 600 }}>Drop a PDF or Word file here</span>
+            <span style={{ fontWeight: 600 }}>Drop a PDF or Word (.docx) file here</span>
             <span className="caption">AI reads the file and suggests the details. You check each suggestion.</span>
           </>
         )}
@@ -98,7 +99,7 @@ function StartStep({ onFile, reading, onTemplate, onManual, preferTemplate }: { 
           className="sr-only"
           tabIndex={-1}
           aria-hidden="true"
-          accept={UPLOAD_ACCEPT}
+          accept={INTAKE_ACCEPT}
           onChange={(e) => {
             const file = e.target.files?.[0];
             e.target.value = '';
@@ -118,30 +119,7 @@ function StartStep({ onFile, reading, onTemplate, onManual, preferTemplate }: { 
         Start from a template
       </h2>
       <span className="secondary">The draft is written from the DAFA template with the details you fill in, and saved to the contract's documents.</span>
-      {templates.isLoading ? (
-        <div className="stack" style={{ gap: 8 }} role="status" aria-label="Loading templates">
-          <Skeleton height={62} radius={12} />
-          <Skeleton height={62} radius={12} />
-        </div>
-      ) : templates.isError ? (
-        <ErrorState text="The templates could not be loaded." onRetry={() => void templates.refetch()} />
-      ) : (templates.data ?? []).length === 0 ? (
-        <EmptyState compact title="No templates yet" text="An administrator can add templates in Settings." />
-      ) : (
-        <div className="stack" style={{ gap: 8 }}>
-          {(templates.data ?? []).map((t) => (
-            <button key={t.id} type="button" className="template-opt" disabled={reading} onClick={() => onTemplate(t)}>
-              <span className="tile tone-blue" aria-hidden="true">
-                DOC
-              </span>
-              <span className="kv">
-                <span className="kv__v">{t.name}</span>
-                <span className="kv__k">{t.description}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
+      <TemplateChooser disabled={reading} onPick={onTemplate} />
     </Card>
   );
 
@@ -269,7 +247,7 @@ function LinksStep({ links, setLinks, obligations, setObligations, defaultRespon
           <Field label="Repeats every (months)" optional error={obError.frequency}>
             {(p) => <TextInput {...p} inputMode="numeric" value={frequency} onChange={(e) => setFrequency(e.target.value)} placeholder="12" />}
           </Field>
-          <Field label="Responsible">{(p) => <Select {...p} value={responsibleId} onChange={(e) => setResponsibleId(e.target.value)} options={lookups.users.map((u) => ({ value: u.id, label: u.name }))} />}</Field>
+          <Field label="Responsible">{(p) => <PersonPicker {...p} value={responsibleId || null} clearLabel="Clear responsible" onChange={(id) => setResponsibleId(id ?? '')} />}</Field>
           <Button variant="tint" icon="plus" onClick={addObligation}>
             Add obligation
           </Button>
@@ -304,6 +282,7 @@ export function NewContract() {
   const lookups = useLookups();
   const scope = useScope();
   const toast = useToast();
+  const fileError = useFileError();
   const navigate = useNavigate();
   const client = useQueryClient();
   const invalidate = useInvalidateContracts();
@@ -337,6 +316,18 @@ export function NewContract() {
       const applied = applySuggestions(draft, result.suggestions, lookups);
       const next = !applied.draft.summary && result.summary ? { ...applied.draft, summary: result.summary } : applied.draft;
       setDraft(next);
+      // Release 4: a suggested counterparty name is matched to the master data (exact name); the
+      // user still accepts the suggestion. Without a match the picker starts with the name.
+      if (!next.supplierId && next.counterpartyName.trim()) {
+        const name = next.counterpartyName.trim().toLowerCase();
+        void api
+          .getCounterparties(next.counterpartyName.trim())
+          .then((list) => {
+            const hit = list.find((c) => c.isActive && c.name.trim().toLowerCase() === name);
+            if (hit) setDraft((d) => (d.supplierId || d.counterpartyName.trim().toLowerCase() !== name ? d : { ...d, supplierId: hit.id, counterpartyName: hit.name }));
+          })
+          .catch(() => undefined);
+      }
       setPending(new Set(applied.fields));
       setAccepted(new Set());
       setSource({ kind: 'upload', result });
@@ -346,11 +337,11 @@ export function NewContract() {
       if (result.note) toast.show(result.note);
       else toast.show(`${plural(applied.fields.length, 'field')} suggested from ${result.fileName}`);
     },
-    onError: (e) => toast.error(e, 'The file could not be read. Try again.'),
+    onError: (e, file) => fileError(e, 'The file could not be read. Try again.', () => extract.mutate(file)),
   });
   /** Checks type and size before the file is sent for reading. */
   const readFile = (file: File) => {
-    const problem = uploadError(file);
+    const problem = intakeUploadError(file);
     if (problem) toast.error(null, `${file.name}: ${problem}.`);
     else extract.mutate(file);
   };
@@ -447,7 +438,7 @@ export function NewContract() {
         try {
           await fn();
         } catch (e) {
-          warnings.push(`${what}: ${e instanceof ApiError ? (e.problem.detail ?? e.problem.title) : 'failed'}`);
+          warnings.push(`${what}: ${e instanceof ApiError ? errorMessage(e).replace(/\.$/, '') : 'failed'}`);
         }
       };
       for (const l of links) await attempt(`Link to ${l.title}`, () => api.createLink(contract.id, { toContractId: l.toContractId, kind: l.kind }));
@@ -468,7 +459,7 @@ export function NewContract() {
     },
     onError: (e) => {
       if (e instanceof ApiError && e.problem.errors) {
-        setErrors(Object.fromEntries(Object.entries(e.problem.errors).map(([k, v]) => [k, v[0] ?? 'Not valid'])) as DraftErrors);
+        setErrors(fieldErrors(e) as DraftErrors);
         setTried(true);
         goTo(1);
       }
@@ -616,7 +607,7 @@ export function NewContract() {
                     className="sr-only"
                     tabIndex={-1}
                     aria-hidden="true"
-                    accept={UPLOAD_ACCEPT}
+                    accept={INTAKE_ACCEPT}
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       e.target.value = '';

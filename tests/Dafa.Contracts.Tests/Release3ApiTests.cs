@@ -34,7 +34,7 @@ public class Release3ApiTests : IClassFixture<ApiFactory>
         await _factory.WithDbAsync(async db =>
         {
             var versions = await new SchemaUpgrader(db).GetRecordedVersionsAsync();
-            Assert.Equal(new List<int> { 1, 2 }, versions);
+            Assert.Equal(new List<int> { 1, 2, 3, 4 }, versions);
         });
     }
 
@@ -230,7 +230,8 @@ public class Release3ApiTests : IClassFixture<ApiFactory>
         Assert.True(config.GetProperty("rates").GetProperty("DKK").GetDecimal() == 1m);
 
         var preferences = await newcomer.GetFromJsonAsync<JsonElement>("/api/me/preferences");
-        Assert.Equal(13, preferences.GetProperty("events").GetArrayLength());
+        // 13 release 3 events + SignatureRequested, SignatureCompleted, SignatureDeclined (release 4).
+        Assert.Equal(16, preferences.GetProperty("events").GetArrayLength());
         var put = await newcomer.PutAsync("/api/me/preferences", Json(new { digest = "Off", events = Array.Empty<object>(), defaultEntityId = (Guid?)null, landingPage = "contracts", autoWatch = true }));
         Assert.Equal(HttpStatusCode.OK, put.StatusCode);
         var after = await newcomer.GetFromJsonAsync<JsonElement>("/api/app-config");
@@ -239,7 +240,8 @@ public class Release3ApiTests : IClassFixture<ApiFactory>
         Assert.Equal(HttpStatusCode.Forbidden, (await newcomer.GetAsync("/api/admin/jobs")).StatusCode);
         var admin = await _factory.LoginAsync("mette");
         var jobs = await admin.GetFromJsonAsync<JsonElement>("/api/admin/jobs");
-        Assert.Equal(8, jobs.GetArrayLength());
+        // 8 release 3 jobs + SignatureSync and StorageReconciliation (release 4).
+        Assert.Equal(10, jobs.GetArrayLength());
         var update = await admin.PutAsync("/api/admin/jobs/Digest", Json(new { schedule = new { frequency = "Weekly", time = "07:30", dayOfWeek = 1 } }));
         Assert.Equal(HttpStatusCode.OK, update.StatusCode);
         var badSchedule = await admin.PutAsync("/api/admin/jobs/Digest", Json(new { schedule = new { frequency = "Weekly", time = "07:30", dayOfWeek = 9 } }));

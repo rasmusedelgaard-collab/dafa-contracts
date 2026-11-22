@@ -24,8 +24,8 @@
   flex: 0 0 auto;
 }
 .hero {
-  background: var(--primary);
-  color: #fff;
+  background: var(--hero-bg);
+  color: var(--on-hero);
   border-radius: var(--r-hero);
   padding: 24px;
   display: flex;
@@ -64,7 +64,7 @@
   gap: 12px;
 }
 .hero-stat {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--on-hero-softer);
   border-radius: 18px;
   padding: 20px;
   display: flex;
@@ -190,7 +190,7 @@ a.task__title:hover {
   background: var(--red-fg);
 }
 .bar__fill--soon {
-  background: var(--primary);
+  background: var(--primary-fill);
 }
 .bar__fill--zero {
   background: var(--bar-idle);
@@ -256,7 +256,7 @@ a.task__title:hover {
   background: transparent;
 }
 .search-pill input::placeholder {
-  color: #6b7682;
+  color: var(--placeholder);
 }
 .cell-title {
   display: flex;
@@ -397,7 +397,7 @@ a.task__title:hover {
 }
 .lifecycle li[data-state='done'] .lifecycle__bar,
 .lifecycle li[data-state='current'] .lifecycle__bar {
-  background: var(--primary);
+  background: var(--primary-fill);
 }
 .lifecycle li[data-state='done'] .lifecycle__name {
   color: var(--text);
@@ -644,8 +644,8 @@ a.task__title:hover {
 }
 .band--on {
   border-color: var(--primary);
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
 }
 .dropzone {
   display: flex;

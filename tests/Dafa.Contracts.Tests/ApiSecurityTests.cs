@@ -253,7 +253,8 @@ public class ApiSecurityTests : IClassFixture<ApiFactory>
         {
             title = "Borrowed upload",
             typeId = SeedIds.ContractType(SeedNames.TypeIt),
-            counterpartyName = "Somebody ApS",
+            // Release 4: a counterparty from the master data (free text is no longer accepted).
+            supplierId = SeedIds.Supplier("S-10010"),
             entityId = SeedIds.Entity("DAFA A/S"),
             departmentId = SeedIds.Department("IT"),
             ownerId = SeedIds.User("peter"),

@@ -1,10 +1,12 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { qk, useApi } from '../../app/context';
-import type { Currency, LegalEntity, LegalEntityInput, Tag, TagColor, TagInput } from '../../api/types';
+import { qk, useApi, useAppConfig } from '../../app/context';
+import type { Currency, LegalEntity, LegalEntityInput, LinkStatus, LinkTestResult, Tag, TagColor, TagInput } from '../../api/types';
 import { Button, Card, EmptyState, ErrorState, Field, Modal, Pill, Select, SkeletonRows, Table, TextInput, useToast } from '../../components';
 import { plural } from '../../lib/format';
+import { formatDateTime } from '../../lib/dates';
+import { fieldErrors } from '../../lib/errors';
 import { ConfirmDelete, SectionHead } from './common';
 
 /** Refreshes lookups and app config after a reference-data change. */
@@ -15,18 +17,21 @@ export function useRefreshReference() {
 
 /** Field errors from a 400 problem. */
 export function problemErrors(e: unknown): Record<string, string> {
-  const errors = (e as { problem?: { errors?: Record<string, string[]> } })?.problem?.errors ?? {};
-  return Object.fromEntries(Object.entries(errors).map(([k, v]) => [k, v[0] ?? 'Not valid']));
+  return fieldErrors(e);
 }
 
 function EntityDialog({ item, currencies, onClose }: { item: LegalEntity | null; currencies: Currency[]; onClose: () => void }) {
   const api = useApi();
   const toast = useToast();
   const refresh = useRefreshReference();
-  const [d, setD] = useState<LegalEntityInput>(item ? { name: item.name, country: item.country, currency: item.currency, isActive: item.isActive } : { name: '', country: 'DK', currency: 'DKK', isActive: true });
+  const [d, setD] = useState<LegalEntityInput>(item ? { name: item.name, country: item.country, currency: item.currency, isActive: item.isActive, sharePointSiteUrl: item.sharePointSiteUrl ?? '', managementGroupId: item.managementGroupId ?? '' } : { name: '', country: 'DK', currency: 'DKK', isActive: true, sharePointSiteUrl: '', managementGroupId: '' });
+  const config = useAppConfig();
   const [errors, setErrors] = useState<Record<string, string>>({});
   const save = useMutation({
-    mutationFn: () => (item ? api.admin.updateEntity(item.id, d) : api.admin.createEntity(d)),
+    mutationFn: () => {
+      const input = { ...d, sharePointSiteUrl: d.sharePointSiteUrl?.trim() || null, managementGroupId: d.managementGroupId?.trim() || null };
+      return item ? api.admin.updateEntity(item.id, input) : api.admin.createEntity(input);
+    },
     onSuccess: async () => {
       await refresh();
       toast.show(item ? 'Legal entity saved' : 'Legal entity added');
@@ -41,6 +46,8 @@ function EntityDialog({ item, currencies, onClose }: { item: LegalEntity | null;
     const e: Record<string, string> = {};
     if (!d.name.trim()) e.name = 'Enter the name';
     if (!/^[A-Za-z]{2}$/.test(d.country.trim())) e.country = 'Two letters, e.g. DK';
+    if (d.sharePointSiteUrl?.trim() && !/^https:\/\/[a-z0-9-]+\.sharepoint\.com\/sites\/[A-Za-z0-9._-]+\/?$/.test(d.sharePointSiteUrl.trim())) e.sharePointSiteUrl = 'Use https://<tenant>.sharepoint.com/sites/<name>';
+    if (d.managementGroupId?.trim() && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(d.managementGroupId.trim())) e.managementGroupId = 'The Entra group object id (a GUID)';
     setErrors(e);
     if (!Object.keys(e).length) save.mutate();
   };
@@ -74,6 +81,16 @@ function EntityDialog({ item, currencies, onClose }: { item: LegalEntity | null;
           <input type="checkbox" checked={d.isActive} onChange={(e) => setD({ ...d, isActive: e.target.checked })} />
           Active (offered for new contracts)
         </label>
+        <h3 className="form-section">SharePoint and Entra ID{config.storageMode !== 'SharePoint' ? <Pill tone="gray" small>Used in SharePoint mode</Pill> : null}</h3>
+        <Field label="SharePoint site URL" optional error={errors.sharePointSiteUrl} className="form-grid__full" hint="The site that holds this entity's contract libraries.">
+          {(p) => <TextInput {...p} type="url" placeholder="https://dafa.sharepoint.com/sites/contracts-…" value={d.sharePointSiteUrl ?? ''} onChange={(e) => setD({ ...d, sharePointSiteUrl: e.target.value })} />}
+        </Field>
+        <Field label="Resolved site id" optional className="form-grid__full" hint="Filled in by Test link.">
+          {(p) => <TextInput {...p} readOnly value={item?.sharePointSiteId ?? ''} placeholder="Not resolved yet" />}
+        </Field>
+        <Field label="Entra group of the entity's management" optional error={errors.managementGroupId} className="form-grid__full" hint={item?.managementGroupName ? `Resolved: ${item.managementGroupName}` : 'Object id of the group, e.g. 6f1a2b3c-…'}>
+          {(p) => <TextInput {...p} value={d.managementGroupId ?? ''} onChange={(e) => setD({ ...d, managementGroupId: e.target.value })} />}
+        </Field>
       </div>
     </Modal>
   );
@@ -84,6 +101,7 @@ export function LegalEntitiesAdmin() {
   const list = useQuery({ queryKey: qk.admin('entities'), queryFn: () => api.admin.getEntities() });
   const currencies = useQuery({ queryKey: qk.admin('currencies'), queryFn: () => api.admin.getCurrencies() });
   const [editing, setEditing] = useState<LegalEntity | null | 'new'>(null);
+  const test = useLinkTest((id) => api.admin.testEntityLink(id), qk.admin('entities'));
   return (
     <>
       <SectionHead title="Legal entities" text="The DAFA companies a contract can belong to, with their country and functional currency. Each one gets its own SharePoint site in production. Deactivate instead of deleting." action={<Button icon="plus" onClick={() => setEditing('new')}>Add legal entity</Button>} />
@@ -104,6 +122,7 @@ export function LegalEntitiesAdmin() {
               { key: 'cur', header: 'Currency', render: (r) => r.currency },
               { key: 'k', header: 'Contracts', className: 'num', render: (r) => r.contractCount },
               { key: 'a', header: 'Status', render: (r) => (r.isActive ? <Pill tone="green">Active</Pill> : <Pill tone="gray">Inactive</Pill>) },
+              { key: 'l', header: 'SharePoint link', render: (r) => <LinkCell link={r.link} onTest={() => test.mutate(r.id)} testing={test.isPending && test.variables === r.id} name={r.name} /> },
               { key: 'e', header: '', className: 'num', render: (r) => <Button variant="ghost" size="sm" iconOnly icon="edit" aria-label={`Edit ${r.name}`} onClick={(e) => { e.stopPropagation(); setEditing(r); }} /> },
             ]}
           />
@@ -142,7 +161,9 @@ export function CurrenciesAdmin() {
     <>
       <SectionHead title="Currencies" text="Currencies a contract can be in, and the rate to DKK used for every DKK figure: Overview, value bands and the approval route." action={<Button loading={save.isPending} disabled={!rows} onClick={() => rows && save.mutate(rows)}>Save changes</Button>} />
       <Card clip>
-        {!rows ? (
+        {q.isError && !rows ? (
+          <ErrorState text="The currencies could not be loaded." onRetry={() => void q.refetch()} />
+        ) : !rows ? (
           <SkeletonRows rows={6} />
         ) : (
           <div className="table-wrap">
@@ -238,6 +259,8 @@ export function TagsAdmin() {
       <Card clip>
         {q.isLoading ? (
           <SkeletonRows rows={4} />
+        ) : q.isError ? (
+          <ErrorState text="The tags could not be loaded." onRetry={() => void q.refetch()} />
         ) : (q.data ?? []).length === 0 ? (
           <EmptyState icon="tag" title="No tags yet" />
         ) : (
@@ -296,5 +319,39 @@ export function TagsAdmin() {
       ) : null}
       {deleting ? <ConfirmDelete title={`Delete "${deleting.name}"?`} text={`The tag is removed from ${plural(deleting.usageCount, 'contract')}.`} pending={remove.isPending} onConfirm={() => remove.mutate(deleting)} onClose={() => setDeleting(null)} /> : null}
     </>
+  );
+}
+
+/** "Test link" for an entity or department: shows the result and refreshes the list. */
+export function useLinkTest(run: (id: string) => Promise<LinkTestResult>, key: readonly unknown[]) {
+  const client = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: run,
+    onSuccess: async (r) => {
+      await client.invalidateQueries({ queryKey: key });
+      await client.invalidateQueries({ queryKey: qk.admin('access-mapping') });
+      if (r.link.state === 'Linked') toast.show(`Linked. ${r.details.join(' ')}`);
+      else toast.error(null, `Not linked: ${r.details.join(' ')}`);
+    },
+    onError: (e) => toast.error(e),
+  });
+}
+
+export function LinkCell({ link, onTest, testing, name }: { link?: LinkStatus; onTest: () => void; testing: boolean; name: string }) {
+  const state = link?.state ?? 'NotLinked';
+  return (
+    <span className="link-cell" onClick={(e) => e.stopPropagation()}>
+      <Pill tone={state === 'Linked' ? 'green' : state === 'Error' ? 'red' : 'gray'} small>
+        {state === 'Linked' ? 'Linked' : state === 'Error' ? 'Error' : 'Not linked'}
+      </Pill>
+      <span className="caption" title={link?.message ?? ''}>
+        {link?.checkedAt ? `checked ${formatDateTime(link.checkedAt)}` : 'never checked'}
+        {link?.message ? ` · ${link.message}` : ''}
+      </span>
+      <Button variant="ghost" size="sm" loading={testing} onClick={onTest} aria-label={`Test link of ${name}`}>
+        Test link
+      </Button>
+    </span>
   );
 }

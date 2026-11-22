@@ -215,8 +215,8 @@ a:hover {
   z-index: 100;
   padding: 10px 16px;
   border-radius: var(--r-control);
-  background: var(--primary);
-  color: #fff;
+  background: var(--primary-fill);
+  color: var(--on-primary);
   font-weight: 600;
   /* Off screen until focused; not a transform, so nothing else is affected. */
   clip-path: inset(50%);
@@ -229,8 +229,8 @@ a:hover {
   clip-path: none;
   width: auto;
   height: auto;
-  color: #fff;
-  outline: 2px solid #fff;
+  color: var(--on-primary);
+  outline: 2px solid var(--on-primary);
   outline-offset: -4px;
 }
 

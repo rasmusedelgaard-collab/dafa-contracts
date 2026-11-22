@@ -177,6 +177,23 @@ public class ContractFilterEngine
             query = query.Where(c => c.OwnerId == person || c.DelegateId == person || c.ResponsibleId == person);
         }
 
+        // Release 4: header filters on delegate, responsible and currency.
+        if (filter.DelegateIds.Count > 0)
+        {
+            var ids = filter.DelegateIds.Distinct().ToList();
+            query = query.Where(c => c.DelegateId != null && ids.Contains(c.DelegateId.Value));
+        }
+        if (filter.ResponsibleIds.Count > 0)
+        {
+            var ids = filter.ResponsibleIds.Distinct().ToList();
+            query = query.Where(c => c.ResponsibleId != null && ids.Contains(c.ResponsibleId.Value));
+        }
+        if (filter.Currencies.Count > 0)
+        {
+            var codes = filter.Currencies.Distinct().ToList();
+            query = query.Where(c => codes.Contains(c.Currency));
+        }
+
         var hasStatus = filter.Statuses.Count > 0;
         if (hasStatus)
         {
@@ -226,11 +243,74 @@ public class ContractFilterEngine
                 ? query.Where(c => c.RenewalDecision != null)
                 : query.Where(c => c.RenewalDecision == null);
         }
-        if (filter.Custom.Count > 0)
+        // Release 4: a key given several times (CustomAny) wins over the single value; empty values are no filter.
+        var single = filter.Custom
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Value) && !filter.CustomAny.ContainsKey(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+        if (single.Count > 0)
         {
-            query = await ApplyCustomAsync(query, filter.Custom, cancellationToken);
+            query = await ApplyCustomAsync(query, single, cancellationToken);
+        }
+        if (filter.CustomAny.Count > 0)
+        {
+            query = await ApplyCustomAnyAsync(query, filter.CustomAny, cancellationToken);
         }
         return query;
+    }
+
+    /// <summary>
+    /// Release 4: cf.&lt;key&gt; given several times = any of the values (Choice: equals one; MultiChoice:
+    /// has one of the options; Person: one of the users; Text: contains one; Number, Money, Date,
+    /// YesNo: equals one). The field's values are read and matched in memory, then the contracts are
+    /// restricted by id, which is identical on Sqlite and SQL Server. An unknown key matches nothing.
+    /// </summary>
+    private async Task<IQueryable<Contract>> ApplyCustomAnyAsync(IQueryable<Contract> query, Dictionary<string, List<string>> filters, CancellationToken cancellationToken)
+    {
+        var definitions = await _db.CustomFieldDefinitions.AsNoTracking().Where(d => d.IsActive).ToListAsync(cancellationToken);
+        foreach (var pair in filters)
+        {
+            var wanted = (pair.Value ?? new List<string>()).Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v.Trim()).Distinct().ToList();
+            if (wanted.Count == 0)
+            {
+                continue;
+            }
+            var definition = definitions.FirstOrDefault(d => string.Equals(d.Key, pair.Key, StringComparison.Ordinal));
+            if (definition is null)
+            {
+                return query.Where(c => false);
+            }
+            var fieldId = definition.Id;
+            var rows = await _db.CustomFieldValues.AsNoTracking().Where(v => v.FieldId == fieldId).ToListAsync(cancellationToken);
+            var matching = rows.Where(v => MatchesAny(definition, v, wanted)).Select(v => v.ContractId).Distinct().ToList();
+            query = query.Where(c => matching.Contains(c.Id));
+        }
+        return query;
+    }
+
+    private static bool MatchesAny(CustomFieldDefinition definition, CustomFieldValue value, List<string> wanted)
+    {
+        switch (definition.FieldType)
+        {
+            case CustomFieldType.Choice:
+                return value.TextValue is not null && wanted.Contains(value.TextValue, StringComparer.Ordinal);
+            case CustomFieldType.MultiChoice:
+                return value.TextValue is not null && wanted.Any(w => value.TextValue.Contains("|" + w + "|", StringComparison.Ordinal));
+            case CustomFieldType.Person:
+                return value.UserValue is not null && wanted.Any(w => Guid.TryParse(w, out var id) && id == value.UserValue.Value);
+            case CustomFieldType.YesNo:
+                return value.BoolValue is not null && wanted.Any(w => bool.TryParse(w, out var flag) && flag == value.BoolValue.Value);
+            case CustomFieldType.Number:
+            case CustomFieldType.Money:
+                return value.NumberValue is not null && wanted.Any(w =>
+                    double.TryParse(w.Split(' ')[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number)
+                    && number == value.NumberValue.Value);
+            case CustomFieldType.Date:
+                return value.DateValue is not null && wanted.Any(w =>
+                    DateOnly.TryParseExact(w, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var date)
+                    && date == value.DateValue.Value);
+            default:
+                return value.TextValue is not null && wanted.Any(w => value.TextValue.Contains(w, StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     /// <summary>cf.&lt;key&gt; filters with the CONTRACT_V3 semantics; an unknown key or a bad value matches nothing.</summary>
@@ -240,7 +320,8 @@ public class ContractFilterEngine
         var values = _db.CustomFieldValues.AsNoTracking();
         foreach (var pair in filters)
         {
-            if (pair.Value is null)
+            // Release 4: an empty value is "no filter" (it used to filter on "" and match nothing).
+            if (string.IsNullOrWhiteSpace(pair.Value))
             {
                 continue;
             }
@@ -415,6 +496,58 @@ public class ContractFilterEngine
             {
                 var date = DateOf(c, field);
                 return date is not null && (from is null || date.Value >= from.Value) && (to is null || date.Value <= to.Value);
+            });
+        }
+        // Release 4 (CONTRACT_V4 section 2): header filters on text, DKK values and date columns.
+        if (!string.IsNullOrWhiteSpace(filter.Title))
+        {
+            var term = filter.Title.Trim();
+            result = result.Where(c => Contains(c.Title, term));
+        }
+        if (!string.IsNullOrWhiteSpace(filter.ContractNo))
+        {
+            var term = filter.ContractNo.Trim();
+            result = result.Where(c => Contains(c.ContractNo, term));
+        }
+        if (!string.IsNullOrWhiteSpace(filter.CounterpartyName))
+        {
+            var term = filter.CounterpartyName.Trim();
+            result = result.Where(c => Contains(c.CounterpartyName, term));
+        }
+        if (filter.AnnualValueMin is not null || filter.AnnualValueMax is not null)
+        {
+            // A contract without an annual value never matches a range on it (as for dates).
+            var min = filter.AnnualValueMin;
+            var max = filter.AnnualValueMax;
+            result = result.Where(c => c.AnnualValue is not null
+                && (min is null || reference.AnnualDkk(c) >= min.Value)
+                && (max is null || reference.AnnualDkk(c) <= max.Value));
+        }
+        if (filter.TotalValueMin is not null || filter.TotalValueMax is not null)
+        {
+            var min = filter.TotalValueMin;
+            var max = filter.TotalValueMax;
+            result = result.Where(c => c.TotalValue is not null
+                && (min is null || reference.TotalDkk(c) >= min.Value)
+                && (max is null || reference.TotalDkk(c) <= max.Value));
+        }
+        foreach (var range in filter.DateRanges)
+        {
+            var field = range.Key.Trim().ToLowerInvariant();
+            if (!DateFields.Contains(field) || range.Value is null)
+            {
+                continue;
+            }
+            var rangeFrom = range.Value.From;
+            var rangeTo = range.Value.To;
+            if (rangeFrom is null && rangeTo is null)
+            {
+                continue;
+            }
+            result = result.Where(c =>
+            {
+                var date = DateOf(c, field);
+                return date is not null && (rangeFrom is null || date.Value >= rangeFrom.Value) && (rangeTo is null || date.Value <= rangeTo.Value);
             });
         }
         if (filter.NoticeWithinDays is not null)

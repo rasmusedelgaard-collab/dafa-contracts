@@ -51,29 +51,31 @@ public class GeneralController : ApiControllerBase
         return await _queries.SuppliersAsync(q, cancellationToken);
     }
 
+    /// <summary>Release 4: ?entityId= (repeatable) is the entity scope.</summary>
     [HttpGet("home")]
     public async Task<ActionResult<HomeDto>> Home(CancellationToken cancellationToken)
     {
-        return await _queries.HomeAsync(cancellationToken);
+        return await _queries.HomeAsync(EntityScope.From(Request), cancellationToken);
     }
 
     [HttpGet("search")]
     public async Task<ActionResult<List<SearchResultDto>>> Search([FromQuery] string? q, CancellationToken cancellationToken)
     {
         // Release 3: contracts, documents (name and text), people, then suppliers; 8 at most.
-        return await _search.PaletteAsync(q, cancellationToken);
+        // Release 4: ?entityId= (repeatable) scopes contract and document hits.
+        return await _search.PaletteAsync(q, EntityScope.From(Request), cancellationToken);
     }
 
     [HttpGet("renewals")]
     public async Task<ActionResult<List<RenewalDto>>> Renewals([FromQuery] int? months, CancellationToken cancellationToken)
     {
-        return await _queries.RenewalsAsync(months, cancellationToken);
+        return await _queries.RenewalsAsync(months, EntityScope.From(Request), cancellationToken);
     }
 
     [HttpGet("overview")]
     public async Task<ActionResult<OverviewDto>> Overview(CancellationToken cancellationToken)
     {
-        return await _queries.OverviewAsync(cancellationToken);
+        return await _queries.OverviewAsync(EntityScope.From(Request), cancellationToken);
     }
 }
 
@@ -128,10 +130,16 @@ public class DevController : ControllerBase
         _throttle = throttle;
     }
 
+    /// <summary>Release 4: also carries the logo for the sign-in screen (public, like the logo itself).</summary>
     [HttpGet("config")]
-    public ActionResult<DevConfigDto> Config()
+    public async Task<ActionResult<DevConfigDto>> Config(CancellationToken cancellationToken)
     {
-        return new DevConfigDto { AuthMode = _auth.Mode, AccessCodeRequired = _auth.AccessCodeRequired };
+        return new DevConfigDto
+        {
+            AuthMode = _auth.Mode,
+            AccessCodeRequired = _auth.AccessCodeRequired,
+            Branding = await BrandingService.LoadAsync(_db, cancellationToken)
+        };
     }
 
     private string ClientKey() => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -283,17 +291,6 @@ public class DevController : ControllerBase
         {
             return Problem(statusCode: StatusCodes.Status404NotFound, title: "Not found", detail: "Unknown user.");
         }
-        return new MeDto
-        {
-            Id = profile.UserId,
-            Name = profile.Name,
-            Email = profile.Email,
-            Initials = profile.Initials,
-            Roles = profile.Roles.ToNames(),
-            DepartmentIds = profile.DepartmentIds.ToList(),
-            ManagedEntityIds = profile.ManagedEntityIds.ToList(),
-            IsGroupManagement = profile.IsGroupManagement,
-            AuthMode = _auth.Mode
-        };
+        return ContractQueryService.ToMe(profile, _auth.Mode);
     }
 }

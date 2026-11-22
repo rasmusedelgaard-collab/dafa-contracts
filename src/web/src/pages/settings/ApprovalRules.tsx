@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { qk, useApi, useLookups } from '../../app/context';
 import type { ApprovalRule, ApproverRole } from '../../api/types';
-import { Button, Card, CardTitle, EmptyState, ErrorState, Field, Modal, Pill, Select, SkeletonRows, TextInput, useToast } from '../../components';
+import { Button, Card, CardTitle, EmptyState, ErrorState, Field, Modal, NumberInput, Pill, Select, SkeletonRows, TextInput, useToast } from '../../components';
 import { RoutePreview } from '../../features/Approval';
 import {
   APPROVER_ROLES,
@@ -23,11 +23,11 @@ import {
 } from '../../lib/settingsForms';
 import { parseAmount } from '../../lib/validation';
 import { ConfirmDelete, SectionHead } from './common';
+import { PersonPicker } from '../../features/Pickers';
 
 const NO_ERRORS: RuleErrors = { stage: {}, approver: {} };
 
 function StagesEditor({ stages, errors, onChange }: { stages: StageDraft[]; errors: RuleErrors; onChange: (stages: StageDraft[]) => void }) {
-  const lookups = useLookups();
   const setStage = (si: number, approvers: ApproverDraft[]) => onChange(stages.map((s, i) => (i === si ? { ...s, approvers } : s)));
   const setApprover = (si: number, ai: number, patch: Partial<ApproverDraft>) => setStage(si, (stages[si]?.approvers ?? []).map((a, i) => (i === ai ? { ...a, ...patch } : a)));
   const move = (si: number, by: number) => {
@@ -78,7 +78,7 @@ function StagesEditor({ stages, errors, onChange }: { stages: StageDraft[]; erro
                     {a.kind === 'role' ? (
                       <Select aria-label={`${label}: role`} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined} value={a.role} placeholder="Choose a role" onChange={(e) => setApprover(si, ai, { role: e.target.value as ApproverRole | '' })} options={APPROVER_ROLES.map((r) => ({ value: r.value, label: r.label }))} />
                     ) : (
-                      <Select aria-label={`${label}: person`} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined} value={a.userId} placeholder="Choose a person" onChange={(e) => setApprover(si, ai, { userId: e.target.value })} options={lookups.users.map((u) => ({ value: u.id, label: u.name }))} />
+                      <PersonPicker ariaLabel={`${label}: person`} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined} value={a.userId || null} clearLabel={`Clear ${label}: person`} onChange={(id) => setApprover(si, ai, { userId: id ?? '' })} />
                     )}
                     <Button variant="ghost" size="sm" icon="x" iconOnly onClick={() => setStage(si, stage.approvers.filter((_, i) => i !== ai))} aria-label={`Remove approver ${ai + 1} from stage ${si + 1}`} />
                   </div>
@@ -177,10 +177,10 @@ function RuleDialog({ rule, onClose }: { rule: ApprovalRule | null; onClose: () 
           {(p) => <TextInput {...p} inputMode="numeric" value={draft.priority} onChange={(e) => set('priority', e.target.value)} />}
         </Field>
         <Field label="Value from, DKK" optional error={errors.minValue} hint="Contracts at this value or above.">
-          {(p) => <TextInput {...p} inputMode="decimal" value={draft.minValue} placeholder="Any" onChange={(e) => set('minValue', e.target.value)} />}
+          {(p) => <NumberInput {...p} decimals={0} value={draft.minValue.replace(/,/g, '')} placeholder="Any" onValueChange={(v) => set('minValue', v)} />}
         </Field>
         <Field label="Value below, DKK" optional error={errors.maxValue} hint="Contracts under this value.">
-          {(p) => <TextInput {...p} inputMode="decimal" value={draft.maxValue} placeholder="Any" onChange={(e) => set('maxValue', e.target.value)} />}
+          {(p) => <NumberInput {...p} decimals={0} value={draft.maxValue.replace(/,/g, '')} placeholder="Any" onValueChange={(v) => set('maxValue', v)} />}
         </Field>
       </div>
       <StagesEditor stages={draft.stages} errors={errors} onChange={(stages) => set('stages', stages)} />
@@ -216,7 +216,7 @@ function RuleTester() {
           {(p) => <Select {...p} value={departmentId} placeholder="Any department" onChange={(e) => setDepartmentId(e.target.value)} options={refs(lookups.departments)} />}
         </Field>
         <Field label="Contract value, DKK" optional error={valueError}>
-          {(p) => <TextInput {...p} inputMode="decimal" value={valueText} placeholder="0" onChange={(e) => setValueText(e.target.value)} />}
+          {(p) => <NumberInput {...p} decimals={0} value={valueText} placeholder="0" onValueChange={setValueText} />}
         </Field>
       </div>
       <div className="tester-result" aria-live="polite">

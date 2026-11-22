@@ -7,7 +7,7 @@
   --text: #1d2733;
   --text-2: #5b6672;
   --text-3: #3f4a56;
-  --label: #8a94a0;
+  --label: #66717d;
   --hairline: #eef1f5;
   --border: #d5dde6;
   --border-soft: #e2e7ee;
@@ -32,11 +32,11 @@
   --gray-fg: #3f4a56;
 
   --dot-green: #1e8a4c;
-  --dot-amber: #c88a00;
+  --dot-amber: #a87300;
   --dot-blue: #00456c;
   --dot-gray: #8a94a0;
   --dot-red: #9b2c1f;
-  --bar-soft: #7fa9c7;
+  --bar-soft: #5f8fb2;
   --bar-idle: #dbe3ea;
 
   --shadow-card: 0 0 0 1px rgba(16, 24, 40, 0.05), 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px rgba(16, 24, 40, 0.05);
@@ -55,4 +55,138 @@
   /* Page gutters: 20px on small laptops up to 32px on wide screens. */
   --gutter: clamp(20px, 1.6vw, 32px);
   --ease: 160ms ease;
+
+  /* Release 4 (item I): every color comes from a token; the dark set below defines the same keys. */
+  color-scheme: light;
+  --raised: #ffffff;
+  --primary-fill: #00456c;
+  --primary-fill-hover: #002a42;
+  --on-primary: #ffffff;
+  --hero-bg: #00456c;
+  --on-hero: #ffffff;
+  --on-hero-soft: rgba(255, 255, 255, 0.18);
+  --on-hero-softer: rgba(255, 255, 255, 0.1);
+  --on-hero-strong: rgba(255, 255, 255, 0.32);
+  --on-hero-line: rgba(255, 255, 255, 0.6);
+  --hero-btn-bg: #ffffff;
+  --hero-btn-fg: #00456c;
+  --hero-input-bg: #ffffff;
+  --inverse-bg: #1d2733;
+  --on-inverse: #ffffff;
+  --on-inverse-soft: rgba(255, 255, 255, 0.14);
+  --on-danger: #ffffff;
+  --placeholder: #6b7682;
+  --hover-bg: #f1f5f9;
+  --danger-border: #e6b8b1;
+  --overlay: rgba(16, 24, 40, 0.42);
+  --skeleton-a: #e9eef4;
+  --skeleton-b: #f4f6f9;
+  --seg-high: #b3261e;
+  --seg-medium: #a87300;
+  --seg-low: #2f7bbf;
+  --seg-done: #8593a2;
+  --purple-bg: #efe7f7;
+  --purple-fg: #5b2d86;
+  --mark-bg: #fff1b8;
+  --flash-bg: #fff8db;
+  --flash-line: #d18f00;
+  --focus: #00456c;
+  --logo-preview-light: #ffffff;
+  --logo-preview-dark: #17202b;
+  --logo-preview-dark-text: #9fb0c2;
+  --logo-preview-light-text: #5b6672;
+  --scrollbar: #c3ccd6;
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%231d2733' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+
+/* Dark theme (item I). Same keys as :root; contrast ratios are in docs/STATUS.md. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --primary: #5aa9d6;
+  --primary-hover: #7dbde2;
+  --page: #0f1620;
+  --surface: #17202b;
+  --raised: #1e2936;
+  --text: #e8edf3;
+  --text-2: #9fb0c2;
+  --text-3: #c3cfdc;
+  --label: #8597aa;
+  --hairline: #2a3644;
+  --border: #364556;
+  --border-soft: #2f3c4b;
+  --nav-border: #2a3644;
+  --tint: #1d3346;
+  --tint-2: #1a2a3a;
+  --track: #263342;
+  --row-hover: #1c2734;
+  --avatar-bg: #24394d;
+  --suggest-bg: #182a3a;
+  --suggest-border: #3d6f96;
+
+  --red-bg: #3a1d1d;
+  --red-fg: #f4a79d;
+  --amber-bg: #3a2e12;
+  --amber-fg: #f1c46a;
+  --green-bg: #16301f;
+  --green-fg: #7fd3a0;
+  --blue-bg: #15304a;
+  --blue-fg: #8cc6ea;
+  --gray-bg: #253140;
+  --gray-fg: #c3cfdc;
+
+  --dot-green: #4cc27c;
+  --dot-amber: #e8b339;
+  --dot-blue: #5aa9d6;
+  --dot-gray: #8597aa;
+  --dot-red: #ef7a6b;
+  --bar-soft: #4f86ad;
+  --bar-idle: #2a3644;
+
+  --shadow-card: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
+  --shadow-lift: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 12px 28px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 12px 32px rgba(0, 0, 0, 0.5);
+
+  --primary-fill: #2a72a3;
+  --primary-fill-hover: #1f5f8b;
+  --on-primary: #ffffff;
+  --hero-bg: #0d3a5a;
+  --on-hero: #ffffff;
+  --on-hero-soft: rgba(255, 255, 255, 0.16);
+  --on-hero-softer: rgba(255, 255, 255, 0.08);
+  --on-hero-strong: rgba(255, 255, 255, 0.28);
+  --on-hero-line: rgba(255, 255, 255, 0.55);
+  --hero-btn-bg: #e8edf3;
+  --hero-btn-fg: #0d3a5a;
+  --hero-input-bg: #e8edf3;
+  --inverse-bg: #e8edf3;
+  --on-inverse: #0f1620;
+  --on-inverse-soft: rgba(15, 22, 32, 0.12);
+  --on-danger: #1a0f0e;
+  --placeholder: #8fa0b2;
+  --hover-bg: #1e2936;
+  --danger-border: #6b3530;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --skeleton-a: #1e2936;
+  --skeleton-b: #263342;
+  --seg-high: #f07167;
+  --seg-medium: #e8b339;
+  --seg-low: #5aa9d6;
+  --seg-done: #6b7a8a;
+  --purple-bg: #2d2140;
+  --purple-fg: #d4b8f0;
+  --mark-bg: #5a4a10;
+  --flash-bg: #2e2810;
+  --flash-line: #e8b339;
+  --focus: #7dbde2;
+  --logo-preview-light: #ffffff;
+  --logo-preview-dark: #17202b;
+  --logo-preview-dark-text: #9fb0c2;
+  --logo-preview-light-text: #5b6672;
+  --scrollbar: #364556;
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23e8edf3' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+html {
+  scrollbar-color: var(--scrollbar) transparent;
 }

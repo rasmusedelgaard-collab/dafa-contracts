@@ -8,6 +8,7 @@ import { formatDateTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import { SectionHead } from './common';
 import { problemErrors, useRefreshReference } from './Reference';
+import { PersonPicker } from '../../features/Pickers';
 
 const ROLES: { value: Role; label: string; hint: string }[] = [
   { value: 'Reader', label: 'Reader', hint: 'Sees contracts through the access rules' },
@@ -26,8 +27,8 @@ function UserDialog({ user, onClose }: { user: AdminUser | null; onClose: () => 
   const refresh = useRefreshReference();
   const [d, setD] = useState<AdminUserInput>(
     user
-      ? { name: user.name, email: user.email, title: user.title, roles: user.roles, departmentIds: user.departmentIds, managedEntityIds: user.managedEntityIds, isGroupManagement: user.isGroupManagement, isActive: user.isActive }
-      : { name: '', email: '', title: null, roles: ['Reader'], departmentIds: [], managedEntityIds: [], isGroupManagement: false, isActive: true },
+      ? { name: user.name, email: user.email, title: user.title, roles: user.roles, departmentIds: user.departmentIds, managedEntityIds: user.managedEntityIds, isGroupManagement: user.isGroupManagement, isActive: user.isActive, entityId: user.entityId ?? null, canSendForSignature: user.canSendForSignature ?? false, signatureEntityIds: user.signatureEntityIds ?? [] }
+      : { name: '', email: '', title: null, roles: ['Reader'], departmentIds: [], managedEntityIds: [], isGroupManagement: false, isActive: true, entityId: null, canSendForSignature: false, signatureEntityIds: [] },
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const synced = (f: string) => user?.syncedFields.includes(f) ?? false;
@@ -116,6 +117,29 @@ function UserDialog({ user, onClose }: { user: AdminUser | null; onClose: () => 
           <input type="checkbox" checked={d.isGroupManagement} onChange={(e) => setD({ ...d, isGroupManagement: e.target.checked })} />
           Group management (sees all contracts)
         </label>
+        <Field label="Home legal entity" optional hint="Shown next to the name in person pickers." className="form-grid__full">
+          {(p) => <Select {...p} value={d.entityId ?? ''} placeholder="Not set" options={lookups.entities.filter((x) => x.isActive !== false || x.id === d.entityId).map((x) => ({ value: x.id, label: x.name }))} onChange={(e) => setD({ ...d, entityId: e.target.value || null })} />}
+        </Field>
+        <fieldset className="fieldset-plain form-grid__full">
+          <legend className="field__label">E-signature</legend>
+          <label className="check">
+            <input type="checkbox" checked={!!d.canSendForSignature} onChange={(e) => setD({ ...d, canSendForSignature: e.target.checked })} />
+            Can send contracts for signature outside DAFA
+          </label>
+          {d.canSendForSignature ? (
+            <>
+              <span className="field__hint">Only for these legal entities (none ticked = every entity the person can see):</span>
+              <div className="check-row">
+                {lookups.entities.map((x) => (
+                  <label key={x.id} className="check">
+                    <input type="checkbox" checked={(d.signatureEntityIds ?? []).includes(x.id)} onChange={(e) => setD({ ...d, signatureEntityIds: toggle(d.signatureEntityIds ?? [], x.id, e.target.checked) })} />
+                    {x.name}
+                  </label>
+                ))}
+              </div>
+            </>
+          ) : null}
+        </fieldset>
       </div>
     </Modal>
   );
@@ -184,7 +208,6 @@ function EffectiveAccessDialog({ user, onClose }: { user: AdminUser; onClose: ()
 
 function ReassignDialog({ from, onClose }: { from: AdminUser | null; onClose: () => void }) {
   const api = useApi();
-  const lookups = useLookups();
   const toast = useToast();
   const invalidate = useInvalidateContracts();
   const [input, setInput] = useState<ReassignInput>({ fromUserId: from?.id ?? '', toUserId: '', roles: ['Owner', 'Delegate', 'Responsible'], contractIds: null, includeEnded: false, includeObligations: true });
@@ -199,7 +222,6 @@ function ReassignDialog({ from, onClose }: { from: AdminUser | null; onClose: ()
     },
     onError: (e) => toast.error(e),
   });
-  const users = lookups.users.map((u) => ({ value: u.id, label: `${u.name}${u.isActive === false ? ' (inactive)' : ''}` }));
   const toggleRole = (r: ContractRole, on: boolean) => setInput({ ...input, roles: on ? [...input.roles, r] : input.roles.filter((x) => x !== r) });
   return (
     <Modal
@@ -220,8 +242,8 @@ function ReassignDialog({ from, onClose }: { from: AdminUser | null; onClose: ()
     >
       <div className="stack" style={{ gap: 14 }}>
         <div className="form-grid form-grid--flat">
-          <Field label="From">{(p) => <Select {...p} value={input.fromUserId} placeholder="Choose" options={users} onChange={(e) => setInput({ ...input, fromUserId: e.target.value })} />}</Field>
-          <Field label="To">{(p) => <Select {...p} value={input.toUserId} placeholder="Choose" options={users.filter((u) => u.value !== input.fromUserId)} onChange={(e) => setInput({ ...input, toUserId: e.target.value })} />}</Field>
+          <Field label="From" hint="Inactive people are listed too">{(p) => <PersonPicker {...p} includeInactive value={input.fromUserId || null} clearLabel="Clear from" onChange={(id) => setInput({ ...input, fromUserId: id ?? '' })} />}</Field>
+          <Field label="To">{(p) => <PersonPicker {...p} value={input.toUserId || null} filter={(u) => u.id !== input.fromUserId} clearLabel="Clear to" onChange={(id) => setInput({ ...input, toUserId: id ?? '' })} />}</Field>
         </div>
         <div className="check-row">
           {(['Owner', 'Delegate', 'Responsible'] as const).map((r) => (
@@ -305,7 +327,7 @@ export function UsersAdmin() {
         <Card pad className="stack" style={{ gap: 12 }}>
           <p className="secondary prose">Pick a person to see which contracts they can see, and why.</p>
           <div className="row-flex" style={{ gap: 10, alignItems: 'flex-end' }}>
-            <Field label="Person">{(p) => <Select {...p} value={checkId} placeholder="Choose" options={lookups.users.map((u) => ({ value: u.id, label: u.name }))} onChange={(e) => setCheckId(e.target.value)} />}</Field>
+            <Field label="Person">{(p) => <PersonPicker {...p} includeInactive value={checkId || null} clearLabel="Clear person" onChange={(id) => setCheckId(id ?? '')} />}</Field>
             <Button disabled={!checkId} onClick={() => { const u = users.data?.find((x) => x.id === checkId); if (u) setAccess(u); else void api.admin.getUsers({}).then((all) => { const hit = all.find((x) => x.id === checkId); if (hit) setAccess(hit); }); }}>
               Check access
             </Button>

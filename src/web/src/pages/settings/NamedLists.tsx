@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { qk, useApi } from '../../app/context';
-import type { NamedRef, NameInput } from '../../api/types';
+import type { DepartmentAdmin, DepartmentInputV4, NamedRef, NameInput } from '../../api/types';
 import { Button, Card, EmptyState, ErrorState, Field, Modal, Pill, SkeletonRows, TextInput, useToast } from '../../components';
 import { validateName } from '../../lib/settingsForms';
 import { ConfirmDelete, SectionHead } from './common';
@@ -18,6 +18,11 @@ interface NamedListProps {
   remove: (id: string) => Promise<void>;
   /** Release 3: deactivate instead of deleting (`isActive` in the update body). */
   setActive?: (id: string, input: { name: string; isActive: boolean }) => Promise<NamedRef>;
+  /**
+   * Fields of the item that every update must send along. `PUT` replaces the whole item on the
+   * API: a field that is left out is cleared, so a rename must repeat what it does not change.
+   */
+  keep?: (item: NamedRef) => object;
 }
 
 function NameDialog({ noun, item, existing, onSave, pending, onClose }: { noun: string; item: NamedRef | null; existing: NamedRef[]; onSave: (name: string) => void; pending: boolean; onClose: () => void }) {
@@ -62,7 +67,7 @@ function NameDialog({ noun, item, existing, onSave, pending, onClose }: { noun: 
   );
 }
 
-function NamedList({ resource, title, text, noun, list, create, update, remove, setActive }: NamedListProps) {
+function NamedList({ resource, title, text, noun, list, create, update, remove, setActive, keep }: NamedListProps) {
   const client = useQueryClient();
   const toast = useToast();
   const [editing, setEditing] = useState<NamedRef | 'new' | null>(null);
@@ -77,12 +82,12 @@ function NamedList({ resource, title, text, noun, list, create, update, remove, 
     setDeleting(null);
   };
   const save = useMutation({
-    mutationFn: (name: string) => (editing && editing !== 'new' ? update(editing.id, { name }) : create({ name })),
+    mutationFn: (name: string) => (editing && editing !== 'new' ? update(editing.id, { ...keep?.(editing), name }) : create({ name })),
     onSuccess: (saved) => changed(editing === 'new' ? `Added ${saved.name}` : `Renamed to ${saved.name}`),
     onError: (e) => toast.error(e),
   });
   const activate = useMutation({
-    mutationFn: (item: NamedRef & { isActive?: boolean }) => (setActive ? setActive(item.id, { name: item.name, isActive: item.isActive === false }) : Promise.reject(new Error('Not supported'))),
+    mutationFn: (item: NamedRef & { isActive?: boolean }) => (setActive ? setActive(item.id, { ...keep?.(item), name: item.name, isActive: item.isActive === false }) : Promise.reject(new Error('Not supported'))),
     onSuccess: (saved) => changed(`${saved.name} is ${(saved as { isActive?: boolean }).isActive === false ? 'inactive' : 'active'}`),
     onError: (e) => toast.error(e),
   });
@@ -149,6 +154,15 @@ function NamedList({ resource, title, text, noun, list, create, update, remove, 
   );
 }
 
+/**
+ * What a department update repeats (review finding H1): the API sets the SharePoint library and
+ * the Entra group "as given, null clears", so renaming or (de)activating without them would
+ * unlink the department. They are edited under Settings > Access mapping.
+ */
+function departmentLinkFields(item: DepartmentAdmin): Pick<DepartmentInputV4, 'isActive' | 'documentLibrary' | 'groupId'> {
+  return { isActive: item.isActive, documentLibrary: item.documentLibrary ?? null, groupId: item.groupId ?? null };
+}
+
 export function Departments() {
   const api = useApi();
   return (
@@ -162,6 +176,7 @@ export function Departments() {
       update={api.admin.updateDepartment}
       remove={api.admin.deleteDepartment}
       setActive={api.admin.updateDepartmentV3}
+      keep={departmentLinkFields}
     />
   );
 }

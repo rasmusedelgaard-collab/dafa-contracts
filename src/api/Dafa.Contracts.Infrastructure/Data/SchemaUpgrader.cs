@@ -32,8 +32,10 @@ public sealed class SchemaUpgradeResult
 ///   an existence check, so a step can run any number of times; nothing is ever dropped or rewritten.
 /// - Column types, nullability, keys and indexes are read from the EF Core relational model for the
 ///   current provider, so the DDL is exactly what EnsureCreated would have produced.
+/// - Step 1 = phase 2 baseline, step 2 = release 3, step 3 = release 4, step 4 = SharePoint hardening.
 /// - A failed table or column statement stops startup (better than running on a half schema); a
-///   failed index (for example duplicates already in the data) is logged as a warning.
+///   failed index (for example duplicates already in the data) is logged as a warning and tried
+///   again on the next start.
 /// </summary>
 public sealed class SchemaUpgrader
 {
@@ -117,13 +119,67 @@ public sealed class SchemaUpgrader
                 "Contracts", "AuditEvents", "DocumentTexts", "CustomFieldDefinitions", "CustomFieldValues",
                 "ContractTypeFieldRules", "ContractTags", "ImportRuns", "NotificationSettings", "ReminderSchedules",
                 "SavedViews", "ContractWatchers", "ContractComments", "InAppNotifications", "DataRoomExports"
-            })
+            }),
+        new Step(3,
+            "Release 4: template categories, branding, e-signature requests and signatories, SharePoint and Entra mapping on legal entities and departments, signing permission and home entity on users, category, types and language on templates, theme preference",
+            new[] { "TemplateCategories", "BrandingAssets", "SignatureRequests", "Signatories" },
+            new[]
+            {
+                new ColumnRef("LegalEntities", "SharePointSiteUrl"),
+                new ColumnRef("LegalEntities", "SharePointSiteId"),
+                new ColumnRef("LegalEntities", "ManagementGroupId"),
+                new ColumnRef("LegalEntities", "ManagementGroupName"),
+                new ColumnRef("LegalEntities", "LinkStatus"),
+                new ColumnRef("LegalEntities", "LinkCheckedAt"),
+                new ColumnRef("LegalEntities", "LinkMessage"),
+                new ColumnRef("Departments", "LibraryName"),
+                new ColumnRef("Departments", "GroupId"),
+                new ColumnRef("Departments", "GroupName"),
+                new ColumnRef("Departments", "LinkStatus"),
+                new ColumnRef("Departments", "LinkCheckedAt"),
+                new ColumnRef("Departments", "LinkMessage"),
+                // NOT NULL: existing users get 0 (nobody may send for signature until an administrator says so).
+                new ColumnRef("Users", "CanSendForSignature"),
+                new ColumnRef("Users", "SignatureEntityIdsJson"),
+                new ColumnRef("Users", "HomeEntityId"),
+                new ColumnRef("Templates", "CategoryId"),
+                new ColumnRef("Templates", "ContractTypeIdsJson"),
+                new ColumnRef("Templates", "Language"),
+                // NOT NULL: existing preference rows get 'light'.
+                new ColumnRef("UserPreferences", "Theme")
+            },
+            new[] { "Templates", "SignatureRequests", "Signatories" }),
+        new Step(4,
+            "SharePoint hardening: store address and content hash on documents, the contract folder on contracts, deferred approval log, retry bookkeeping for search text, reconciliation reports",
+            new[] { "StorageReconciliationReports" },
+            new[]
+            {
+                new ColumnRef("Documents", "SiteId"),
+                new ColumnRef("Documents", "DriveId"),
+                new ColumnRef("Documents", "ItemId"),
+                new ColumnRef("Documents", "RelativePath"),
+                new ColumnRef("Documents", "ETag"),
+                new ColumnRef("Documents", "CTag"),
+                new ColumnRef("Documents", "ContentHash"),
+                new ColumnRef("Contracts", "StoreDriveId"),
+                new ColumnRef("Contracts", "StoreFolderId"),
+                new ColumnRef("Contracts", "StoreFolderUrl"),
+                // NOT NULL, default 0: no approval log is pending on existing approvals.
+                new ColumnRef("ApprovalInstances", "LogPending"),
+                // NOT NULL, default 0: existing text rows have had no retries.
+                new ColumnRef("DocumentTexts", "Attempts"),
+                new ColumnRef("DocumentTexts", "NextAttemptAt")
+            },
+            new[] { "StorageReconciliationReports" })
     };
 
     /// <summary>Defaults for NOT NULL columns added to tables that already have rows, where 0/''/empty is wrong.</summary>
     private static readonly Dictionary<string, string> DefaultOverrides = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["LegalEntities.IsActive"] = "1"
+        ["LegalEntities.IsActive"] = "1",
+        // Release 4. Stated explicitly although 0 is also the generic default: the permission must be off.
+        ["Users.CanSendForSignature"] = "0",
+        ["UserPreferences.Theme"] = "'light'"
     };
 
     private bool IsSqlServer => (_db.Database.ProviderName ?? "").IndexOf("SqlServer", StringComparison.OrdinalIgnoreCase) >= 0;
@@ -174,6 +230,21 @@ public sealed class SchemaUpgrader
                 await RecordVersionAsync(step, cancellationToken);
                 result.AppliedVersions.Add(step.Version);
                 applied.Add(step.Version);
+            }
+            // An index that could not be created when its step ran (duplicates in the data, a table
+            // or column that a later step adds) is tried again here, in this run and on every later
+            // start: each one is guarded by an existence check, and a failure is still only a warning.
+            foreach (var tableName in Steps.SelectMany(s => s.IndexTables).Distinct(StringComparer.Ordinal).ToList())
+            {
+                try
+                {
+                    await EnsureIndexesAsync(model, tableName, result, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Could not check the indexes of table {Table}", tableName);
+                    result.Warnings.Add("Indexes of " + tableName + " could not be checked: " + ex.Message);
+                }
             }
             result.CurrentVersion = applied.Count == 0 ? 0 : applied.Max();
             await LogDriftAsync(model, cancellationToken);
@@ -399,22 +470,57 @@ public sealed class SchemaUpgrader
                 result.Warnings.Add("Index " + index.Name + " skipped: a column is missing.");
                 continue;
             }
+            var columnList = string.Join(", ", index.Columns.Select(c => Quote(c.Name)));
+            var hasFilter = !string.IsNullOrWhiteSpace(index.Filter);
+            if (index.IsUnique)
+            {
+                // Rows that already break the rule: say so plainly and leave the index out, instead
+                // of letting the CREATE statement fail.
+                try
+                {
+                    var check = "SELECT COUNT(*) FROM (SELECT " + columnList + " FROM " + Quote(table.Name)
+                        + (hasFilter ? " WHERE " + index.Filter : "")
+                        + " GROUP BY " + columnList + " HAVING COUNT(*) > 1) AS " + Quote("d");
+                    using var checkCommand = CreateCommand(check);
+                    var duplicates = await ScalarCountAsync(checkCommand, cancellationToken);
+                    if (duplicates > 0)
+                    {
+                        _logger.LogWarning(
+                            "Unique index {Index} on {Table} not created: {Count} value(s) occur more than once. Clean up the rows and restart.",
+                            index.Name, table.Name, duplicates);
+                        result.Warnings.Add("Index " + index.Name + " could not be created: " + duplicates.ToString(CultureInfo.InvariantCulture) + " duplicate value(s) in existing rows.");
+                        continue;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // The check is only a courtesy; the CREATE statement below decides.
+                    _logger.LogDebug(ex, "Duplicate check for index {Index} failed", index.Name);
+                }
+            }
             var sql = new StringBuilder();
             sql.Append("CREATE ").Append(index.IsUnique ? "UNIQUE " : "").Append("INDEX ")
                 .Append(IsSqlServer ? "" : "IF NOT EXISTS ")
                 .Append(Quote(index.Name)).Append(" ON ").Append(Quote(table.Name)).Append(" (")
-                .Append(string.Join(", ", index.Columns.Select(c => Quote(c.Name)))).Append(')');
-            if (!string.IsNullOrWhiteSpace(index.Filter))
+                .Append(columnList).Append(')');
+            if (hasFilter)
             {
                 sql.Append(" WHERE ").Append(index.Filter);
             }
             var text = sql.ToString();
             try
             {
+                if (IsSqlServer && hasFilter)
+                {
+                    // A filtered index can only be created (and its table only be written) by a
+                    // session with these options. They are the SqlClient defaults; stated here so the
+                    // statement does not depend on how the connection was configured.
+                    await ExecuteAsync(FilteredIndexSetOptions, cancellationToken);
+                }
                 await ExecuteAsync(text, cancellationToken);
                 result.Statements.Add(text);
             }
-            catch (DbException ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // For example duplicates in old data under a new unique index. The app still works;
                 // the index is missing until the data is cleaned up and the app restarts.
@@ -423,6 +529,10 @@ public sealed class SchemaUpgrader
             }
         }
     }
+
+    private const string FilteredIndexSetOptions =
+        "SET ANSI_NULLS ON; SET ANSI_PADDING ON; SET ANSI_WARNINGS ON; SET ARITHABORT ON; "
+        + "SET CONCAT_NULL_YIELDS_NULL ON; SET QUOTED_IDENTIFIER ON; SET NUMERIC_ROUNDABORT OFF;";
 
     /// <summary>Logs model tables or columns that are still missing after all steps (a step was forgotten).</summary>
     private async Task LogDriftAsync(IRelationalModel model, CancellationToken cancellationToken)

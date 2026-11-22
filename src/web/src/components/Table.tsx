@@ -10,6 +10,8 @@ export interface Column<T> {
   className?: string;
   /** Column width (e.g. `42%`) when the table has `fixed` layout. */
   width?: string;
+  /** Release 4: a header filter control (register), shown after the header text. */
+  filter?: ReactNode;
 }
 
 export interface TableProps<T> {
@@ -48,14 +50,17 @@ export function Table<T>({ columns, rows, rowKey, caption, sort, onSort, onRowCl
               const active = !!c.sortKey && c.sortKey === field;
               return (
                 <th key={c.key} scope="col" className={c.className} aria-sort={active ? (desc ? 'descending' : 'ascending') : undefined}>
-                  {c.sortKey && onSort ? (
-                    <button type="button" className="table__sort" data-active={active} onClick={() => onSort(active && !desc ? `-${c.sortKey}` : (c.sortKey ?? ''))}>
-                      {c.header}
-                      <Icon name={active && desc ? 'chevronUp' : 'chevronDown'} size={12} stroke={2.4} />
-                    </button>
-                  ) : (
-                    c.header
-                  )}
+                  <span className={c.filter ? 'th-inner' : undefined}>
+                    {c.sortKey && onSort ? (
+                      <button type="button" className="table__sort" data-active={active} onClick={() => onSort(active && !desc ? `-${c.sortKey}` : (c.sortKey ?? ''))}>
+                        {c.header}
+                        <Icon name={active && desc ? 'chevronUp' : 'chevronDown'} size={12} stroke={2.4} />
+                      </button>
+                    ) : (
+                      c.header
+                    )}
+                    {c.filter}
+                  </span>
                 </th>
               );
             })}

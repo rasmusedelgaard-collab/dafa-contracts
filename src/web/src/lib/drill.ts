@@ -3,6 +3,7 @@
 import { VALUE_BANDS, type ContractFilter, type ContractStatus, type DateField, type Lookups, type ValueBand } from '../api/types';
 import { formatDate, monthShort } from './dates';
 import { statusLabel } from './format';
+import { formatNumber } from './displayFormat';
 
 /** URL parameter -> filter key. Repeatable ones may appear several times. */
 const PARAMS = {
@@ -29,11 +30,32 @@ const PARAMS = {
   minValue: 'minValueDkk',
   ended: 'includeEnded',
   q: 'q',
+  // Release 4: register header filters (docs/CONTRACT_V4.md §2); URL name = API name.
+  title: 'title',
+  contractNo: 'contractNo',
+  counterpartyName: 'counterpartyName',
+  delegate: 'delegateId',
+  responsible: 'responsibleId',
+  currency: 'currency',
+  annualValueMin: 'annualValueMin',
+  annualValueMax: 'annualValueMax',
+  totalValueMin: 'totalValueMin',
+  totalValueMax: 'totalValueMax',
+  noticeFrom: 'noticeFrom',
+  noticeTo: 'noticeTo',
+  endFrom: 'endFrom',
+  endTo: 'endTo',
+  startFrom: 'startFrom',
+  startTo: 'startTo',
+  signedFrom: 'signedFrom',
+  signedTo: 'signedTo',
+  createdFrom: 'createdFrom',
+  createdTo: 'createdTo',
 } as const satisfies Record<string, keyof ContractFilter>;
 type ParamName = keyof typeof PARAMS;
-const REPEATABLE = new Set<string>(['entityId', 'departmentId', 'typeId', 'status', 'counterpartyId', 'ownerId', 'valueBand', 'tagId']);
+const REPEATABLE = new Set<string>(['entityId', 'departmentId', 'typeId', 'status', 'counterpartyId', 'ownerId', 'valueBand', 'tagId', 'delegateId', 'responsibleId', 'currency']);
 const BOOLEAN = new Set<string>(['decided', 'missingData', 'autoRenew', 'changeOfControl', 'exclusivity', 'missingSignedDocument', 'includeEnded']);
-const NUMBER = new Set<string>(['noticeWithinDays', 'minValueDkk']);
+const NUMBER = new Set<string>(['noticeWithinDays', 'minValueDkk', 'annualValueMin', 'annualValueMax', 'totalValueMin', 'totalValueMax']);
 
 const one = <T,>(v: T | T[] | undefined): T[] => (v === undefined ? [] : Array.isArray(v) ? v : [v]);
 
@@ -50,8 +72,11 @@ export function parseFilter(params: URLSearchParams): ContractFilter {
       if (Number.isFinite(n)) f[key] = n;
     } else f[key] = values[0];
   }
-  const cf: Record<string, string> = {};
-  for (const [k, v] of params.entries()) if (k.startsWith('cf.') && v) cf[k.slice(3)] = v;
+  const cf: Record<string, string | string[]> = {};
+  for (const k of new Set([...params.keys()].filter((x) => x.startsWith('cf.')))) {
+    const values = params.getAll(k).filter((v) => v !== '');
+    if (values.length) cf[k.slice(3)] = values.length === 1 ? (values[0] as string) : values;
+  }
   if (Object.keys(cf).length) f.cf = cf;
   return f as ContractFilter;
 }
@@ -66,7 +91,7 @@ export function filterToParams(filter: ContractFilter, base: URLSearchParams = n
     if (v === undefined || v === null || v === '') continue;
     for (const x of one(v as unknown)) if (x !== undefined && x !== null && x !== '') next.append(name, String(x));
   }
-  for (const [k, v] of Object.entries(filter.cf ?? {})) if (v) next.set(`cf.${k}`, v);
+  for (const [k, v] of Object.entries(filter.cf ?? {})) for (const x of one(v)) if (x) next.append(`cf.${k}`, x);
   return next;
 }
 
@@ -75,10 +100,15 @@ export function applyDrill(filter: ContractFilter, patch: Partial<ContractFilter
   const next: Record<string, unknown> = { ...filter };
   for (const [k, v] of Object.entries(patch)) {
     if (v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0)) delete next[k];
-    else if (k === 'cf') next.cf = { ...(filter.cf ?? {}), ...(v as Record<string, string>) };
+    else if (k === 'cf') next.cf = { ...(filter.cf ?? {}), ...(v as Record<string, string | string[]>) };
     else next[k] = v;
   }
-  if (next.cf && Object.values(next.cf as Record<string, string>).every((x) => !x)) delete next.cf;
+  // An emptied custom field is removed, not sent as `cf.<key>=` (the API would filter on an empty value).
+  if (next.cf) {
+    const cf = Object.fromEntries(Object.entries(next.cf as Record<string, string | string[] | undefined>).filter(([, x]) => x !== undefined && x !== null && x !== '' && !(Array.isArray(x) && x.length === 0)));
+    if (Object.keys(cf).length) next.cf = cf;
+    else delete next.cf;
+  }
   // A date range belongs to its date field.
   if (!next.from && !next.to) delete next.dateField;
   return next as ContractFilter;
@@ -122,7 +152,7 @@ export function chipsOf(
 ): Chip[] {
   const chips: Chip[] = [];
   const name = (list: { id: string; name: string }[], id: string) => list.find((x) => x.id === id)?.name ?? id;
-  const many = (key: 'entityId' | 'departmentId' | 'typeId' | 'status' | 'counterpartyId' | 'ownerId' | 'valueBand' | 'tagId', label: (v: string) => string) => {
+  const many = (key: 'entityId' | 'departmentId' | 'typeId' | 'status' | 'counterpartyId' | 'ownerId' | 'valueBand' | 'tagId' | 'delegateId' | 'responsibleId' | 'currency', label: (v: string) => string) => {
     for (const v of one(filter[key] as string | string[] | undefined)) {
       const rest = one(filter[key] as string | string[] | undefined).filter((x) => x !== v);
       chips.push({ id: `${key}:${v}`, label: label(v), without: applyDrill(filter, { [key]: rest.length === 0 ? undefined : rest.length === 1 ? rest[0] : rest }) });
@@ -136,6 +166,9 @@ export function chipsOf(
   many('ownerId', (v) => `Owner: ${name(lookups.users, v)}`);
   many('valueBand', (v) => VALUE_BANDS.find((b) => b.key === (v as ValueBand))?.label ?? v);
   many('tagId', (v) => `Tag: ${extra.tags?.[v] ?? v}`);
+  many('delegateId', (v) => `Delegate: ${name(lookups.users, v)}`);
+  many('responsibleId', (v) => `Responsible: ${name(lookups.users, v)}`);
+  many('currency', (v) => `Currency: ${v}`);
   const single = (key: keyof ContractFilter, label: string) => chips.push({ id: key, label, without: applyDrill(filter, { [key]: undefined }) });
   if (filter.personId) single('personId', `Person: ${name(lookups.users, filter.personId)}`);
   if (filter.from || filter.to) chips.push({ id: 'range', label: rangeLabel(filter.dateField, filter.from, filter.to), without: applyDrill(filter, { from: undefined, to: undefined, dateField: undefined }) });
@@ -147,10 +180,28 @@ export function chipsOf(
   if (filter.changeOfControl !== undefined) single('changeOfControl', filter.changeOfControl ? 'Change of control' : 'No change of control');
   if (filter.exclusivity !== undefined) single('exclusivity', filter.exclusivity ? 'Exclusivity' : 'No exclusivity');
   if (filter.missingSignedDocument !== undefined) single('missingSignedDocument', 'No signed document');
-  if (filter.minValueDkk !== undefined) single('minValueDkk', `Value from DKK ${new Intl.NumberFormat('en-US').format(filter.minValueDkk)}`);
+  if (filter.minValueDkk !== undefined) single('minValueDkk', `Value from DKK ${formatNumber(filter.minValueDkk)}`);
   if (filter.q) single('q', `“${filter.q}”`);
+  if (filter.title) single('title', `Title contains “${filter.title}”`);
+  if (filter.contractNo) single('contractNo', `Contract no. contains “${filter.contractNo}”`);
+  if (filter.counterpartyName) single('counterpartyName', `Counterparty contains “${filter.counterpartyName}”`);
+  const range = (id: string, label: string, min: unknown, max: unknown, fmt: (v: never) => string, keys: (keyof ContractFilter)[]) => {
+    if (min === undefined && max === undefined) return;
+    const text = min !== undefined && max !== undefined ? `${fmt(min as never)} – ${fmt(max as never)}` : min !== undefined ? `from ${fmt(min as never)}` : `up to ${fmt(max as never)}`;
+    chips.push({ id, label: `${label} ${text}`, without: applyDrill(filter, Object.fromEntries(keys.map((k) => [k, undefined]))) });
+  };
+  const money = (v: number) => `DKK ${formatNumber(v)}`;
+  const day = (v: string) => formatDate(v);
+  range('annualValue', 'Annual value', filter.annualValueMin, filter.annualValueMax, money, ['annualValueMin', 'annualValueMax']);
+  range('totalValue', 'Total value', filter.totalValueMin, filter.totalValueMax, money, ['totalValueMin', 'totalValueMax']);
+  for (const [field, label] of [['notice', 'Notice'], ['end', 'End'], ['start', 'Start'], ['signed', 'Signed'], ['created', 'Created']] as const) {
+    range(`${field}Range`, label, filter[`${field}From`], filter[`${field}To`], day, [`${field}From`, `${field}To`]);
+  }
   for (const [k, v] of Object.entries(filter.cf ?? {})) {
-    chips.push({ id: `cf.${k}`, label: `${extra.customFields?.[k] ?? k}: ${v === 'true' ? 'Yes' : v === 'false' ? 'No' : v}`, without: applyDrill({ ...filter, cf: Object.fromEntries(Object.entries(filter.cf ?? {}).filter(([x]) => x !== k)) }, {}) });
+    const fieldKey = k.replace(/\.(min|max)$/, '');
+    const bound = k.endsWith('.min') ? 'from ' : k.endsWith('.max') ? 'up to ' : '';
+    const text = one(v).map((x) => (x === 'true' ? 'Yes' : x === 'false' ? 'No' : x)).join(', ');
+    chips.push({ id: `cf.${k}`, label: `${extra.customFields?.[fieldKey] ?? fieldKey}: ${bound}${text}`, without: applyDrill({ ...filter, cf: Object.fromEntries(Object.entries(filter.cf ?? {}).filter(([x]) => x !== k)) }, {}) });
   }
   return chips;
 }

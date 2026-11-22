@@ -1,3 +1,4 @@
+import { formatNumber } from './displayFormat';
 import type { ContractStatus } from '../api/types';
 
 /** Indicative rates to DKK, used only for roll-ups and approval value bands. */
@@ -16,8 +17,9 @@ export function toDkk(amount: number, currency: string): number {
   return amount * (FX_TO_DKK[currency] ?? 1);
 }
 
-const nf = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
-const nf1 = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 });
+// Release 4: numbers follow the number format in General settings (lib/displayFormat.ts).
+const nf = { format: (n: number) => formatNumber(n, 0) };
+const nf1 = { format: (n: number) => formatNumber(n, 1) };
 
 /** "DKK 1,250,000" */
 export function formatMoney(amount: number | null | undefined, currency: string, fallback = '–'): string {

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { permissions, qk, useApi, useAppConfig, useInvalidateContracts, useLookups, useMe } from '../../app/context';
-import { ApiError } from '../../api/api';
+import { permissions, qk, useApi, useAppConfig, useInvalidateContracts, useMe } from '../../app/context';
+import { fieldError, fieldErrors } from '../../lib/errors';
 import type { ContractDetail, DocumentKind, LinkKind, Obligation } from '../../api/types';
 import { Button, Field, Modal, Select, Skeleton, TextInput, useToast } from '../../components';
 import { ContractForm } from '../../features/ContractForm';
@@ -10,6 +10,8 @@ import { RoutePreview } from '../../features/Approval';
 import { formatFileSize, formatMoney, toDkk } from '../../lib/format';
 import { LOCKED_MESSAGE, UPLOAD_ACCEPT, UPLOAD_HINT, uploadError } from '../../lib/uploads';
 import { draftToInput, fieldsToDraft, hasErrors, parseWhole, validateDraft, type ContractDraft, type DraftErrors } from '../../lib/validation';
+import { PersonPicker } from '../../features/Pickers';
+import { useFileError } from '../../features/fileErrors';
 
 interface DialogProps {
   contract: ContractDetail;
@@ -18,8 +20,7 @@ interface DialogProps {
 
 /** Maps RFC 7807 `errors` from the API back onto form fields. */
 function serverErrors(e: unknown): DraftErrors {
-  if (!(e instanceof ApiError) || !e.problem.errors) return {};
-  return Object.fromEntries(Object.entries(e.problem.errors).map(([k, v]) => [k, v[0] ?? 'Not valid'])) as DraftErrors;
+  return fieldErrors(e) as DraftErrors;
 }
 
 export function EditDetailsDialog({ contract, onClose }: DialogProps) {
@@ -27,7 +28,8 @@ export function EditDetailsDialog({ contract, onClose }: DialogProps) {
   const toast = useToast();
   const invalidate = useInvalidateContracts();
   const config = useAppConfig();
-  const rules = { customFields: config.customFields, fieldRules: config.fieldRules, enforceRequired: contract.status === 'Draft' };
+  // Review finding H2: a contract without a master counterparty can still be edited and saved.
+  const rules = { customFields: config.customFields, fieldRules: config.fieldRules, enforceRequired: contract.status === 'Draft', counterpartyOptional: !contract.supplierId };
   const [draft, setDraft] = useState<ContractDraft>(() => fieldsToDraft(contract));
   const [errors, setErrors] = useState<DraftErrors>({});
   const [tried, setTried] = useState(false);
@@ -81,7 +83,7 @@ export function EditDetailsDialog({ contract, onClose }: DialogProps) {
       }
     >
       {contract.lockedFields.length > 0 ? <p className="banner tone-amber">{LOCKED_MESSAGE}</p> : null}
-      <ContractForm flat showTags={contract.canTag ?? contract.canEdit} draft={draft} errors={errors} onPatch={onPatch} lockedFields={contract.lockedFields} />
+      <ContractForm flat showTags={contract.canTag ?? contract.canEdit} draft={draft} errors={errors} onPatch={onPatch} lockedFields={contract.lockedFields} storedCounterparty={contract.supplierId ? null : contract.counterparty} />
     </Modal>
   );
 }
@@ -140,7 +142,8 @@ export function SignDialog({ contract, onClose }: DialogProps) {
     },
     onError: (e) => {
       // A date the server refuses is shown at the field, like the client-side checks.
-      if (e instanceof ApiError && e.problem.errors?.signedDate) setError((e.problem.detail ?? 'Check the signing date').replace(/\.$/, ''));
+      const atDate = fieldError(e, 'signedDate');
+      if (atDate) setError(atDate.replace(/\.$/, ''));
       else toast.error(e);
     },
   });
@@ -154,7 +157,7 @@ export function SignDialog({ contract, onClose }: DialogProps) {
 
   return (
     <Modal
-      title="Mark as signed"
+      title="Record manual signature"
       subtitle="The contract becomes active and reminders start. Upload the signed copy under Documents."
       onClose={onClose}
       onSubmit={submit}
@@ -164,7 +167,7 @@ export function SignDialog({ contract, onClose }: DialogProps) {
             Cancel
           </Button>
           <Button type="submit" loading={save.isPending}>
-            Mark as signed
+            Record signature
           </Button>
         </>
       }
@@ -187,6 +190,7 @@ const DOC_KINDS: { value: DocumentKind; label: string }[] = [
 export function UploadDialog({ contract, onClose }: DialogProps) {
   const api = useApi();
   const toast = useToast();
+  const fileError = useFileError();
   const invalidate = useInvalidateContracts();
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -205,7 +209,7 @@ export function UploadDialog({ contract, onClose }: DialogProps) {
       toast.show(`${f.name} uploaded`);
       onClose();
     },
-    onError: (e) => toast.error(e),
+    onError: (e, f) => fileError(e, 'The file could not be uploaded. Try again.', () => save.mutate(f)),
   });
 
   const submit = () => {
@@ -259,7 +263,6 @@ export function UploadDialog({ contract, onClose }: DialogProps) {
 
 export function ObligationDialog({ contract, obligation, onClose }: DialogProps & { obligation: Obligation | null }) {
   const api = useApi();
-  const lookups = useLookups();
   const toast = useToast();
   const invalidate = useInvalidateContracts();
   const [description, setDescription] = useState(obligation?.description ?? '');
@@ -320,7 +323,7 @@ export function ObligationDialog({ contract, obligation, onClose }: DialogProps 
         </Field>
       </div>
       <Field label="Responsible" error={errors.responsibleId}>
-        {(p) => <Select {...p} value={responsibleId} onChange={(e) => setResponsibleId(e.target.value)} options={lookups.users.map((u) => ({ value: u.id, label: u.name }))} placeholder="Choose" />}
+        {(p) => <PersonPicker {...p} value={responsibleId || null} clearLabel="Clear responsible" onChange={(id) => setResponsibleId(id ?? '')} />}
       </Field>
     </Modal>
   );

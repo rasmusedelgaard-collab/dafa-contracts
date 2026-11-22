@@ -5,6 +5,7 @@ import { createMockApi, type MockApi } from './mockApi';
 import { importFields, parseBool, parseCsv, parseDate, parseNumber, planImport, suggestMapping, type ImportRefs } from './importer';
 import { matchesFilter, type RegisterRow } from './query';
 import { DEP, ENT, TYP, USER, departmentId, entityId, typeId } from './seed';
+const SUPPLIER_1 = '00000005-0000-4000-8000-000000000001';
 
 const TODAY = '2026-11-22';
 const as = (userId: Id): MockApi => createMockApi({ today: TODAY, userId });
@@ -37,7 +38,7 @@ function contract(overrides: Partial<ContractInput> = {}): ContractInput {
   return {
     title: 'Gasket supply',
     typeId: typeId(TYP.direct),
-    supplierId: null,
+    supplierId: SUPPLIER_1,
     counterpartyName: 'Test Supplier ApS',
     entityId: entityId(ENT.dafa),
     departmentId: departmentId(DEP.purchasing),

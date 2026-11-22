@@ -4,9 +4,10 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { qk, useApi, useInvalidateContracts, useLookups, useMe } from '../app/context';
 import type { ApprovalInstance, ApprovalPreview, ApprovalStepStatus, ContractDetail, Deviation, LookupUser } from '../api/types';
-import { Avatar, Button, EmptyState, ErrorState, Field, Modal, Pill, Select, Skeleton, Textarea, useToast } from '../components';
+import { Avatar, Button, EmptyState, ErrorState, Field, Modal, Pill, Skeleton, Textarea, useToast } from '../components';
 import { formatDate, termLength } from '../lib/dates';
 import { formatMoneyCompact, type Tone } from '../lib/format';
+import { PersonPicker } from './Pickers';
 
 const STEP_TONE: Record<ApprovalStepStatus, Tone> = { Waiting: 'gray', Pending: 'blue', Approved: 'green', Rejected: 'red', Delegated: 'gray' };
 const STEP_TEXT: Record<ApprovalStepStatus, string> = { Waiting: 'Waiting', Pending: 'Approving now', Approved: 'Approved', Rejected: 'Rejected', Delegated: 'Delegated' };
@@ -215,7 +216,8 @@ export function useApprovalDecision(stepId: string, onDone?: () => void, contrac
     delegateTo,
     setDelegateTo,
     delegate: () => delegate.mutate(),
-    delegateOptions: delegateCandidates(lookups.users, me.id, contract).map((u) => ({ value: u.id, label: u.name })),
+    /** Who the step may be delegated to (person picker filter). */
+    canDelegateTo: (u: LookupUser) => delegateCandidates(lookups.users, me.id, contract).some((x) => x.id === u.id),
   };
 }
 
@@ -230,7 +232,7 @@ export function DecisionForm({ stepId, onDone, contract }: { stepId: string; onD
       {d.delegating ? (
         <div className="row-flex" style={{ alignItems: 'flex-end' }}>
           <Field label="Delegate to" className="spacer">
-            {(p) => <Select {...p} value={d.delegateTo} onChange={(e) => d.setDelegateTo(e.target.value)} placeholder="Choose a person" options={d.delegateOptions} />}
+            {(p) => <PersonPicker {...p} value={d.delegateTo || null} filter={d.canDelegateTo} clearLabel="Clear delegate" onChange={(id) => d.setDelegateTo(id ?? '')} />}
           </Field>
           <Button variant="secondary" onClick={() => d.setDelegating(false)} disabled={d.busy}>
             Cancel

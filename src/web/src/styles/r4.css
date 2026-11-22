@@ -1,0 +1,416 @@
+/* Release 4: pickers, header filters, number inputs, templates, logo, links, e-signature. */
+
+/* ---------- Combobox (person and counterparty pickers) ---------- */
+.combo {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.combo__box {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.combo__icon {
+  position: absolute;
+  left: 12px;
+  display: inline-flex;
+  color: var(--label);
+  pointer-events: none;
+}
+.combo__input {
+  padding-left: 36px;
+  padding-right: 40px;
+}
+.combo--set .combo__input::placeholder {
+  color: var(--text);
+}
+.combo__clear {
+  position: absolute;
+  right: 8px;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.combo__clear:hover,
+.combo__clear:focus-visible {
+  background: var(--tint);
+  color: var(--primary);
+}
+.combo__list {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 300px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+}
+.combo__opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.combo__opt--active {
+  background: var(--tint);
+}
+.combo__opt--footer {
+  margin-top: 4px;
+  border-top: 1px solid var(--hairline);
+  border-radius: 0 0 10px 10px;
+  color: var(--primary);
+  font-weight: 600;
+}
+.combo__empty {
+  padding: 10px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.combo--compact {
+  flex: 0 1 220px;
+}
+.combo--compact .combo__input {
+  height: 36px;
+  padding-left: 14px;
+  border-radius: 999px;
+}
+.combo--compact.combo--set .combo__input {
+  border-color: var(--primary);
+  background: var(--tint);
+}
+.combo--compact.combo--set .combo__input::placeholder {
+  color: var(--primary);
+}
+
+/* ---------- Scope chip ---------- */
+.scope-chip {
+  margin: 0 0 12px;
+}
+
+/* ---------- Register header filters ---------- */
+.th-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+}
+.th-filter {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--label);
+  cursor: pointer;
+}
+.th-filter:hover,
+.th-filter:focus-visible {
+  background: var(--tint);
+  color: var(--primary);
+}
+.th-filter--on {
+  background: var(--primary-fill);
+  color: var(--on-primary);
+}
+.th-filter--on:hover {
+  background: var(--primary-fill-hover);
+  color: var(--on-primary);
+}
+.th-popover {
+  position: fixed;
+  z-index: 60;
+  width: min(320px, calc(100vw - 16px));
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+  text-align: left;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+.th-popover__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.th-popover__opt {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 4px;
+  border-radius: 8px;
+}
+.th-popover__opt:hover {
+  background: var(--row-hover);
+}
+.th-popover__range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.th-popover__foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.th-popover__more summary {
+  cursor: pointer;
+  color: var(--primary);
+  font-size: 13px;
+}
+
+/* ---------- Templates (categories, preview) ---------- */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.template-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px 8px;
+}
+.template-item .template-preview {
+  grid-column: 1 / -1;
+}
+.template-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--tint-2);
+}
+.template-preview__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.template-preview__fields code {
+  color: var(--primary);
+}
+.template-preview__text {
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-2);
+}
+.check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px 14px;
+  margin-top: 8px;
+}
+.fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+/* ---------- Logo (owner item F) ---------- */
+.brand__logo-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.brand__logo {
+  display: block;
+  max-height: 40px;
+  max-width: 200px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  background: transparent;
+}
+.brand__logo--dark,
+.brand__logo--compact {
+  display: none;
+}
+:root[data-theme='dark'] .brand__logo--light {
+  display: none;
+}
+:root[data-theme='dark'] .brand__logo--dark {
+  display: block;
+}
+.logo-preview {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.logo-preview__box {
+  display: flex;
+  align-items: center;
+  min-width: 220px;
+  min-height: 72px;
+  padding: 14px 18px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+}
+.logo-preview__box--light {
+  background: var(--logo-preview-light);
+}
+.logo-preview__box--dark {
+  background: var(--logo-preview-dark);
+}
+.settings-grid__full { grid-column: 1 / -1; }
+
+/* ---------- Storage / links ---------- */
+.link-cell {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+.kv-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 14px;
+}
+.kv-list dt {
+  color: var(--text-2);
+}
+.kv-list dd {
+  margin: 0;
+}
+.warning-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--amber-fg);
+}
+.toast__action {
+  flex: none;
+  padding: 6px 10px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+/* ---------- E-signature ---------- */
+.signer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+.signer-row {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr auto;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+}
+.signer-status {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 0 8px;
+  list-style: none;
+}
+.signer-status li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border-top: 1px solid var(--hairline);
+}
+.people-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.people-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.signatory-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) 1fr minmax(200px, 280px);
+  align-items: center;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+}
+.pill__x {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0 2px;
+}
+@media (max-width: 720px) {
+  .signer-row,
+  .signatory-row,
+  .signer-status li {
+    grid-template-columns: 1fr;
+  }
+}
+.combo--compact .combo__input::placeholder {
+  color: var(--text);
+}
+.logo-preview__box--light .caption {
+  color: var(--logo-preview-light-text);
+}
+.logo-preview__box--dark .caption {
+  color: var(--logo-preview-dark-text);
+}
+.chip-row .chip {
+  background-image: none;
+  padding-right: 14px;
+}

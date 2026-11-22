@@ -90,6 +90,27 @@ app.Use(async (context, next) =>
 {
     // Browsers must not guess a content type for downloaded contract files.
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    // Release 4: API answers are never served from a cache (a role change by an administrator, a
+    // settings page right after sign-in), unless the action sets its own policy (the logo does).
+    // The SPA shell is revalidated on every load so a page opened before a deployment finds its
+    // new script files; the hashed assets themselves stay cacheable.
+    var isApi = context.Request.Path.StartsWithSegments("/api");
+    var isAsset = !isApi && Path.HasExtension(context.Request.Path.Value) && !context.Request.Path.Value!.EndsWith(".html", StringComparison.OrdinalIgnoreCase);
+    context.Response.OnStarting(() =>
+    {
+        if (!context.Response.Headers.ContainsKey("Cache-Control"))
+        {
+            if (isApi)
+            {
+                context.Response.Headers["Cache-Control"] = "no-store";
+            }
+            else if (!isAsset)
+            {
+                context.Response.Headers["Cache-Control"] = "no-cache";
+            }
+        }
+        return Task.CompletedTask;
+    });
     await next(context);
 });
 app.UseMiddleware<RequestedWithMiddleware>();

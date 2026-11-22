@@ -178,11 +178,13 @@ public class IntakeController : ApiControllerBase
 {
     private readonly IntakeService _intake;
     private readonly Dafa.Contracts.Core.Abstractions.IAppDbContext _db;
+    private readonly TemplateCatalogService _templates;
 
-    public IntakeController(IntakeService intake, Dafa.Contracts.Core.Abstractions.IAppDbContext db)
+    public IntakeController(IntakeService intake, Dafa.Contracts.Core.Abstractions.IAppDbContext db, TemplateCatalogService templates)
     {
         _intake = intake;
         _db = db;
+        _templates = templates;
     }
 
     [HttpPost("intake/extract")]
@@ -218,16 +220,17 @@ public class IntakeController : ApiControllerBase
         return result;
     }
 
+    /// <summary>
+    /// Release 4: active templates in active categories, by category order then name. Optional
+    /// filters (empty = no filter): categoryId, typeId, language, q.
+    /// </summary>
     [HttpGet("templates")]
-    public async Task<ActionResult<List<TemplateDto>>> Templates(CancellationToken cancellationToken)
+    public async Task<ActionResult<List<TemplateDto>>> Templates(
+        [FromQuery] Guid? categoryId, [FromQuery] Guid? typeId, [FromQuery] string? language, [FromQuery] string? q, CancellationToken cancellationToken)
     {
         var settings = await AppSettingsStore.LoadAsync(_db, cancellationToken);
-        if (!settings.Features.Templates)
-        {
-            await _intake.GetTemplatesAsync(cancellationToken);
-            return new List<TemplateDto>();
-        }
-        return await _intake.GetTemplatesAsync(cancellationToken);
+        var templates = await _templates.ListAsync(categoryId, typeId, language, q, cancellationToken);
+        return settings.Features.Templates ? templates : new List<TemplateDto>();
     }
 
     [HttpPost("intake/from-template")]
@@ -254,10 +257,11 @@ public class ApprovalsController : ApiControllerBase
         _approvals = approvals;
     }
 
+    /// <summary>Release 4: ?entityId= (repeatable) is the entity scope (the contract's entity).</summary>
     [HttpGet("mine")]
     public async Task<ActionResult<List<MyApprovalDto>>> Mine(CancellationToken cancellationToken)
     {
-        return await _queries.MyApprovalsAsync(cancellationToken);
+        return await _queries.MyApprovalsAsync(EntityScope.From(Request), cancellationToken);
     }
 
     [HttpPost("steps/{stepId:guid}/decision")]

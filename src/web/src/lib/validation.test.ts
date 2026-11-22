@@ -5,6 +5,7 @@ function validDraft(overrides: Partial<ContractDraft> = {}): ContractDraft {
   return emptyDraft({
     title: 'Supply agreement',
     counterpartyName: 'Nordpolymer Compounds ApS',
+    supplierId: 'cp-1',
     typeId: 'type-1',
     entityId: 'entity-1',
     departmentId: 'dept-1',
@@ -25,6 +26,11 @@ function validDraft(overrides: Partial<ContractDraft> = {}): ContractDraft {
 describe('new contract validation', () => {
   it('accepts a complete draft', () => {
     expect(validateDraft(validDraft())).toEqual({});
+  });
+
+  it('release 4: a counterparty typed but not picked from the list is not accepted', () => {
+    expect(validateDraft(validDraft({ supplierId: null })).counterpartyName).toBe('Pick the counterparty from the list');
+    expect(validateDraft(validDraft({ supplierId: null, counterpartyName: '' })).counterpartyName).toBe('Choose the counterparty');
   });
 
   it('requires every field the brief lists as required to save', () => {

@@ -3,9 +3,8 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { qk, useApi, useInvalidateContracts } from '../app/context';
 import type { RenewalDecision } from '../api/types';
 import { Button, ErrorState, Field, Modal, Skeleton, Textarea, TextInput, useToast } from '../components';
-import { ApiError } from '../api/api';
 import { addDays, addMonths, formatDate, isIsoDate } from '../lib/dates';
-import { errorMessage, isConflict } from '../lib/errors';
+import { errorMessage, fieldError, isConflict } from '../lib/errors';
 
 const DONE_TEXT: Record<RenewalDecision, string> = {
   Renew: 'Renewal recorded',
@@ -48,7 +47,7 @@ export function RenewalDialog({ contractId, initial, onClose }: { contractId: st
       // A 409 (too early to renew, already renewed, open-ended, ...) carries the reason in `detail`:
       // it stays in the dialog, next to the choice it is about. Everything else is a toast.
       if (isConflict(e)) setRefused(errorMessage(e));
-      else if (e instanceof ApiError && e.problem.errors?.newEndDate) setRefused(errorMessage(e));
+      else if (fieldError(e, 'newEndDate')) setRefused(fieldError(e, 'newEndDate'));
       else toast.error(e);
     },
   });

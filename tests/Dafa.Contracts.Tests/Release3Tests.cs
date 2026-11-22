@@ -18,6 +18,8 @@ public class Release3Tests
     {
         Title = title,
         TypeId = world.TypeSupplier,
+        // Release 4: the counterparty is always a master record chosen from the list.
+        SupplierId = world.DefaultSupplier,
         CounterpartyName = "Release 3 Supplier A/S",
         EntityId = world.EntityA,
         DepartmentId = world.Purchasing,
@@ -677,16 +679,16 @@ public class Release3Tests
         using (var db = new AppDbContext(options))
         {
             var first = await new SchemaUpgrader(db).UpgradeAsync();
-            Assert.Equal(new List<int> { 1, 2 }, first.AppliedVersions);
+            Assert.Equal(new List<int> { 1, 2, 3, 4 }, first.AppliedVersions);
             Assert.NotEmpty(first.Statements);
-            Assert.Equal(2, first.CurrentVersion);
+            Assert.Equal(4, first.CurrentVersion);
         }
         using (var db = new AppDbContext(options))
         {
             var second = await new SchemaUpgrader(db).UpgradeAsync();
             Assert.Empty(second.AppliedVersions);
             Assert.Empty(second.Statements);
-            Assert.Equal(new List<int> { 1, 2 }, await new SchemaUpgrader(db).GetRecordedVersionsAsync());
+            Assert.Equal(new List<int> { 1, 2, 3, 4 }, await new SchemaUpgrader(db).GetRecordedVersionsAsync());
         }
         using (var db = new AppDbContext(options))
         {
@@ -716,7 +718,7 @@ public class Release3Tests
         using var db = new AppDbContext(options);
         db.Database.EnsureCreated();
         var result = await new SchemaUpgrader(db).UpgradeAsync();
-        Assert.Equal(new List<int> { 1, 2 }, result.AppliedVersions);
+        Assert.Equal(new List<int> { 1, 2, 3, 4 }, result.AppliedVersions);
         // Only the SchemaVersion table itself was created.
         Assert.Single(result.Statements);
         Assert.Empty(result.Warnings);

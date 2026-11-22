@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { qk, useApi } from '../app/context';
 import type { ContractFilter, DataRoomExport, DataRoomInput } from '../api/types';
-import { Button, Field, Modal, Pill, Segmented, TextInput, useToast } from '../components';
+import { Button, Field, Modal, Pill, Segmented, TextInput } from '../components';
 import { formatDateTime, todayIso } from '../lib/dates';
 import { formatFileSize, plural, saveBlob } from '../lib/format';
+import { useFileError } from './fileErrors';
 
 /**
  * "Data room export" for due diligence: the backend builds a zip with an index (CSV), a manifest
@@ -12,7 +13,7 @@ import { formatFileSize, plural, saveBlob } from '../lib/format';
  */
 export function DataRoomDialog({ filter, chips, onClose }: { filter: ContractFilter; chips: string[]; onClose: () => void }) {
   const api = useApi();
-  const toast = useToast();
+  const fileError = useFileError();
   const client = useQueryClient();
   const [name, setName] = useState(`Due diligence ${todayIso()}`);
   const [documents, setDocuments] = useState<DataRoomInput['documents']>('All');
@@ -26,7 +27,7 @@ export function DataRoomDialog({ filter, chips, onClose }: { filter: ContractFil
       setStarted(x);
       void client.invalidateQueries({ queryKey: qk.dataRoom });
     },
-    onError: (e) => toast.error(e),
+    onError: (e) => fileError(e, 'The export could not be started. Try again.', () => create.mutate()),
   });
   const poll = useQuery({
     queryKey: [...qk.dataRoom, started?.id],
@@ -39,7 +40,7 @@ export function DataRoomDialog({ filter, chips, onClose }: { filter: ContractFil
   const download = useMutation({
     mutationFn: (id: string) => api.getDataRoomContent(id),
     onSuccess: (f) => saveBlob(f.blob, f.fileName),
-    onError: (e) => toast.error(e),
+    onError: (e, id) => fileError(e, 'The export could not be downloaded. Try again.', () => download.mutate(id)),
   });
   useEffect(() => {
     if (current?.status === 'Ready') void client.invalidateQueries({ queryKey: qk.dataRoom });

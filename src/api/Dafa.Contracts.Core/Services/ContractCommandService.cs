@@ -394,6 +394,10 @@ public class ContractCommandService
             activeCurrencies.Contains(code, StringComparer.OrdinalIgnoreCase)
             || (currentCurrency is not null && string.Equals(code, currentCurrency, StringComparison.OrdinalIgnoreCase)));
         string? supplierName = null;
+        // Release 4 (CONTRACT_V4 section 3): the counterparty is always a master record chosen from
+        // the list; free text is no longer accepted. The rules are applied below, so the generic
+        // "counterparty required" message of the field validator is dropped here.
+        errors.Remove("counterpartyName");
         var checkRequired = existing is null || existing.Status == ContractStatus.Draft;
         var customFields = CustomFields();
         if (checkRequired)
@@ -448,10 +452,29 @@ public class ContractCommandService
         {
             var supplierId = input.SupplierId.Value;
             var supplier = await _db.Suppliers.AsNoTracking().FirstOrDefaultAsync(s => s.Id == supplierId, cancellationToken);
+            var unchanged = existing is not null && existing.SupplierId == supplierId;
             if (supplier is null)
-                ContractValidator.Add(errors, "supplierId", "Unknown supplier.");
+                ContractValidator.Add(errors, "supplierId", "Choose a counterparty from the list.");
+            else if (!supplier.IsActive && !unchanged)
+                ContractValidator.Add(errors, "supplierId", supplier.Name + " is inactive. Choose an active counterparty from the list.");
             else
-                supplierName = supplier.Name;
+                // The name always comes from the master record. An unchanged counterparty keeps the
+                // name stored on the contract, so saving other fields never rewrites an approved term.
+                supplierName = unchanged ? existing!.CounterpartyName : supplier.Name;
+        }
+        else if (existing is null)
+        {
+            ContractValidator.Add(errors, "supplierId", "Choose a counterparty from the list.");
+        }
+        else if (existing.SupplierId is not null)
+        {
+            ContractValidator.Add(errors, "supplierId", "Choose a counterparty from the list. A counterparty cannot be removed from a contract.");
+        }
+        else
+        {
+            // An older or imported contract without a master record keeps its name until a
+            // counterparty is chosen; a name typed by the client is ignored.
+            supplierName = existing.CounterpartyName;
         }
 
         if (errors.Count > 0)
@@ -479,7 +502,9 @@ public class ContractCommandService
         contract.Title = input.Title!.Trim();
         contract.TypeId = input.TypeId!.Value;
         contract.SupplierId = input.SupplierId;
-        contract.CounterpartyName = Clean(input.CounterpartyName) ?? supplierName ?? "";
+        // Release 4: never the client's text. supplierName is the master record's name, or the
+        // name the contract already had (see ValidateAsync).
+        contract.CounterpartyName = supplierName ?? "";
         contract.EntityId = input.EntityId!.Value;
         contract.DepartmentId = input.DepartmentId!.Value;
         contract.OwnerId = input.OwnerId!.Value;
@@ -531,21 +556,23 @@ public class ContractCommandService
         contract.ContractNo = await NextContractNoAsync(cancellationToken);
         _db.Contracts.Add(contract);
 
+        // SharePoint hardening: the uploaded file is validated now but stored only AFTER the contract
+        // row is saved, when its number is final, so two drafts created at the same moment can
+        // never write into the same folder.
+        PendingUpload? upload = null;
         if (input.UploadId is not null)
         {
             var uploadId = input.UploadId.Value;
-            var upload = await _db.PendingUploads.FirstOrDefaultAsync(u => u.Id == uploadId, cancellationToken);
+            upload = await _db.PendingUploads.FirstOrDefaultAsync(u => u.Id == uploadId, cancellationToken);
             if (upload is null || upload.CreatedById != profile.UserId)
             {
                 throw new InputValidationException("uploadId", "The uploaded file was not found. Upload it again.");
             }
-            await _documents.AddAsync(contract, upload.FileName, DocumentKind.Main, upload.Content, profile.UserId, cancellationToken);
             contract.DeviationsJson = upload.DeviationsJson;
             if (contract.Summary is null)
             {
                 contract.Summary = upload.Summary;
             }
-            _db.PendingUploads.Remove(upload);
         }
 
         await CustomFields().SaveValuesAsync(contract.Id, customValues, true, cancellationToken);
@@ -574,6 +601,25 @@ public class ContractCommandService
                 }
                 contract.ContractNo = await NextContractNoAsync(cancellationToken);
                 created.Text = "Created draft " + contract.ContractNo;
+            }
+        }
+
+        if (upload is not null)
+        {
+            try
+            {
+                await _documents.AddAsync(contract, upload.FileName, DocumentKind.Main, upload.Content, profile.UserId, cancellationToken);
+                _db.PendingUploads.Remove(upload);
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+            catch (AppException ex) when (ex is StorageUnavailableException || ex is StorageNotConfiguredException)
+            {
+                // The draft exists; only its file could not be stored. The upload is kept (7 days)
+                // and the reason is on the contract's activity, so the user can add the file again.
+                _db.DiscardChanges();
+                _audit.Record("document.upload-failed",
+                    "The uploaded file " + upload.FileName + " could not be stored (" + ex.Message + "). Upload it again under Documents.", contract.Id);
+                await _db.SaveChangesAsync(cancellationToken);
             }
         }
         return contract.Id;
@@ -764,9 +810,22 @@ public class ContractCommandService
     public async Task SignAsync(Guid contractId, SignInput input, CancellationToken cancellationToken = default)
     {
         var contract = await _access.GetEditableAsync(contractId, cancellationToken);
+        // Release 4 (CONTRACT_V4 section 8.3): recording a manual signature is for the owner, the
+        // delegate and administrators; the responsible person may edit but not sign off.
+        var signer = await _currentUser.GetProfileAsync(cancellationToken);
+        if (!signer.IsAdmin && contract.OwnerId != signer.UserId && contract.DelegateId != signer.UserId)
+        {
+            throw new ForbiddenException("Only the contract owner, the delegate or an administrator can record a signature.");
+        }
         if (contract.Status != ContractStatus.Approved)
         {
             throw new ConflictException("Only an approved contract can be marked as signed.");
+        }
+        var contractKey = contract.Id;
+        var openRequests = await _db.SignatureRequests.AsNoTracking().Where(r => r.ContractId == contractKey).Select(r => r.Status).ToListAsync(cancellationToken);
+        if (openRequests.Any(SignatureRules.IsActive))
+        {
+            throw new ConflictException("An e-signature request is open for this contract. Cancel it before recording a manual signature.", ProblemTypesV4.SignatureState);
         }
         if (input.SignedDate is null)
         {

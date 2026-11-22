@@ -24,6 +24,19 @@ public class LegalEntity
     /// <summary>Release 3: functional currency of the entity.</summary>
     public string? Currency { get; set; }
     public bool IsActive { get; set; } = true;
+
+    // Release 4: how the entity is linked to SharePoint and Entra ID (docs/RUNBOOK.md, "Linking a legal entity").
+    /// <summary>The entity's SharePoint site, as an admin pastes it: https://tenant.sharepoint.com/sites/name.</summary>
+    public string? SharePointSiteUrl { get; set; }
+    /// <summary>The Graph site id resolved from the URL by "test link" (SharePoint mode). Null until resolved.</summary>
+    public string? SharePointSiteId { get; set; }
+    /// <summary>Object id of the Entra group whose members are entity management for this entity.</summary>
+    public string? ManagementGroupId { get; set; }
+    public string? ManagementGroupName { get; set; }
+    /// <summary>NotLinked (or null), Linked, Error: the result of the last link test (LinkStates).</summary>
+    public string? LinkStatus { get; set; }
+    public DateTime? LinkCheckedAt { get; set; }
+    public string? LinkMessage { get; set; }
 }
 
 public class Department
@@ -32,6 +45,18 @@ public class Department
     public string Name { get; set; } = "";
     public bool IsActive { get; set; } = true;
     public int SortOrder { get; set; }
+
+    // Release 4: departments cut across legal entities, so the mapping is by name: every linked
+    // entity site holds a document library with this name, and one Entra group holds the members.
+    /// <summary>Name of the document library on each entity site. Null = the department name.</summary>
+    public string? LibraryName { get; set; }
+    /// <summary>Object id of the Entra group whose members are members of this department.</summary>
+    public string? GroupId { get; set; }
+    public string? GroupName { get; set; }
+    /// <summary>NotLinked (or null), Linked, Error: the result of the last link test.</summary>
+    public string? LinkStatus { get; set; }
+    public DateTime? LinkCheckedAt { get; set; }
+    public string? LinkMessage { get; set; }
 }
 
 public class ContractType
@@ -58,6 +83,12 @@ public class AppUser
     /// <summary>Release 3: Manual, Import, Seed, Entra. Null on older rows (Seed, or Entra when ExternalId is set).</summary>
     public string? Source { get; set; }
     public DateTime? LastSignInAt { get; set; }
+    /// <summary>Release 4: may send contracts for e-signature (see SignatureEntityIdsJson for the limit).</summary>
+    public bool CanSendForSignature { get; set; }
+    /// <summary>Release 4: JSON array of legal entity ids the permission is limited to; null or empty = every entity.</summary>
+    public string? SignatureEntityIdsJson { get; set; }
+    /// <summary>Release 4: the user's home legal entity (shown in person pickers). Not part of the access model.</summary>
+    public Guid? HomeEntityId { get; set; }
 }
 
 public class UserDepartment
@@ -153,6 +184,12 @@ public class Contract : IVersioned
     public Guid CreatedById { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+
+    // SharePoint hardening (schema step 4): the contract's folder, stored once when it is created,
+    // so "Open in SharePoint" needs no call to SharePoint when a contract is read.
+    public string? StoreDriveId { get; set; }
+    public string? StoreFolderId { get; set; }
+    public string? StoreFolderUrl { get; set; }
 }
 
 public class ContractLink
@@ -186,6 +223,18 @@ public class ContractDocument
     public long Size { get; set; }
     public Guid? UploadedById { get; set; }
     public DateTime UploadedAt { get; set; }
+
+    // SharePoint hardening (schema step 4): where the file is, independent of the store key, and
+    // a fingerprint of what was uploaded. All null on rows from before, and in Local mode except the hash.
+    public string? SiteId { get; set; }
+    public string? DriveId { get; set; }
+    public string? ItemId { get; set; }
+    /// <summary>Library and path inside it, e.g. "Purchasing/C-2026-0012/Agreement v2.pdf": survives a tenant move.</summary>
+    public string? RelativePath { get; set; }
+    public string? ETag { get; set; }
+    public string? CTag { get; set; }
+    /// <summary>Hex SHA-256 of the uploaded bytes.</summary>
+    public string? ContentHash { get; set; }
 }
 
 public class ApprovalRule
@@ -230,6 +279,11 @@ public class ApprovalInstance : IVersioned
     public Guid? StartedById { get; set; }
     public DateTime StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
+    /// <summary>
+    /// SharePoint hardening (schema step 4): the approval is final but its approval-log document
+    /// could not be stored yet (the store was down). The UploadCleanup job writes it and clears this.
+    /// </summary>
+    public bool LogPending { get; set; }
 }
 
 public class ApprovalStep : IVersioned
@@ -292,6 +346,12 @@ public class ContractTemplate
     public string Placeholders { get; set; } = "";
     public bool IsActive { get; set; } = true;
     public DateTime UpdatedAt { get; set; }
+    /// <summary>Release 4: the template category, if any.</summary>
+    public Guid? CategoryId { get; set; }
+    /// <summary>Release 4: JSON array of contract type ids the template is meant for; null or empty = TypeId (or every type).</summary>
+    public string? ContractTypeIdsJson { get; set; }
+    /// <summary>Release 4: language of the template text, e.g. "en", "da", "de". Null = not stated.</summary>
+    public string? Language { get; set; }
 }
 
 public class AuditEvent

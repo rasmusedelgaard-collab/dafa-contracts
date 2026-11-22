@@ -170,7 +170,16 @@ How it works (details in `docs/RUNBOOK.md`, "Database schema upgrades"):
   sync sources, notification and job settings, saved views, watchers, comments, in-app
   notifications, preferences, data room exports, and new columns on legal entities, counterparties,
   users, contracts, audit events and the outbox).
-- The demo seed only adds rows that are missing, so existing test data stays.
+- Step 3 adds release 4 (template categories, branding, e-signature requests and signers, the
+  SharePoint / Entra mapping columns on legal entities and departments, the signing permission
+  and home entity on users, category / types / language on templates, the theme preference).
+  Step 4 adds the storage hardening (reconciliation reports, where each document is stored and
+  its checksum, the folder link on contracts, pending approval logs, retry counters for search
+  text). Both only add tables and columns; every new column is optional or has a default.
+- The demo seed only adds rows that are missing, so existing test data stays. On a test
+  database from an earlier release it adds, once: three template categories, the Simulated
+  e-signature provider, and the signing permission for the demo users Lars Winther (all legal
+  entities) and Jonas Berg (DAFA A/S and DAFA Building Solutions A/S).
 
 First deployment of release 3 on the existing test site:
 
@@ -192,6 +201,24 @@ a half-upgraded schema), the fallback is still to empty the test database once:
 3. Run **Deploy test** again. The app recreates the tables and the demo data on first start.
 
 All test data entered by hand is lost in that case. That is acceptable on the test site.
+
+First deployment of release 4 on the existing test site: run **Deploy test**, open the site and
+check the log for `Schema upgraded to version 4` (`SELECT * FROM SchemaVersion` shows 1 to 4).
+Nothing else is needed. Things that changed for testers:
+
+- A contract's counterparty must now be chosen from the list. Existing contracts with a
+  free-text counterparty keep their text until somebody picks a counterparty for them.
+- Sending for signature works with the Simulated provider: sign in as Lars Winther, open an
+  Approved contract, send it, and use the "simulate" panel to sign for each signer.
+- Settings > Storage shows "Local" and Healthy: the test site stores files on its own disk and
+  never calls SharePoint. Settings > Legal entities > Test link only checks the format
+  in test mode ("Test mode: saved, used in SharePoint mode").
+- No new setting is required. Optional: `Signing__AllowSimulated=false` hides the Simulated
+  provider; `Signing__Webhook__Secret` (24+ characters) opens the e-signature webhook route,
+  which nothing calls on the test site.
+- The API now answers with `Cache-Control: no-store` and the page shell (`index.html`) with
+  `no-cache`, so a browser picks up a new deployment without a hard refresh. If the hosting
+  panel has its own output caching for the site, leave it off.
 
 Release 3 also adds two optional settings for the test site (defaults are right for it):
 `Sync:Provider` = `Demo` (sync sources return demo rows; `Live` queries real sources) and

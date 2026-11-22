@@ -4,12 +4,13 @@ import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiMode } from '../api';
 import { qk, useApi, useAppConfig, useLookups, useScope } from '../app/context';
-import type { ContractListItem, ContractQuery, ContractSort, ContractStatus, ContractView, RegisterColumn } from '../api/types';
+import type { ContractFilter, ContractListItem, ContractQuery, ContractSort, ContractView, RegisterColumn } from '../api/types';
 import { Button, ButtonLink, Card, ChipSelect, EmptyState, ErrorState, Icon, Segmented, Skeleton, SkeletonRows, Table, useToast, type Column } from '../components';
 import { BulkBar } from '../features/Bulk';
 import { contractColumns, defaultColumns, TagList, useColumnBudget } from '../features/columns';
 import { ColumnChooser, ViewsMenu } from '../features/Views';
-import { chipsOf, filterToParams as filterParams, parseFilter } from '../lib/drill';
+import { applyDrill, chipsOf, filterToParams as filterParams, parseFilter } from '../lib/drill';
+import { filterSpecFor, HeaderFilter } from '../features/HeaderFilters';
 import { sanitizeColumns } from '../lib/views';
 import { formatDate, noticeTone } from '../lib/dates';
 import { ALL_STATUSES, formatMoneyCompact, plural, saveBlob, statusLabel } from '../lib/format';
@@ -123,9 +124,6 @@ export function Register() {
 
   const view: ContractView = isView(params.get('view')) ? (params.get('view') as ContractView) : 'all';
   const q = params.get('q') ?? '';
-  const departmentId = params.get('department') ?? '';
-  const typeId = params.get('type') ?? '';
-  const status = (params.get('status') ?? '') as ContractStatus | '';
   const sort = (params.get('sort') ?? 'notice') as ContractSort;
   const page = Math.max(1, Number(params.get('page')) || 1);
   const selectedId = params.get('sel');
@@ -156,16 +154,14 @@ export function Register() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
 
-  // Release 3: every filter of the shared contract filter can come from the URL (saved views, Overview links).
-  const { entityId: _urlEntity, ...extra } = parseFilter(params);
+  // Release 3: every filter of the shared contract filter comes from the URL (saved views, Overview
+  // links), repeated parameters included. The URL is the only state: the entity scope in the top
+  // bar is the same `entity` parameter.
+  const parsed = parseFilter(params);
   const filters: ContractQuery = {
-    ...extra,
+    ...parsed,
     view,
     q: q.trim() || undefined,
-    entityId: scope.entityId || undefined,
-    departmentId: departmentId || undefined,
-    typeId: typeId || undefined,
-    status: status || undefined,
     sort,
   };
   const query: ContractQuery = { ...filters, page, pageSize: PAGE_SIZE };
@@ -194,13 +190,13 @@ export function Register() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pastEnd, pages]);
   const peek = items.find((i) => i.id === selectedId) ?? items[0] ?? null;
-  const extraChips = chipsOf({ ...extra, q: undefined, departmentId: undefined, typeId: undefined, status: undefined }, lookups, { tags: Object.fromEntries(config.tags.map((t) => [t.id, t.name])), customFields: Object.fromEntries(config.customFields.map((d) => [d.key, d.label])) });
-  const hasFilters = !!(q || scope.entityId || departmentId || typeId || status || view !== 'all' || extraChips.length);
+  // Filters without a select of their own in the toolbar get a breadcrumb; its "without" is the whole filter minus that chip.
+  const extraChips = chipsOf(parsed, lookups, { tags: Object.fromEntries(config.tags.map((t) => [t.id, t.name])), customFields: Object.fromEntries(config.customFields.map((d) => [d.key, d.label])) }).filter((c) => c.id !== 'q' && !/^(entityId|departmentId|typeId|status):/.test(c.id));
+  const hasFilters = !!(q || view !== 'all' || Object.keys(parsed).some((k) => k !== 'q' && k !== 'includeEnded'));
   const colsParam = params.get('cols');
   const columnKeys: RegisterColumn[] = colsParam ? sanitizeColumns(colsParam.split(','), config.customFields) : defaultColumns(budget);
 
   const clear = () => {
-    scope.setEntityId('');
     setText('');
     setParams({}, { replace: true });
   };
@@ -233,13 +229,26 @@ export function Register() {
     className: 'col-select hide-phone',
     render: (r) => <input type="checkbox" className="check__box" aria-label={`Select ${r.title}`} checked={selected.includes(r.id)} onClick={(e) => e.stopPropagation()} onChange={(e) => setSelected(e.target.checked ? [...selected, r.id] : selected.filter((x) => x !== r.id))} />,
   };
-  const configured = contractColumns(columnKeys, { title: titleCell, customFields: config.customFields, lookups });
+  // Release 4 (owner item B): a filter in every column header, written to the URL like the rest.
+  const applyHeaderFilter = (patch: Partial<ContractFilter>) => {
+    const next = filterParams(applyDrill(parsed, patch), params);
+    next.delete('page');
+    next.delete('sel');
+    setParams(next, { replace: true });
+  };
+  const withFilters = (cols: Column<ContractListItem>[]) =>
+    cols.map((c) => {
+      const spec = filterSpecFor(c.key, config.customFields);
+      const label = typeof c.header === 'string' ? c.header : c.key;
+      return spec ? { ...c, filter: <HeaderFilter label={label} spec={spec} filter={parsed} onApply={applyHeaderFilter} scope={{ view, searchActive: !!q.trim() }} /> } : c;
+    });
+  const configured = withFilters(contractColumns(columnKeys, { title: titleCell, customFields: config.customFields, lookups }));
   // Tablet (720–1000px): no room for five columns. Contract, Notice and Status stay; the entity and
   // the owner are in the record. (A phone shows cards; the CSS hides the extra cells there.)
   const tablet = narrow && !phone;
   const columns = [
     selectColumn,
-    ...(tablet ? contractColumns(['contract', 'notice', 'status'], { title: titleCell }).map((c) => (c.key === 'contract' ? { ...c, width: undefined } : c)) : configured),
+    ...(tablet ? withFilters(contractColumns(['contract', 'notice', 'status'], { title: titleCell })).map((c) => (c.key === 'contract' ? { ...c, width: undefined } : c)) : configured),
   ];
 
   const exportButton = (
@@ -278,8 +287,8 @@ export function Register() {
               params={params}
               columns={columnKeys}
               onApply={(p) => {
-                const e = p.get('entity');
-                if (e) scope.adopt(e);
+                // A view without an entity keeps the entity scope chosen in the top bar.
+                if (!p.has('entity')) for (const id of scope.entityIds) p.append('entity', id);
                 setParams(p, { replace: false });
               }}
             />
@@ -295,17 +304,17 @@ export function Register() {
         </label>
       </div>
       <div className="toolbar toolbar--chips" role="group" aria-label="Filters">
-        <ChipSelect label="Entity" options={refs(lookups.entities)} value={scope.entityId} onChange={(v) => { scope.setEntityId(v); update({ sel: null }); }} />
-        <ChipSelect label="Department" options={refs(lookups.departments)} value={departmentId} onChange={(v) => update({ department: v, sel: null })} />
-        <ChipSelect label="Type" options={refs(lookups.contractTypes)} value={typeId} onChange={(v) => update({ type: v, sel: null })} />
-        <ChipSelect label="Status" options={ALL_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))} value={status} onChange={(v) => update({ status: v, sel: null })} />
-        {config.tags.length ? <ChipSelect label="Tag" options={config.tags.map((t) => ({ value: t.id, label: t.name }))} value={params.get('tag') ?? ''} onChange={(v) => update({ tag: v, sel: null })} /> : null}
+        <ChipSelect label="Entity" options={refs(lookups.entities)} value={parsed.entityId} onChange={(v) => update({ entity: v, sel: null })} />
+        <ChipSelect label="Department" options={refs(lookups.departments)} value={parsed.departmentId} onChange={(v) => update({ department: v, sel: null })} />
+        <ChipSelect label="Type" options={refs(lookups.contractTypes)} value={parsed.typeId} onChange={(v) => update({ type: v, sel: null })} />
+        <ChipSelect label="Status" options={ALL_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))} value={parsed.status} onChange={(v) => update({ status: v, sel: null })} />
+        {config.tags.length ? <ChipSelect label="Tag" options={config.tags.map((t) => ({ value: t.id, label: t.name }))} value={parsed.tagId} onChange={(v) => update({ tag: v, sel: null })} /> : null}
         {narrow
           ? null
           : config.customFields
               .filter((d) => d.showInFilters && (d.type === 'Choice' || d.type === 'MultiChoice' || d.type === 'YesNo'))
               .map((d) => (
-                <ChipSelect key={d.key} label={d.label} options={d.type === 'YesNo' ? [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }] : d.options.map((o) => ({ value: o, label: o }))} value={params.get(`cf.${d.key}`) ?? ''} onChange={(v) => update({ [`cf.${d.key}`]: v, sel: null })} />
+                <ChipSelect key={d.key} label={d.label} options={d.type === 'YesNo' ? [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }] : d.options.map((o) => ({ value: o, label: o }))} value={parsed.cf?.[d.key]} onChange={(v) => update({ [`cf.${d.key}`]: v, sel: null })} />
               ))}
         <select className={`chip only-phone${sort !== 'notice' ? ' chip--on' : ''}`} aria-label="Sort by" value={sort} onChange={(e) => update({ sort: e.target.value === 'notice' ? null : e.target.value })}>
           {SORTS.map((s) => (
@@ -333,7 +342,7 @@ export function Register() {
                     type="button"
                     aria-label={`Remove ${c.label}`}
                     onClick={() => {
-                      const next = filterParams({ ...c.without, q: q || undefined, departmentId: departmentId || undefined, typeId: typeId || undefined, status: (status || undefined) as ContractStatus | undefined, entityId: scope.entityId || undefined }, params);
+                      const next = filterParams(c.without, params);
                       next.delete('page');
                       setParams(next, { replace: true });
                     }}

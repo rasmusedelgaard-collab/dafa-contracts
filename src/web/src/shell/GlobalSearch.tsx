@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { qk, useApi } from '../app/context';
+import { qk, useApi, useScope } from '../app/context';
 import type { SearchResult } from '../api/types';
 import { Icon, Skeleton } from '../components';
 
@@ -27,7 +27,8 @@ export function GlobalSearch() {
   const q = useDebounced(text.trim(), 200);
   const enabled = q.length >= 2;
 
-  const results = useQuery({ queryKey: qk.search(q), queryFn: () => api.search(q), enabled, staleTime: 30_000 });
+  const scope = useScope();
+  const results = useQuery({ queryKey: [...qk.search(q), scope.entityIds], queryFn: () => api.search(q, scope.entityIds), enabled, staleTime: 30_000 });
   // The last option always opens the full search page (contracts, documents, people).
   const all: SearchResult = { kind: 'Contract', id: '__all__', title: `See all results for "${text.trim()}"`, subtitle: 'Contracts, documents, people and counterparties' };
   const found = enabled ? (results.data ?? []) : [];

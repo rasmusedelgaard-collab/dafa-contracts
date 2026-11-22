@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useOutletContext } from 'react-router-dom';
 import { useBodyFlag } from '../app/bodyFlag';
 import { apiMode } from '../api';
-import { permissions, qk, useApi, useInvalidateContracts, useMe } from '../app/context';
+import { permissions, qk, useApi, useInvalidateContracts, useMe, useScope } from '../app/context';
 import type { HomeData, HomeTask, Urgency } from '../api/types';
 import { Avatar, Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Icon, NoticePill, Pill, Segmented, Skeleton, SkeletonRows, useToast, type IconName } from '../components';
 import { ApprovalDialog } from '../features/Approval';
@@ -11,6 +11,7 @@ import { RenewalDialog } from '../features/RenewalDialog';
 import { formatWeekdayLong, monthShort, todayIso } from '../lib/dates';
 import { formatMoneyCompact, plural, type Tone } from '../lib/format';
 import { usePhone } from '../lib/media';
+import { ScopeChip } from '../shell/ScopeChip';
 
 type Filter = 'all' | 'renewals' | 'approvals';
 
@@ -110,7 +111,8 @@ export function Home() {
   const [renewalFor, setRenewalFor] = useState<string | null>(null);
   const [approvalFor, setApprovalFor] = useState<string | null>(null);
 
-  const home = useQuery({ queryKey: qk.home, queryFn: () => api.getHome() });
+  const scope = useScope();
+  const home = useQuery({ queryKey: [...qk.home, scope.entityIds], queryFn: () => api.getHome(scope.entityIds) });
   // Phone: the page has its own header (date, "My work", avatar) instead of the top bar.
   useBodyFlag('page-home', true);
   const phone = usePhone();
@@ -181,6 +183,7 @@ export function Home() {
           <Avatar initials={me.initials} solid size="lg" />
         </button>
       </header>
+      <ScopeChip />
 
       <section className="hero" aria-label="Summary">
         <div className="hero__main">

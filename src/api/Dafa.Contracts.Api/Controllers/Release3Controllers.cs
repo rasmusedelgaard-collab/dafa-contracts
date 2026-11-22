@@ -82,8 +82,12 @@ public class Release3Controller : ApiControllerBase
     // ---------- search, people, counterparties ----------
 
     [HttpGet("search/full")]
-    public async Task<ActionResult<FullSearchResultDto>> FullSearch([FromQuery] FullSearchQuery query, CancellationToken cancellationToken) =>
-        await _search.FullSearchAsync(query, cancellationToken);
+    public async Task<ActionResult<FullSearchResultDto>> FullSearch([FromQuery] FullSearchQuery query, CancellationToken cancellationToken)
+    {
+        // Release 4: entityId is repeatable (the entity scope); the model binder only keeps the first.
+        query.EntityIds = EntityScope.From(Request);
+        return await _search.FullSearchAsync(query, cancellationToken);
+    }
 
     [HttpGet("people/{id:guid}")]
     public async Task<ActionResult<PersonPageDto>> Person(Guid id, CancellationToken cancellationToken) =>

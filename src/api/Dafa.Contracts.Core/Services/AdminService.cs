@@ -267,12 +267,38 @@ public class AdminService
         return input.Name.Trim();
     }
 
+    /// <summary>Release 4: a department with its SharePoint library, Entra group and link status.</summary>
+    public static NamedItemDto ToDepartmentDto(Department department) => new()
+    {
+        Id = department.Id,
+        Name = department.Name,
+        IsActive = department.IsActive,
+        SortOrder = department.SortOrder,
+        DocumentLibrary = department.LibraryName,
+        GroupId = department.GroupId,
+        GroupName = department.GroupName,
+        Link = OrgLinkRules.ToDto(department)
+    };
+
     public async Task<List<NamedItemDto>> GetDepartmentsAsync(CancellationToken cancellationToken = default)
     {
         var rows = await _db.Departments.AsNoTracking().ToListAsync(cancellationToken);
         return rows.OrderBy(d => d.SortOrder).ThenBy(d => d.Name, StringComparer.Ordinal)
-            .Select(d => new NamedItemDto { Id = d.Id, Name = d.Name, IsActive = d.IsActive, SortOrder = d.SortOrder })
+            .Select(ToDepartmentDto)
             .ToList();
+    }
+
+    /// <summary>Release 4: validates the library and group of a department input; throws 400 with field names.</summary>
+    private static (string? Library, string? GroupId, string? GroupName) ReadDepartmentMapping(NamedItemDto input)
+    {
+        var errors = new Dictionary<string, string[]>();
+        var library = OrgLinkRules.NormalizeLibrary(input.DocumentLibrary, errors);
+        var groupId = OrgLinkRules.NormalizeGroupId(input.GroupId, "groupId", errors);
+        if (errors.Count > 0)
+        {
+            throw new InputValidationException(errors);
+        }
+        return (library, groupId, OrgLinkRules.NormalizeName(input.GroupName));
     }
 
     public async Task<NamedItemDto> CreateDepartmentAsync(NamedItemDto input, CancellationToken cancellationToken = default)
@@ -282,6 +308,7 @@ public class AdminService
         {
             throw new InputValidationException("name", "A department with this name already exists.");
         }
+        var mapping = ReadDepartmentMapping(input);
         var sortOrders = await _db.Departments.AsNoTracking().Select(d => d.SortOrder).ToListAsync(cancellationToken);
         var row = new Department
         {
@@ -290,10 +317,11 @@ public class AdminService
             IsActive = input.IsActive ?? true,
             SortOrder = input.SortOrder ?? (sortOrders.Count == 0 ? 1 : sortOrders.Max() + 1)
         };
+        OrgLinkRules.Apply(row, mapping.Library, mapping.GroupId, mapping.GroupName);
         _db.Departments.Add(row);
         _audit.Record("admin.department.created", "Created department " + name);
         await _db.SaveChangesAsync(cancellationToken);
-        return new NamedItemDto { Id = row.Id, Name = row.Name, IsActive = row.IsActive, SortOrder = row.SortOrder };
+        return ToDepartmentDto(row);
     }
 
     public async Task<NamedItemDto> UpdateDepartmentAsync(Guid id, NamedItemDto input, CancellationToken cancellationToken = default)
@@ -308,12 +336,16 @@ public class AdminService
         {
             throw new InputValidationException("name", "A department with this name already exists.");
         }
+        // Release 4: library and group are set as given (null clears); a change resets the link status.
+        var mapping = ReadDepartmentMapping(input);
         row.Name = name;
         row.IsActive = input.IsActive ?? row.IsActive;
         row.SortOrder = input.SortOrder ?? row.SortOrder;
-        _audit.Record("admin.department.updated", "Updated department " + name);
+        var mappingChanged = OrgLinkRules.Apply(row, mapping.Library, mapping.GroupId, mapping.GroupName);
+        _audit.Record("admin.department.updated", "Updated department " + name
+            + (mappingChanged ? " (document library: " + OrgLinkRules.LibraryOf(row) + ", Entra group: " + (row.GroupId ?? "none") + ")" : ""));
         await _db.SaveChangesAsync(cancellationToken);
-        return new NamedItemDto { Id = row.Id, Name = row.Name, IsActive = row.IsActive, SortOrder = row.SortOrder };
+        return ToDepartmentDto(row);
     }
 
     public async Task DeleteDepartmentAsync(Guid id, CancellationToken cancellationToken = default)
@@ -408,7 +440,14 @@ public class AdminService
     public async Task<List<TemplateDto>> GetTemplatesAsync(CancellationToken cancellationToken = default)
     {
         var rows = await _db.Templates.AsNoTracking().ToListAsync(cancellationToken);
-        return rows.OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Select(IntakeService.ToDto).ToList();
+        var categories = (await _db.TemplateCategories.AsNoTracking().ToListAsync(cancellationToken)).ToDictionary(c => c.Id);
+        var names = categories.ToDictionary(c => c.Key, c => c.Value.Name);
+        // Release 4: by category order, then name (templates without a category last).
+        return rows
+            .OrderBy(t => t.CategoryId is not null && categories.TryGetValue(t.CategoryId.Value, out var category) ? category.SortOrder : int.MaxValue)
+            .ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(t => TemplateCatalog.ToDto(t, names))
+            .ToList();
     }
 
     private async Task CheckTemplateTypeAsync(Guid? typeId, CancellationToken cancellationToken)
@@ -475,10 +514,12 @@ public class AdminService
             IsActive = input.IsActive ?? true,
             UpdatedAt = _clock.UtcNow
         };
+        // Release 4: category, contract types and language.
+        await TemplateCatalog.ApplyAsync(_db, row, input, cancellationToken);
         _db.Templates.Add(row);
         _audit.Record("admin.template.created", "Added template " + row.Name);
         await _db.SaveChangesAsync(cancellationToken);
-        return IntakeService.ToDto(row);
+        return TemplateCatalog.ToDto(row, await TemplateCatalog.CategoryNamesAsync(_db, cancellationToken));
     }
 
     public async Task<TemplateDto> UpdateTemplateAsync(Guid id, TemplateInput input, CancellationToken cancellationToken = default)
@@ -496,11 +537,13 @@ public class AdminService
         row.Name = input.Name.Trim();
         row.Description = string.IsNullOrWhiteSpace(input.Description) ? null : input.Description.Trim();
         row.TypeId = input.TypeId;
+        // Release 4: category, contract types (typeIds wins over typeId) and language.
+        await TemplateCatalog.ApplyAsync(_db, row, input, cancellationToken);
         row.IsActive = input.IsActive ?? row.IsActive;
         row.UpdatedAt = _clock.UtcNow;
         _audit.Record("admin.template.updated", "Updated template " + row.Name);
         await _db.SaveChangesAsync(cancellationToken);
-        return IntakeService.ToDto(row);
+        return TemplateCatalog.ToDto(row, await TemplateCatalog.CategoryNamesAsync(_db, cancellationToken));
     }
 
     public async Task<DocumentContent> GetTemplateContentAsync(Guid id, CancellationToken cancellationToken = default)

@@ -76,9 +76,21 @@ public class ContractQueryService
 
     // ---------- shared ----------
 
-    private async Task<List<Contract>> LoadVisibleAsync(CancellationToken cancellationToken)
+    private Task<List<Contract>> LoadVisibleAsync(CancellationToken cancellationToken) => LoadVisibleAsync(null, cancellationToken);
+
+    /// <summary>
+    /// Release 4: the visible contracts, optionally narrowed to the entity scope (repeated entityId).
+    /// The scope is applied AFTER the access filter; an empty scope means every entity the user can
+    /// see, and an id the user cannot see simply matches nothing.
+    /// </summary>
+    private async Task<List<Contract>> LoadVisibleAsync(IReadOnlyCollection<Guid>? entityIds, CancellationToken cancellationToken)
     {
         var query = await _access.FilterAsync(_db.Contracts.AsNoTracking(), cancellationToken);
+        if (entityIds is not null && entityIds.Count > 0)
+        {
+            var ids = entityIds.Distinct().ToList();
+            query = query.Where(c => ids.Contains(c.EntityId));
+        }
         return await query.ToListAsync(cancellationToken);
     }
 
@@ -501,17 +513,17 @@ public class ContractQueryService
         detail.CanTag = ContractAccessRules.CanEdit(profile, contract);
         detail.CanDecideRenewal = ContractAccessRules.CanDecideRenewal(profile, contract);
         detail.LockedFields = ApprovedTerms.LockedFieldsFor(profile, contract);
+        // Release 4: e-signature. The open request (else the last finished one), and whether the
+        // caller may send this contract for signature right now.
+        detail.Signature = await SignatureMapper.LatestAsync(_db, id, cancellationToken);
+        var eSign = await ESignSettingsStore.LoadAsync(_db, cancellationToken);
+        detail.CanSendForSignature = SignatureRules.SendBlocker(profile, contract, eSign, reference.Entity(contract.EntityId)) is null
+            && (detail.Signature is null || (detail.Signature.Status != "Sent" && detail.Signature.Status != "Draft"));
 
-        try
-        {
-            var location = await _documents.GetLocationAsync(contract, cancellationToken);
-            detail.StoreUrl = await _store.GetFolderUrlAsync(location, cancellationToken);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // A store outage must not block reading the contract record.
-            detail.StoreUrl = null;
-        }
+        // SharePoint hardening: no call to the store when a contract is read. The folder link was
+        // stored on the contract when its folder was created, and only administrators get it
+        // (everyone else opens files through the app; users have no direct access to the libraries).
+        detail.StoreUrl = profile.IsAdmin && !string.IsNullOrWhiteSpace(contract.StoreFolderUrl) ? contract.StoreFolderUrl : null;
 
         return detail;
     }
@@ -548,7 +560,10 @@ public class ContractQueryService
 
     // ---------- approvals waiting for me ----------
 
-    public async Task<List<MyApprovalDto>> MyApprovalsAsync(CancellationToken cancellationToken = default)
+    public Task<List<MyApprovalDto>> MyApprovalsAsync(CancellationToken cancellationToken = default) => MyApprovalsAsync(null, cancellationToken);
+
+    /// <summary>Release 4: entityIds = the entity scope (the contract's entity); empty = all.</summary>
+    public async Task<List<MyApprovalDto>> MyApprovalsAsync(IReadOnlyCollection<Guid>? entityIds, CancellationToken cancellationToken = default)
     {
         var profile = await _currentUser.GetProfileAsync(cancellationToken);
         var userId = profile.UserId;
@@ -577,6 +592,10 @@ public class ContractQueryService
             {
                 continue;
             }
+            if (entityIds is not null && entityIds.Count > 0 && !entityIds.Contains(contract.EntityId))
+            {
+                continue;
+            }
             await reference.LoadExtrasAsync(_db, new[] { contract.Id }, profile.UserId, cancellationToken);
             var detail = await BuildDetailAsync(contract, profile, reference, cancellationToken);
             result.Add(new MyApprovalDto
@@ -592,13 +611,15 @@ public class ContractQueryService
 
     // ---------- renewals ----------
 
-    public async Task<List<RenewalDto>> RenewalsAsync(int? months, CancellationToken cancellationToken = default)
+    public Task<List<RenewalDto>> RenewalsAsync(int? months, CancellationToken cancellationToken = default) => RenewalsAsync(months, null, cancellationToken);
+
+    public async Task<List<RenewalDto>> RenewalsAsync(int? months, IReadOnlyCollection<Guid>? entityIds, CancellationToken cancellationToken = default)
     {
         var horizonMonths = Math.Clamp(months ?? 12, 1, 60);
         var today = _clock.Today;
         var horizon = today.AddMonths(horizonMonths);
         var reference = await ReferenceData.LoadAsync(_db, cancellationToken);
-        var contracts = await LoadVisibleAsync(cancellationToken);
+        var contracts = await LoadVisibleAsync(entityIds, cancellationToken);
         var result = new List<RenewalDto>();
         foreach (var contract in contracts.Where(c => c.Status == ContractStatus.Active))
         {
@@ -635,13 +656,15 @@ public class ContractQueryService
 
     // ---------- overview (management) ----------
 
-    public async Task<OverviewDto> OverviewAsync(CancellationToken cancellationToken = default)
+    public Task<OverviewDto> OverviewAsync(CancellationToken cancellationToken = default) => OverviewAsync(null, cancellationToken);
+
+    public async Task<OverviewDto> OverviewAsync(IReadOnlyCollection<Guid>? entityIds, CancellationToken cancellationToken = default)
     {
         var profile = await _currentUser.GetProfileAsync(cancellationToken);
         // Release 3: every signed-in user; the figures cover only the contracts the user can see.
         var today = _clock.Today;
         var reference = await ReferenceData.LoadAsync(_db, cancellationToken);
-        var contracts = await LoadVisibleAsync(cancellationToken);
+        var contracts = await LoadVisibleAsync(entityIds, cancellationToken);
         var live = contracts.Where(IsLive).ToList();
 
         var overview = new OverviewDto
@@ -692,13 +715,19 @@ public class ContractQueryService
 
     // ---------- home ----------
 
-    public async Task<HomeDto> HomeAsync(CancellationToken cancellationToken = default)
+    public Task<HomeDto> HomeAsync(CancellationToken cancellationToken = default) => HomeAsync(null, cancellationToken);
+
+    /// <summary>
+    /// Release 4: entityIds = the entity scope. It narrows tasks, KPIs, the month chart and the
+    /// recent list; approvalsWaiting (the navigation badge) stays the unscoped number of open steps.
+    /// </summary>
+    public async Task<HomeDto> HomeAsync(IReadOnlyCollection<Guid>? entityIds, CancellationToken cancellationToken = default)
     {
         var profile = await _currentUser.GetProfileAsync(cancellationToken);
         var userId = profile.UserId;
         var today = _clock.Today;
         var culture = CultureInfo.InvariantCulture;
-        var contracts = await LoadVisibleAsync(cancellationToken);
+        var contracts = await LoadVisibleAsync(entityIds, cancellationToken);
         var byId = contracts.ToDictionary(c => c.Id, c => c);
         var mine = contracts.Where(c => ContractAccessRules.IsOnContract(profile, c)).ToList();
         var home = new HomeDto();
@@ -951,7 +980,8 @@ public class ContractQueryService
                 Roles = u.Roles.ToNames(),
                 IsActive = u.IsActive,
                 Email = u.Email,
-                Title = u.JobTitle
+                Title = u.JobTitle,
+                EntityId = u.HomeEntityId
             }).ToList(),
             Currencies = await CurrencyTable.ActiveCodesAsync(_db, cancellationToken)
         };
@@ -973,19 +1003,28 @@ public class ContractQueryService
     public async Task<MeDto> MeAsync(string authMode, CancellationToken cancellationToken = default)
     {
         var profile = await _currentUser.GetProfileAsync(cancellationToken);
-        return new MeDto
-        {
-            Id = profile.UserId,
-            Name = profile.Name,
-            Email = profile.Email,
-            Initials = profile.Initials,
-            Roles = profile.Roles.ToNames(),
-            DepartmentIds = profile.DepartmentIds.ToList(),
-            ManagedEntityIds = profile.ManagedEntityIds.ToList(),
-            IsGroupManagement = profile.IsGroupManagement,
-            AuthMode = authMode
-        };
+        return ToMe(profile, authMode);
     }
+
+    /// <summary>
+    /// GET me and the answer of dev/login. Always built from the database rows of this request
+    /// (never from the cookie), so a role or permission change by an administrator shows at once.
+    /// </summary>
+    public static MeDto ToMe(AccessProfile profile, string authMode) => new()
+    {
+        Id = profile.UserId,
+        Name = profile.Name,
+        Email = profile.Email,
+        Initials = profile.Initials,
+        Roles = profile.Roles.ToNames(),
+        DepartmentIds = profile.DepartmentIds.ToList(),
+        ManagedEntityIds = profile.ManagedEntityIds.ToList(),
+        IsGroupManagement = profile.IsGroupManagement,
+        AuthMode = authMode,
+        EntityId = profile.HomeEntityId,
+        CanSendForSignature = profile.CanSendForSignature,
+        SignatureEntityIds = profile.SignatureEntityIds.ToList()
+    };
 }
 
 public static class ReminderSettingsReader

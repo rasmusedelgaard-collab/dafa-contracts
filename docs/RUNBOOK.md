@@ -60,7 +60,13 @@ In environment variables and App Service settings, write `:` as `__` (for exampl
 | `Auth:Entra:AutoProvision` | not used | `true` (default) or `false` | `true`: any tenant user who signs in becomes a Reader without memberships. `false`: only users that already exist (or bootstrap admins) get in; others get 403. |
 | `Database:Provider` | `Sqlite` (local) / `SqlServer` (test site) | `SqlServer` | EF Core provider. |
 | `ConnectionStrings:Default` | monsterasp.net "Local access" string | Passwordless, managed identity (`Authentication=Active Directory Default`) | The only connection string key the API reads. |
-| `Documents:Provider` | `Local` (disk under `App_Data/files`, default) | `SharePoint` | Where contract documents are stored. |
+| `Documents:Provider` | `Local` (disk under `App_Data/files`, default) | `SharePoint` | Where contract documents are stored. With `SharePoint` the site and library of every file come from the mapping under Settings (section 4c); there is no site list in configuration any more (`SharePoint:Sites` and `SharePoint:DefaultSiteId` are no longer read). |
+| `Directory:Provider` | `Seeded` (default) | `Graph` | Where users and memberships come from. `Graph` imports the tenant's users and reads memberships from the Entra groups mapped under Settings (section 4c). |
+| `Graph:Auth` | not used | `ManagedIdentity`, `Certificate` or `ClientSecret` (default) | How the app signs in to Microsoft Graph (SharePoint, directory, mail). See section 5.2. |
+| `Graph:MaxAttempts`, `Graph:MetadataTimeoutSeconds`, `Graph:ContentTimeoutSeconds` | not used | `4`, `30`, `180` (defaults) | Retries and per-try timeouts of the shared Graph client (section 4c). |
+| `Signing:AllowSimulated` | empty (= allowed, because `Auth:Mode=Dev`) | empty (= not allowed) or `false` | Whether the Simulated e-signature provider can be chosen in Settings. Never allowed by default outside Dev sign-in. |
+| `Signing:Webhook:Secret` | empty (the webhook route answers 404) | a random secret of at least 24 characters | Shared secret the e-signature provider must prove on `POST /api/esign/webhooks/{provider}`. |
+| `Signing:DocuSign:*`, `Signing:Penneo:*` | not used | set for the chosen provider | Credentials of the e-signature provider (section 4c). Never stored in the database. |
 | `Analyzer:Provider` | `Heuristic` (default) | `AzureOpenAI` (or stay on `Heuristic`) | Field extraction and summary at intake. |
 | `Suppliers:Provider` | `Seed` (default) | `PowerBi` | Supplier master source. |
 | `Notifications:Provider` | `Outbox` (rows shown in admin, default) | `Graph` (mail) | How reminders are delivered. With `Graph`, a reminder whose mail fails is retried by the hourly job (up to 5 attempts) instead of being marked as sent. |
@@ -68,7 +74,10 @@ In environment variables and App Service settings, write `:` as `__` (for exampl
 | `AzureAd:Instance`, `AzureAd:TenantId`, `AzureAd:ClientId`, `AzureAd:ClientSecret` (assumed, Microsoft.Identity.Web convention) | not used | set | Entra app registration. Secret comes from Key Vault. |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | not used | set by Bicep | Telemetry. Only has an effect once the API includes Application Insights / OpenTelemetry (see known gaps). |
 
-E-sign is `None` in both modes for version 1 (the owner marks a contract as signed). DocuSign is a later stub.
+E-signature (release 4): the provider is chosen by an administrator under Settings > E-signature
+(`None`, `Simulated`, `DocuSign`, `Penneo`), not in configuration; `Signature:Provider` is no
+longer read. Only providers whose server credentials are present can be chosen. Marking a
+contract as signed by hand still works with every choice. See section 4c.
 
 Approval rule specificity (how the rule for a contract is picked): the rule with the most
 criteria set wins, where entity, type, department and the value band (minimum and/or maximum
@@ -159,15 +168,23 @@ right after `EnsureCreated`):
   for anything still missing (a forgotten step).
 
 Steps: 1 = phase 2 baseline (concurrency `Version` columns, `LastRenewedDeadline`, reminder
-`TermKey`/`Attempts`, unique indexes); 2 = release 3 tables and columns.
+`TermKey`/`Attempts`, unique indexes); 2 = release 3 tables and columns; 3 = release 4 (tables
+`TemplateCategories`, `BrandingAssets`, `SignatureRequests`, `Signatories`; SharePoint / Entra
+mapping columns on `LegalEntities` and `Departments`; `CanSendForSignature`,
+`SignatureEntityIdsJson`, `HomeEntityId` on `Users`; `CategoryId`, `ContractTypeIdsJson`,
+`Language` on `Templates`; `Theme` on `UserPreferences`, default `light`); 4 = SharePoint
+hardening (table `StorageReconciliationReports`; `SiteId`, `DriveId`, `ItemId`, `RelativePath`,
+`ETag`, `CTag`, `ContentHash` on `Documents`; `StoreDriveId`, `StoreFolderId`, `StoreFolderUrl` on
+`Contracts`; `LogPending` on `ApprovalInstances`; `Attempts`, `NextAttemptAt` on `DocumentTexts`).
+All new columns are nullable or have a default (`0`, `'light'`), so existing rows stay valid.
 
 Adding a schema change in a later release: change the model, then append a new step to
 `SchemaUpgrader.Steps` that lists the new tables, the new columns (nullable, or with a default
 the upgrader knows; add a `DefaultOverrides` entry when 0/empty is wrong) and the tables whose
 indexes changed. Never edit a released step. Renames and type changes are not supported by the
 upgrader: do them as add-new-column + copy + stop-using-old, or move to EF migrations first.
-Tested on Sqlite (`Release3Tests.SchemaUpgrader_*`: an old database is upgraded and a second run
-does nothing). The SQL Server path is only desk-checked until the first deployment.
+Tested on Sqlite (`Release3Tests.SchemaUpgrader_*` and `Release4SchemaTests`: an old database,
+also one with the release 3 schema, is upgraded and a second run does nothing). The SQL Server path is only desk-checked until the first deployment.
 
 ## 4b. Release 3 operations
 
@@ -203,6 +220,158 @@ text; scans and images have no text) and stored in `DocumentTexts` (max 400,000 
 document, lower-cased copy for search). Search uses contains-matching in SQL over that table,
 scoped to visible contracts, capped at 1000 matching documents per query.
 
+## 4c. Release 4 operations
+
+### How a legal entity is linked (app record, SharePoint site, Entra group)
+
+There are three things with the same name, and the app only connects them where an
+administrator says so. Nothing is matched by name behind the scenes.
+
+| In the app (Settings) | In SharePoint | In Entra ID | What the link does |
+|---|---|---|---|
+| Legal entity (Settings > Legal entities) | One site, `https://<tenant>.sharepoint.com/sites/<name>` (field "SharePoint site") | One security group for the entity's management (field "Management group", the group's object id) | Site: every document of a contract of this entity is stored on this site. Group: its members are "entity management" for this entity in the app (they see all contracts of the entity). |
+| Department (Settings > Departments) | One document library **with the same name on every entity's site** (field "Document library"; empty = the department's name) | One security group for the department across all entities (field "Group", the group's object id) | Library: a contract's files go to `<entity site>/<department library>/<contract number>/`. Group: its members are members of the department in the app. |
+| Contract | One folder named by the contract number, created by the app at the first upload | none | The folder's ids and address are stored on the contract. |
+
+Rules worth knowing:
+
+- **The app is the only door.** The app talks to SharePoint as itself (application permission
+  `Sites.Selected`, granted per site). Users need no permission on the sites or libraries and
+  should not be given any: who may see a document is decided by the app's access model alone,
+  and the link "Open in SharePoint" is shown to administrators only.
+- **No fallbacks.** A legal entity without a linked site, or a department whose library does not
+  exist on that site, cannot store files. The upload is refused with a sentence that says what
+  is missing (`storage-not-configured`); nothing is ever stored on another site or in another
+  library instead.
+- **Test link** (button on each legal entity and department) asks Microsoft Graph whether the
+  site, the libraries and the group exist and shows Linked / Error with a message. Saving a new
+  address resets the state to "Not linked" until it is tested. In test mode (`Documents:Provider`
+  = `Local`, `Directory:Provider` = `Seeded`) the test only checks the format and answers Linked with "Test mode: saved, used in SharePoint mode".
+- **Access mapping** (Settings > Access mapping) is the whole picture on one page: every legal
+  entity against every department, with the site, the library, the groups and the link state.
+- **Memberships** come from the mapped groups when `Directory:Provider=Graph`: the `DirectorySync`
+  job adds members of a mapped group and removes Entra-linked users who left it. Departments and
+  entities **without** a group, and users that are not linked to Entra, are left exactly as
+  maintained under Settings > Users. A group that cannot be read is skipped; nothing is removed
+  after a failed call. Roles (ContractOwner, Approver, Admin), group management and "head of
+  department" are always maintained in the app.
+
+### Adding a new legal entity, end to end
+
+1. **Entra:** create an assigned security group for the entity's management, for example
+   "Contracts - DAFA Norge AS - Management", with a named owner. Copy its object id.
+2. **SharePoint:** create the site (for example `/sites/contracts-dafa-norge`). In it, create
+   one document library per department, named exactly as the "Document library" of each
+   department in the app (by default the department's name; see Settings > Access mapping for
+   the list). Turn on versioning. Do **not** add users or department groups to the site.
+3. **Grant the app access to the site** (a SharePoint or Global administrator):
+   `POST https://graph.microsoft.com/v1.0/sites/{site-id}/permissions` with role `write` for the
+   app's client id, or `Grant-PnPAzureADAppSitePermission -AppId <client id> -DisplayName "DAFA Contracts" -Site <site url> -Permissions Write`.
+   Without this step the app gets "access denied" for the new site, because `Sites.Selected`
+   gives access to nothing by itself.
+4. **App, Settings > Legal entities > New:** name, default currency, the site address and the
+   management group's object id. Save, then press **Test link**. It must say Linked and list no
+   missing libraries.
+5. **App, Settings > Access mapping:** check the new entity's row: every department shows its
+   library as found. A department marked "library missing" cannot store files for this entity
+   until the library is created (or the department's library name is corrected).
+6. **People:** run Settings > Jobs > Directory sync > Run now (production) so the management
+   group's members become entity management; in test mode, set "Manages entities" on the users
+   by hand. Give the people who will send contracts of this entity for signature the entity under
+   Settings > Users > "May send for e-signature".
+7. **Rules:** review approval rules, retention rules and field rules that are limited to legal
+   entities, and the entity's currency under Settings > Currencies.
+8. **Check:** create a draft contract for the new entity with a file, open Settings > Storage:
+   the state must be Healthy, and the next reconciliation report must be empty for the entity.
+
+Removing an entity: deactivate it in the app (contracts and files stay). Do not delete the site.
+
+### Storage: what users see and what to watch
+
+- All calls to Microsoft Graph go through one client that retries throttling (429) and
+  temporary errors (502, 503, 504, timeouts, connection errors) up to `Graph:MaxAttempts` times,
+  waits as long as SharePoint asks (`Retry-After`), otherwise 1, 2, 4 seconds with jitter, and
+  never longer than 20 seconds. After five failed calls in a row it pauses all calls for 30
+  seconds (circuit breaker). Every request carries the User-Agent `NONISV|DAFA|Contracts/1.0`.
+- Users then see "SharePoint is busy. Try again in a moment." (HTTP 503,
+  `urn:dafa:problem:storage-unavailable`, with `Retry-After` when SharePoint gave one), "This file
+  can no longer be found in storage. An administrator has been notified." (404,
+  `urn:dafa:problem:file-missing`) or the configuration sentence (409,
+  `urn:dafa:problem:storage-not-configured`). Never a blank error.
+- Reading a contract, the register, search and the dashboards never call SharePoint, so they
+  keep working when SharePoint is down. Only upload, download and the data room need it.
+- A final approval never fails because of storage: when the approval log cannot be stored, the
+  approval is saved and the `UploadCleanup` job writes the log later. The same job retries the
+  text extraction of documents it could not read (15 minutes, doubling, six attempts).
+- Files are never overwritten. A second upload of a name becomes `name v2.ext`; if that name is
+  taken in the folder, a short random suffix is added. Each document row stores site, library,
+  item id, path, size and a SHA-256 of what was uploaded.
+- Uploads up to 10 MB are one request; larger files use an upload session in 5 MB parts.
+  Microsoft allows single requests up to about 250 MB, but the app's own limit is 25 MB per
+  file, so that limit is never reached.
+- **Settings > Storage** shows the state (Healthy, Degraded, Down, Not configured), the last
+  success and failure, failures in the last 24 hours, pending approval logs and documents
+  waiting for text extraction. `GET api/admin/storage/health`.
+- **Reconciliation** (job `StorageReconciliation`, daily 02:00, and the button on the same
+  page) compares the document rows with the store and lists missing files, files whose size or
+  content changed, renamed files, files in a contract folder the app does not know, and
+  contracts whose files lie under another entity's site or another department's library than
+  the contract now belongs to. It **reports only**; nothing is moved, renamed or deleted.
+  Administrators get a notification when it finds something. A run stops after 50 seconds or
+  2000 findings and says so; the last 30 reports are kept.
+- Changing a contract's legal entity or department does **not** move its files. New files go to
+  the new place; the report lists the old ones as "MisplacedFolder" for moving by hand.
+
+### E-signature
+
+- **Who may send:** only users with "May send for e-signature" (Settings > Users), optionally
+  limited to named legal entities. Administrators have no implicit right. Every send, reminder,
+  cancellation, signature, decline and expiry is in the contract's activity log.
+- **Settings > E-signature:** provider, whether the contract must be Approved first (default
+  yes), reminder days (default 3 and 7), days until a request expires (default 30).
+- **Providers.** `Simulated` works completely inside the app (test site: a "simulate" panel lets
+  a tester sign or decline for each signer; the signed copy is a PDF the app writes itself).
+  `DocuSign` and `Penneo` are implemented against their published REST APIs but **have never
+  been run against the real services**; treat them as a starting point, run every step against
+  the provider's sandbox first, and expect corrections.
+  - DocuSign: `Signing:DocuSign:BaseUrl`, `:AuthServer`, `:AccountId`, `:IntegrationKey`,
+    `:UserId`, `:PrivateKeyPath` (RSA key file for JWT grant; consent for "signature
+    impersonation" must be given once).
+  - Penneo: `Signing:Penneo:BaseUrl`, `:ApiKey`, `:ApiSecret`.
+- **How status comes back:** the provider calls `POST /api/esign/webhooks/{provider}` and the
+  `SignatureSync` job (hourly) also asks the provider, so a lost webhook only delays things.
+  The webhook is the one API route without a session and without the `X-Requested-With` header.
+  It is closed (404) until `Signing:Webhook:Secret` holds at least 24 characters, and each call
+  must then prove the secret: the secret itself in `X-Dafa-Webhook-Secret`, or an HMAC-SHA256 of
+  the body in `X-Dafa-Signature` (hex) or `X-DocuSign-Signature-1` (Base64, DocuSign Connect).
+  Ten wrong attempts from one address in ten minutes block that address.
+- **When everyone has signed** the signed file is stored as a new Main document
+  ("<name> – signed.pdf"), the signed date and method are set, and an Approved contract becomes
+  Active. A declined, cancelled or expired request leaves the contract as it was.
+- Rotating the webhook secret: set the new value on the server and at the provider at the same
+  time; calls with the old secret are refused from that moment (the job still catches up).
+
+### Branding, formats, templates, pickers
+
+- Logo (Settings > Branding): PNG, JPEG, WebP or SVG, at most 1 MB, checked by content, not by
+  file name. SVG files with scripts, event attributes, external references or embedded HTML are
+  refused, and every logo is served with a policy that forbids scripts. Three variants: full,
+  compact (collapsed menu) and dark (dark theme). The files are stored in the database
+  (`BrandingAssets`) and served without sign-in at `api/branding/logo`, because the sign-in page
+  shows them.
+- Number and date formats (Settings > General) apply to everyone; the theme (light, dark,
+  system) is each user's own preference.
+- Template categories (Settings > Template categories) group the templates; a category in use
+  cannot be deleted, only deactivated.
+- "Who may create counterparties" (Settings > General): administrators only (default), contract
+  owners, or all users. Contracts always point to a counterparty from the list.
+
+### Jobs added in release 4
+
+`SignatureSync` (hourly) and `StorageReconciliation` (daily 02:00). `UploadCleanup` now also
+writes pending approval logs and retries text extraction. `DirectorySync` reads memberships from
+the mapped groups.
+
 ## 5. Moving from test to production
 
 Do these in order. Items 5.1-5.4 need a DAFA Entra administrator.
@@ -236,8 +405,17 @@ private endpoints (SQL and Key Vault are reachable on public endpoints, protecte
 
 1. Register a single-tenant app "DAFA Contracts". Platform: Web. Redirect URI
    `https://<host>/signin-oidc`, front-channel logout `https://<host>/signout-oidc`.
-2. Credential: prefer a certificate or a federated credential; if a client secret is used,
-   store it in Key Vault as `AzureAd--ClientSecret` and set a renewal reminder.
+2. Credential for Microsoft Graph, chosen with `Graph:Auth`:
+   - `ManagedIdentity` (preferred on Azure App Service): no secret at all. Give the app
+     service's managed identity the Graph application permissions of section 5.3 and the site
+     grants of section 5.4. `AzureAd:ManagedIdentityClientId` only for a user-assigned identity.
+   - `Certificate`: `AzureAd:ClientCertificateThumbprint` (certificate in the App Service
+     certificate store, with `WEBSITE_LOAD_CERTIFICATES` set) or `AzureAd:ClientCertificatePath`
+     (+ `AzureAd:ClientCertificatePassword`) for a PFX file.
+   - `ClientSecret` (default): `AzureAd:ClientSecret` from Key Vault (`AzureAd--ClientSecret`).
+     A secret expires: set a renewal reminder well before the date. When it expires, sign-in
+     may keep working while every upload and download fails with "SharePoint is busy".
+   The sign-in of users (OpenID Connect) still uses the app registration's own credential.
 3. Token configuration: add the `groups` claim only if group count per user is small;
    otherwise the app reads memberships from Graph.
 4. App roles (assign to groups under Enterprise applications): `Reader`, `ContractOwner`,
@@ -246,61 +424,128 @@ private endpoints (SQL and Key Vault are reachable on public endpoints, protecte
 
 ### 5.3 Microsoft Graph permissions
 
-Least privilege; an administrator grants consent. Confirm the exact list against the backend
-implementation before granting.
+The app works with **application** permissions only ("the app is the only door"). There are no
+delegated SharePoint permissions and no calls on behalf of the signed-in user. An administrator
+grants consent. This is the list the code actually uses:
 
-| Permission | Type | Used for |
-|---|---|---|
-| `openid`, `profile`, `User.Read` | Delegated | Sign-in |
-| `Sites.Selected` | Delegated and Application | SharePoint files, limited to the nine contract sites. Delegated for user actions (on behalf of the user); application for background work such as writing the approval log. |
-| `GroupMember.Read.All`, `User.ReadBasic.All` | Application (or delegated) | Resolve department/entity membership and people pickers |
-| `Mail.Send` | Application | Reminders, from one shared mailbox. Restrict the app to that mailbox (Exchange RBAC for Applications). |
-| `TeamsActivity.Send` | Application | Teams notifications (optional) |
-| Power BI `Dataset.Read.All` | Delegated or service principal | Supplier master via `executeQueries`; needs the tenant setting that allows service principals to use Power BI APIs and workspace access. |
+| Permission | Type | Used for | Where in the code |
+|---|---|---|---|
+| `openid`, `profile`, `User.Read` | Delegated | Sign-in only | Microsoft.Identity.Web |
+| `Sites.Selected` | Application | All SharePoint work: resolve the site, list its libraries, create contract folders, upload, download, read item properties | `SharePointDocumentStore`, `GraphOrgLinkProbe` |
+| `User.Read.All` | Application | Directory sync: `GET /users` with `accountEnabled` and `userType` (`User.ReadBasic.All` is not enough for those two properties) | `GraphDirectoryService` |
+| `GroupMember.Read.All` | Application | Directory sync: members of the mapped groups (`/groups/{id}/transitiveMembers`); "Test link": the group's name | `GraphDirectoryService`, `GraphOrgLinkProbe` |
+| `Mail.Send` | Application | Reminders and notifications from one shared mailbox (`Notifications:Provider=Graph`). Restrict the app to that mailbox with Exchange RBAC for Applications. | `GraphMailNotifier` |
+| Power BI `Dataset.Read.All` | Service principal | Supplier master and Power BI sync sources via `executeQueries`; needs the tenant setting that allows service principals to use Power BI APIs, and workspace access. | supplier source, sync readers |
 
-`Sites.Selected` grants nothing by itself. For each of the nine sites, a SharePoint
-administrator grants the app `write` on that site (`POST /sites/{site-id}/permissions` in
-Graph, or `Grant-PnPAzureADAppSitePermission`). Do not grant `Sites.ReadWrite.All`.
+Not needed and not to be granted: `Sites.Read.All`, `Sites.ReadWrite.All`, `Files.ReadWrite.All`,
+`Group.Read.All`, `Directory.Read.All`, any delegated `Sites.*`. `TeamsActivity.Send` is not used
+(Teams messages are only recorded in the outbox).
+
+`Sites.Selected` grants nothing by itself. For each contract site, a SharePoint administrator
+grants the app `write` on that site (`POST /sites/{site-id}/permissions` in Graph, or
+`Grant-PnPAzureADAppSitePermission`). The health check on Settings > Storage asks Graph a
+tenant-wide question that `Sites.Selected` answers with 403; that is expected and counts as
+"reachable".
 
 ### 5.4 SharePoint structure
 
 - One site per legal entity (nine sites): DAFA Group A/S, DAFA A/S, DAFA Building Solutions A/S,
   DAFA Sverige AB, DAFA Deutschland GmbH, DAFA Sealing Technology (Tianjin) Co., Ltd.,
-  DAFA US Inc., DAFA Polska sp. z o.o., DAFA Italia S.r.l.
+  DAFA US Inc., DAFA Polska sp. z o.o., DAFA Italia S.r.l. Each site is linked to its legal
+  entity under Settings > Legal entities (section 4c); the app does not find sites by name.
 - In each site, one document library per department (13: Management, Finance, Purchasing,
   Sales, Production, Supply chain and logistics, Quality, R&D and engineering, Maintenance and
-  facilities, HSE, IT, HR, Marketing).
-- In each library, one folder per contract, named by contract number (`C-YYYY-NNNN`).
-- Library permissions mirror the access model: break inheritance per library and grant the
-  department group and the entity management group; group management on all. The app enforces
-  the same rules itself, and because user actions go to SharePoint on behalf of the user,
-  SharePoint permissions are a second line of defence.
-- Turn on versioning in the libraries. Retention is driven by the app's retention rules;
-  agree with IT whether Purview retention labels should back them up.
+  facilities, HSE, IT, HR, Marketing), named exactly as the department's "Document library" in
+  the app. The app does not create libraries.
+- In each library, one folder per contract, named by contract number (`C-YYYY-NNNN`), created
+  by the app at the first upload. Files keep their names; later versions are `name v2.ext`.
+- **Permissions: the app only.** Users, department groups and entity groups get **no**
+  permission on the contract sites and libraries. Site owners are the SharePoint administrators
+  and, if wanted, a small break-glass group. The app's access model is the only place where
+  "who may see what" is decided; SharePoint permissions are not a second copy of it, so they
+  cannot drift apart. A user who opens a site address directly gets "access denied", which is
+  intended. Consequences: co-authoring in Word Online and browsing in SharePoint are not
+  offered; files are opened through the app.
+- Turn on versioning in the libraries (it protects against mistakes by administrators; the app
+  itself never overwrites a file). Retention is driven by the app's retention rules; agree with
+  IT whether Purview retention labels should back them up, and note that a label that deletes
+  files will show up as "missing file" in the reconciliation report.
+- Do not rename, move or delete contract folders and files in SharePoint. Renaming a file or
+  moving it within the same library keeps the link (the app stores item ids); moving it to
+  another library or site, or deleting it, breaks it. The nightly reconciliation reports all of
+  these.
 
 ### 5.5 Dynamic groups
 
 Membership follows HR master data in Entra, so nobody maintains access lists by hand.
 
 - One dynamic security group per department, across all entities, for example
-  `(user.department -eq "Finance") and (user.accountEnabled -eq true)`.
-- One group per legal entity if needed for site membership, for example
-  `(user.companyName -eq "DAFA Sverige AB") and (user.accountEnabled -eq true)`.
-- Entity management and group management are small, sensitive groups: use assigned (not
-  dynamic) membership with a named owner and a periodic access review.
+  `(user.department -eq "Finance") and (user.accountEnabled -eq true)`. Its object id goes into
+  the department's "Group" field in the app (section 4c).
+- One assigned (not dynamic) group per legal entity for the entity's management, with a named
+  owner and a periodic access review. Its object id goes into the legal entity's "Management
+  group" field. These groups are small and sensitive.
+- Group management is not a group: it is a switch on the user in the app.
+- The groups are used for memberships in the app only. They are **not** given access to the
+  SharePoint sites (section 5.4).
 
-Prerequisite: `companyName` and `department` must be filled in consistently for every user
-and match the names in the app exactly. Dynamic groups require Entra ID P1.
+Prerequisite: `department` must be filled in consistently for every user. The names need not
+match the names in the app: the link is the group's object id. Dynamic groups require Entra ID P1.
 
 ### 5.6 Cut-over checklist
 
-- [ ] `Auth:Mode=Entra`, `Auth:BootstrapAdmins` set to the first administrators, `Seed:DemoData=false`, `Documents:Provider=SharePoint`, `Notifications:Provider=Graph`
+- [ ] `Auth:Mode=Entra`, `Auth:BootstrapAdmins` set to the first administrators, `Seed:DemoData=false`, `Documents:Provider=SharePoint`, `Directory:Provider=Graph`, `Notifications:Provider=Graph`, `Graph:Auth` chosen
+- [ ] Every legal entity linked to its site and management group, every department to its group; Settings > Access mapping shows no errors; Settings > Storage is Healthy
+- [ ] The first-run checklist of section 5.7 done on a test site
+- [ ] E-signature: provider chosen and tried in the provider's sandbox, `Signing:Webhook:Secret` set, the people who may send named; or left on None
 - [ ] Database is empty of demo data (new database, not a copy of test)
 - [ ] Migrations introduced before the first production schema change (replace `EnsureCreated`)
 - [ ] Approval rules replaced with the real authority matrix; reminder settings reviewed
 - [ ] Access model tested with real users from at least two entities and two departments
 - [ ] Restore test of the database done once
 - [ ] Alerts configured (section 7); test site stopped or deleted
+
+### 5.7 First run against a real tenant
+
+None of the Microsoft Graph code has ever run against a real tenant: it is written from the
+documentation and tested against a simulated Graph. Do this once with **one test site with two
+libraries** before touching the nine real sites, and write down what differs.
+
+1. App registration: `Sites.Selected`, `User.Read.All`, `GroupMember.Read.All` (application)
+   consented; no delegated SharePoint permissions.
+2. Grant the app `write` on the test site. Link it to a test legal entity and press Test link:
+   Linked. Link another, ungranted site to a second entity: Test link must show an error, and an
+   upload must be refused with the configuration sentence.
+3. A normal user with **no** SharePoint permission uploads and downloads through the app, and
+   gets "access denied" when opening the site address directly.
+4. Upload a small PDF to a contract with no folder yet: the folder is created, and the contract
+   shows "Open in SharePoint" to an administrator only.
+5. Upload 5 MB, 12 MB and 25 MB files (the 12 and 25 MB ones use an upload session); note the times.
+6. Upload the same file name twice (expect `name v2.ext`), then twice at the same moment
+   (expect two files, one with a short suffix; nothing overwritten).
+7. File names with `#`, `%`, `&`, `'`, Danish, Polish and Chinese characters, a 120-character
+   name, and `~$test.docx`.
+8. Download; rename the file in SharePoint and download again (must work); move it within the
+   library (must work); move it to the other library, then delete it (expect "This file can no
+   longer be found in storage", an entry in the activity log and a notification to
+   administrators); restore it from the recycle bin (must work again). Run the reconciliation
+   after each step and compare the report.
+9. A department whose library does not exist, an entity with no site: the upload is refused,
+   not redirected, and a new contract created with a file is kept as a draft without the file.
+10. Approve a contract to the end; the approval log file arrives. Repeat with the app's access
+    to the site removed for a moment: the approval still completes, Settings > Storage shows one
+    pending log, and the Upload cleanup job writes it once access is back.
+11. Create a contract through intake and check the main document becomes searchable.
+12. Data room export of 200+ documents; watch the log for 429/503 and for "SharePoint is busy".
+13. Force failures: a wrong site address, an expired or wrong credential, no network. Check what
+    the user sees (the three messages of section 4c), what is logged, and that Settings >
+    Storage turns Degraded or Down and back to Healthy.
+14. Run the directory sync with one mapped department group and one mapped management group:
+    members appear, a user removed from the group loses the membership at the next run, users
+    of unmapped departments are untouched. Check tenants with more than 999 users are paged.
+15. Check that errors in the App Service log carry enough to open a Microsoft support case
+    (time, site, the HTTP status). The Graph `request-id` header is **not** logged yet (known gap).
+16. With `Graph:Auth=Certificate` or `ManagedIdentity`: repeat steps 4 and 8 once.
 
 ## 6. Backup and recovery
 

@@ -13,6 +13,7 @@ import { markSignedOut } from '../app/signin';
 import { delegateCandidates, stageApproverIds } from '../features/Approval';
 import { routeSummary, splitRoleLabel } from '../lib/approvals';
 import { errorMessage, isStale, STALE_MESSAGE, THROTTLED_MESSAGE } from '../lib/errors';
+import { openPicker } from '../test/pickers';
 import { renderApp, renderWith, TODAY } from '../test/renderApp';
 
 afterEach(() => {
@@ -23,42 +24,53 @@ afterEach(() => {
 
 const conflict = (type: string, detail: string) => new ApiError({ type, title: 'Conflict', status: 409, detail });
 
-describe('C1: the counterparty field', () => {
-  it('keeps what is typed, on the path without a file, and lets the flow continue', async () => {
+describe('C1: the counterparty field (release 4: a type-ahead that must be picked)', () => {
+  it('typing alone is not enough: the counterparty must be clicked in the list', async () => {
     const user = userEvent.setup();
     renderApp('/contracts/new', USER.jon);
     await user.click(await screen.findByRole('button', { name: 'Continue without a file' }));
-    const field = await screen.findByLabelText('Counterparty');
+    const field = await screen.findByRole('combobox', { name: 'Counterparty' });
     await user.type(field, 'Brand New Supplier ApS');
-    expect(field).toHaveValue('Brand New Supplier ApS');
     await user.click(screen.getAllByRole('button', { name: 'Continue' })[0]!);
-    expect(await screen.findByText('Enter a title')).toBeInTheDocument();
-    expect(screen.queryByText('Enter the counterparty')).not.toBeInTheDocument();
+    expect(await screen.findByText('Choose the counterparty')).toBeInTheDocument();
+    expect(field).toHaveValue('');
+    await user.clear(field);
+    await user.type(field, 'nordpoly');
+    await user.click(await screen.findByRole('option', { name: /Nordpolymer/ }));
+    expect((field as HTMLInputElement).value).toMatch(/^Nordpolymer/);
+    expect(screen.queryByText('Choose the counterparty')).not.toBeInTheDocument();
   });
 
-  it('keeps what is typed on the template path and matches a known supplier', async () => {
+  it('on the template path, part of the name finds a known supplier and a click picks it', async () => {
     const user = userEvent.setup();
     const api = renderApp('/contracts/new?start=template', USER.jon);
     await user.click(await screen.findByRole('button', { name: /Supply agreement/ }));
-    const supplier = api.db.suppliers[0]!;
-    const field = await screen.findByLabelText('Counterparty');
-    await user.type(field, supplier.name);
-    expect(field).toHaveValue(supplier.name);
+    const supplier = api.db.suppliers.find((x) => x.isActive)!;
+    const field = await screen.findByRole('combobox', { name: 'Counterparty' });
+    await user.type(field, supplier.name.slice(0, 5));
+    await user.keyboard('{ArrowDown}');
+    const option = await screen.findByRole('option', { name: new RegExp(supplier.name.slice(0, 5)) });
+    await user.click(option);
+    expect((field as HTMLInputElement).value).toContain(supplier.name.slice(0, 5));
   });
 
   it('can be changed in Edit details by an administrator, and is saved', async () => {
     const user = userEvent.setup();
     const seed = createMockApi({ today: TODAY });
     const rec = seed.db.contracts.find((c) => c.title === 'Freight framework – Nordics')!;
+    const other = seed.db.suppliers.find((x) => x.isActive && x.id !== rec.supplierId && x.name.startsWith('Nordpolymer'))!;
     const api = renderApp(`/contracts/${rec.id}`, USER.pet);
     await user.click(await screen.findByRole('button', { name: 'Edit details' }));
     const dialog = await screen.findByRole('dialog', { name: 'Edit details' });
-    const field = within(dialog).getByLabelText('Counterparty');
-    await user.type(field, ' X');
-    expect(field).toHaveValue(`${rec.counterpartyName} X`);
+    const field = within(dialog).getByRole('combobox', { name: 'Counterparty' });
+    await user.click(within(dialog).getByRole('button', { name: 'Clear counterparty' }));
+    await user.type(field, 'Nordpoly');
+    await user.click(await within(dialog).findByRole('option', { name: new RegExp(other.name) }));
     await user.click(within(dialog).getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByText('Details saved')).toBeInTheDocument();
-    expect(api.db.contracts.find((c) => c.id === rec.id)!.counterpartyName).toBe(`${rec.counterpartyName} X`);
+    const saved = api.db.contracts.find((c) => c.id === rec.id)!;
+    expect(saved.supplierId).toBe(other.id);
+    expect(saved.counterpartyName).toBe(other.name);
   });
 });
 
@@ -249,7 +261,7 @@ describe('delegate filter', () => {
     const user = userEvent.setup();
     renderApp('/approvals');
     await user.click(await screen.findByRole('button', { name: 'Delegate' }));
-    const names = within(screen.getByLabelText('Delegate to')).getAllByRole('option').map((o) => o.textContent);
+    const names = await openPicker(user, screen.getByLabelText('Delegate to'));
     expect(names).toContain('Karen Lindberg'); // approves the next stage: allowed
     expect(names).toContain('Peter Aagaard'); // administrator
     expect(names).not.toContain('Rasmus Holm'); // yourself

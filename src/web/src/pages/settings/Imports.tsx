@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { qk, useApi } from '../../app/context';
 import type { ImportKind, ImportMapping, ImportOptions, ImportPreview, ImportResult, ImportRowAction, ImportSession } from '../../api/types';
-import { Button, Card, EmptyState, Field, Icon, Pill, Segmented, Select, SkeletonRows, Table, useToast } from '../../components';
+import { Button, Card, EmptyState, ErrorState, Field, Icon, Pill, Segmented, Select, SkeletonRows, Table, useToast } from '../../components';
 import { formatDateTime } from '../../lib/dates';
 import { plural, saveBlob } from '../../lib/format';
 import { useInvalidateContracts } from '../../app/context';
@@ -148,6 +148,8 @@ export function ImportWizard({ kind }: { kind: ImportKind }) {
           </p>
           {fields.isLoading ? (
             <SkeletonRows rows={6} />
+          ) : fields.isError ? (
+            <ErrorState text="The import fields could not be loaded." onRetry={() => void fields.refetch()} />
           ) : (
             <div className="mapping">
               {(fields.data ?? []).map((f) => {
@@ -308,6 +310,8 @@ export function ImportHistory({ kind }: { kind?: ImportKind }) {
       </div>
       {q.isLoading ? (
         <SkeletonRows rows={3} />
+      ) : q.isError ? (
+        <ErrorState text="The import history could not be loaded." onRetry={() => void q.refetch()} />
       ) : (q.data ?? []).length === 0 ? (
         <EmptyState compact title="No imports yet" />
       ) : (

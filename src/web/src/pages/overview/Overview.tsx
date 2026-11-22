@@ -2,15 +2,16 @@ import { useMemo, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { apiMode } from '../../api';
-import { qk, useApi, useAppConfig, useLookups, useMe, useScope, permissions } from '../../app/context';
+import { qk, useApi, useAppConfig, useLookups, useMe, permissions } from '../../app/context';
 import { VALUE_BANDS, type Bucket, type ContractFilter, type ContractStatus, type DateField, type DueDiligenceItem, type OverviewAnalytics } from '../../api/types';
-import { Button, Card, ChipSelect, EmptyState, ErrorState, Field, Icon, Segmented, Skeleton, SkeletonRows, StatusDot, Table, TextInput, useToast } from '../../components';
+import { Button, Card, ChipSelect, EmptyState, ErrorState, Field, Icon, NumberInput, Segmented, Skeleton, SkeletonRows, StatusDot, Table, TextInput, useToast } from '../../components';
 import { BarList, Columns, dkk, KpiTile, ScoreList, StackedColumns, type StackColumn } from '../../features/charts';
 import { contractColumns, defaultColumns, useColumnBudget } from '../../features/columns';
 import { DataRoomDialog } from '../../features/DataRoom';
 import { addDays, addMonths, monthShort, todayIso } from '../../lib/dates';
 import { applyDrill, chipsOf, filterToParams, isEmptyFilter, monthRange, parseFilter } from '../../lib/drill';
 import { ALL_STATUSES, formatMoney, plural, saveBlob, statusLabel } from '../../lib/format';
+import { CounterpartyPicker, PersonPicker } from '../../features/Pickers';
 
 const PAGE_SIZE = 20;
 const URGENCY = [
@@ -83,12 +84,12 @@ function DueDiligence({ data, filter, drill, threshold, setThreshold }: { data: 
           className="row-flex dd-card__threshold"
           onSubmit={(e) => {
             e.preventDefault();
-            const n = Number(text.replace(',', '.'));
+            const n = Number(text);
             if (Number.isFinite(n) && n >= 0) setThreshold(Math.round(n * 1_000_000));
           }}
         >
           <Field label="Threshold, DKK million" hint="Contract value: the larger of total and annual value.">
-            {(p) => <TextInput {...p} inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} style={{ width: 120 }} />}
+            {(p) => <NumberInput {...p} decimals={2} value={text} onValueChange={setText} style={{ width: 120 }} />}
           </Field>
           <Button type="submit" variant="secondary" size="md">
             Apply
@@ -130,7 +131,6 @@ export function Overview() {
   const me = useMe();
   const lookups = useLookups();
   const config = useAppConfig();
-  const scope = useScope();
   const toast = useToast();
   const budget = useColumnBudget();
   const [params, setParams] = useSearchParams();
@@ -149,13 +149,13 @@ export function Overview() {
     const p = filterToParams(next, params);
     p.delete('page');
     setParams(p, { replace });
-    if ('entityId' in patch) scope.adopt(typeof next.entityId === 'string' ? next.entityId : '');
   };
+  /** Breadcrumb remove and Clear all. The URL is the only state: the entity scope in the top bar follows it. */
   const setFilter = (next: ContractFilter) => {
     const p = filterToParams(next, params);
     p.delete('page');
     setParams(p);
-    scope.adopt(typeof next.entityId === 'string' ? next.entityId : '');
+    if (!next.from && !next.to) setCustomDates(false);
   };
 
   const analytics = useQuery({ queryKey: qk.analytics({ ...filter, dd }), queryFn: () => api.getOverviewAnalytics(filter, dd), placeholderData: keepPreviousData });
@@ -164,8 +164,6 @@ export function Overview() {
 
   const cpId = typeof filter.counterpartyId === 'string' ? filter.counterpartyId : null;
   const cpPage = useQuery({ queryKey: qk.counterparty(cpId ?? ''), queryFn: () => api.getCounterparty(cpId ?? ''), enabled: !!cpId, staleTime: 60_000 });
-  const [cpText, setCpText] = useState('');
-  const cpOptions = useQuery({ queryKey: qk.counterparties(cpText), queryFn: () => api.getCounterparties(cpText), staleTime: 60_000 });
 
   const exportCsv = useMutation({
     mutationFn: () => api.exportContracts({ ...filter, includeEnded: filter.includeEnded ?? false, sort: sort as never, columns: defaultColumns('xl') } as never),
@@ -240,34 +238,20 @@ export function Overview() {
       </div>
 
       <div className="toolbar toolbar--chips filterbar" role="group" aria-label="Filters">
-        <ChipSelect label="Entity" options={refs(lookups.entities)} value={single(filter.entityId)} onChange={(v) => drill({ entityId: v || undefined }, true)} />
-        <ChipSelect label="Department" options={refs(lookups.departments)} value={single(filter.departmentId)} onChange={(v) => drill({ departmentId: v || undefined }, true)} />
-        <ChipSelect label="Type" options={refs(lookups.contractTypes)} value={single(filter.typeId)} onChange={(v) => drill({ typeId: v || undefined }, true)} />
-        <ChipSelect label="Status" options={ALL_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))} value={single(filter.status as string | string[] | undefined)} onChange={(v) => drill({ status: (v || undefined) as ContractStatus | undefined }, true)} />
-        <label className={`chip chip--input${cpId ? ' chip--on' : ''}`}>
-          <span className="sr-only">Counterparty</span>
-          <input
-            list="overview-counterparties"
-            placeholder={cpPage.data && cpId ? cpPage.data.counterparty.name : 'Counterparty: All'}
-            value={cpText}
-            onChange={(e) => {
-              const v = e.target.value;
-              const hit = cpOptions.data?.find((c) => c.name === v);
-              if (hit) {
-                setCpText('');
-                drill({ counterpartyId: hit.id }, true);
-              } else setCpText(v);
-            }}
-            aria-label="Counterparty"
-          />
-          <datalist id="overview-counterparties">
-            {(cpOptions.data ?? []).map((c) => (
-              <option key={c.id} value={c.name} />
-            ))}
-          </datalist>
-        </label>
-        <ChipSelect label="Owner" options={lookups.users.filter((u) => u.isActive !== false).map((u) => ({ value: u.id, label: u.name }))} value={single(filter.ownerId)} onChange={(v) => drill({ ownerId: v || undefined }, true)} />
-        <ChipSelect label="Value" options={VALUE_BANDS.map((b) => ({ value: b.key, label: b.label }))} value={single(filter.valueBand as string | string[] | undefined)} onChange={(v) => drill({ valueBand: (v || undefined) as never }, true)} />
+        <ChipSelect label="Entity" options={refs(lookups.entities)} value={filter.entityId} onChange={(v) => drill({ entityId: v || undefined }, true)} />
+        <ChipSelect label="Department" options={refs(lookups.departments)} value={filter.departmentId} onChange={(v) => drill({ departmentId: v || undefined }, true)} />
+        <ChipSelect label="Type" options={refs(lookups.contractTypes)} value={filter.typeId} onChange={(v) => drill({ typeId: v || undefined }, true)} />
+        <ChipSelect label="Status" options={ALL_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))} value={filter.status} onChange={(v) => drill({ status: (v || undefined) as ContractStatus | undefined }, true)} />
+        <CounterpartyPicker
+          compact
+          ariaLabel="Counterparty"
+          allowCreate={false}
+          placeholder={Array.isArray(filter.counterpartyId) ? `Counterparty: ${filter.counterpartyId.length} selected` : 'Counterparty: All'}
+          value={cpId ? { supplierId: cpId, name: cpPage.data?.counterparty.name ?? data?.topCounterparties.find((b) => b.key === cpId)?.label ?? 'Counterparty' } : { supplierId: null, name: '' }}
+          onChange={(v) => drill({ counterpartyId: v.supplierId ?? undefined }, true)}
+        />
+        <PersonPicker compact ariaLabel="Owner" placeholder={Array.isArray(filter.ownerId) ? `Owner: ${filter.ownerId.length} selected` : 'Owner: All'} value={typeof filter.ownerId === 'string' ? filter.ownerId : null} clearLabel="Clear owner filter" onChange={(id) => drill({ ownerId: id ?? undefined }, true)} />
+        <ChipSelect label="Value" options={VALUE_BANDS.map((b) => ({ value: b.key, label: b.label }))} value={filter.valueBand} onChange={(v) => drill({ valueBand: (v || undefined) as never }, true)} />
         <ChipSelect
           label="Dates"
           allLabel="Any"

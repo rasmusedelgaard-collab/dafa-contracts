@@ -32,13 +32,17 @@ export function UserSwitcher({ onClose }: { onClose: () => void }) {
   });
   const logout = useMutation({
     mutationFn: () => api.logout(),
+    // Marked first: a background call that gets a 401 right after sign-out must not sign in again (Entra).
+    onMutate: () => markSignedOut(),
     onSuccess: async () => {
       onClose();
       navigate('/');
-      markSignedOut();
       await session.signedOut();
     },
-    onError: (e) => toast.error(e),
+    onError: (e) => {
+      markSignedOut(false);
+      toast.error(e);
+    },
   });
 
   return (

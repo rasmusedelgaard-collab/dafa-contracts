@@ -249,6 +249,8 @@ function Runs({ source, onClose }: { source: SyncSource; onClose: () => void }) 
     <Modal wide title={`Run history – ${source.name}`} onClose={onClose} footer={<Button onClick={onClose}>Close</Button>}>
       {q.isLoading ? (
         <SkeletonRows rows={4} />
+      ) : q.isError ? (
+        <ErrorState text="The run history could not be loaded." onRetry={() => void q.refetch()} />
       ) : (q.data ?? []).length === 0 ? (
         <EmptyState compact title="Not run yet" />
       ) : (

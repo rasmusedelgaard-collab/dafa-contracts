@@ -14,7 +14,14 @@
 //
 // Release 3 adds a second journey per width (`journeyR3`): Overview drill-down as two users with
 // different totals, search finds another owner's document, and (desktop) an admin imports a
-// supplier CSV and adds a custom field that then appears in New contract.
+// supplier CSV and adds a custom field that then appears in New contract. It also adds a legal-entity
+// filter on Overview through the filter bar and through a chart drill-down and removes each with
+// the breadcrumb and with Clear all; the totals must return to the unfiltered values.
+//
+// Release 4 adds `journeyR4`: removing filters (Search, top-bar scope), a register header filter,
+// template categories, e-signature (simulated) for a permitted and a non-permitted user, the logo
+// upload and the dark theme. The alignment fixes add: the owner edits a non-draft contract that has
+// no master counterparty and saves (review finding H2).
 //
 // Chrome: `CHROME_PATH`, else an installed Chrome/Chromium found in the usual places.
 // Screenshots: set `E2E_SHOTS=<folder>` to save one per step.
@@ -122,21 +129,37 @@ async function journey(browser, baseUrl, width, height) {
     await page.getByRole('button', { name: /Supply agreement/ }).click();
     const title = `E2E supply agreement ${width}`;
     await page.getByLabel('Title', { exact: true }).fill(title);
-    const counterparty = page.getByLabel('Counterparty', { exact: true });
+    // Release 4 (item C): the counterparty is a type-ahead; typed text alone is not kept, a click picks it.
+    const counterparty = page.getByRole('combobox', { name: 'Counterparty', exact: true });
     await counterparty.click();
-    await counterparty.pressSequentially('Smoke Test Polymers ApS', { delay: 15 });
-    check((await counterparty.inputValue()) === 'Smoke Test Polymers ApS', `The counterparty field holds "${await counterparty.inputValue()}" after typing.`);
+    await counterparty.pressSequentially('Smoke Test Polymers', { delay: 10 });
+    await page.getByRole('listbox').getByText('No match. Check the spelling.').waitFor();
+    await counterparty.fill('');
+    await counterparty.pressSequentially('nordpoly', { delay: 10 });
+    await page.getByRole('listbox').getByRole('option', { name: /Nordpolymer/ }).first().click();
+    const pickedCounterparty = await counterparty.inputValue();
+    check(/^Nordpolymer/.test(pickedCounterparty), `The counterparty picker holds "${pickedCounterparty}" after picking.`);
     await page.getByLabel('Contract type', { exact: true }).selectOption({ label: 'Supplier – direct materials' });
     await page.getByLabel('Legal entity', { exact: true }).selectOption({ label: 'DAFA A/S' });
     await page.getByLabel('Department', { exact: true }).selectOption({ label: 'Purchasing' });
-    await page.getByLabel('Owner', { exact: true }).selectOption({ label: 'Jonas Bak' });
+    // Owner: type part of the name, then click the match (item C).
+    const owner = page.getByRole('combobox', { name: 'Owner', exact: true });
+    if (!(await owner.inputValue()).startsWith('Jonas Bak')) {
+      await owner.click();
+      await owner.pressSequentially('Jonas', { delay: 10 });
+      await page.getByRole('listbox').getByRole('option', { name: /Jonas Bak/ }).click();
+    }
     await page.getByLabel('Start date', { exact: true }).fill('2027-01-01');
     await page.getByLabel('End date', { exact: true }).fill('2028-12-31');
     await page.getByLabel('Notice period (days)', { exact: true }).fill('90');
     await page.getByRole('radiogroup', { name: 'Renews automatically' }).getByRole('radio', { name: 'No' }).click();
-    await page.getByLabel('Annual value', { exact: true }).fill('400000');
+    const annual = page.getByLabel('Annual value', { exact: true });
+    await annual.click();
+    await annual.pressSequentially('400000', { delay: 10 });
+    // Release 4 (item D): thousand separators while typing, in the General settings format (demo: en-GB).
+    check((await annual.inputValue()) === '400,000', `The annual value shows "${await annual.inputValue()}" while typing, expected "400,000".`);
     await page.getByRole('radiogroup', { name: 'Change-of-control clause' }).getByRole('radio', { name: 'No' }).click();
-    check((await counterparty.inputValue()) === 'Smoke Test Polymers ApS', 'The counterparty was lost while the rest of the form was filled in.');
+    check((await counterparty.inputValue()) === pickedCounterparty, 'The counterparty was lost while the rest of the form was filled in.');
     await shot('new-details');
     await visible(page.getByRole('button', { name: 'Continue' })).click();
     await page.getByRole('heading', { name: 'Links and obligations' }).waitFor();
@@ -325,6 +348,51 @@ async function journeyR3(browser, baseUrl, width, height) {
     await crumbs.getByRole('button', { name: `Remove ${deptName}` }).click();
     await crumbs.waitFor({ state: 'detached' });
 
+    // 1b. A legal-entity filter can be removed again (owner's bug report): added in the filter bar
+    // and by a chart drill-down, removed with the breadcrumb and with Clear all; the totals must
+    // return to the unfiltered values and stay there (nothing may put `?entity=` back).
+    const entitySelect = page.getByRole('combobox', { name: 'Entity', exact: true });
+    const entityOption = await entitySelect.locator('option').nth(1).getAttribute('value');
+    const entityBars = page.getByRole('list', { name: 'Annual value by legal entity' });
+    const adders = {
+      'the filter bar': async () => entitySelect.selectOption(entityOption),
+      'a chart drill-down': async () => entityBars.getByRole('button').first().click(),
+    };
+    const removers = {
+      'the breadcrumb': async () => crumbs.getByRole('button', { name: /^Remove / }).first().click(),
+      'Clear all': async () => crumbs.getByRole('button', { name: 'Clear all' }).click(),
+    };
+    for (const [added, add] of Object.entries(adders)) {
+      for (const [removed, remove] of Object.entries(removers)) {
+        await add();
+        await crumbs.waitFor();
+        await page.waitForFunction((n) => {
+          const t = [...document.querySelectorAll('.kpi')].find((k) => k.querySelector('.kpi__label')?.textContent === 'Contracts');
+          return t && Number(t.querySelector('.kpi__value')?.textContent) < n;
+        }, cfoCount);
+        const entityCount = Number(await kpi('Contracts'));
+        check(new URL(page.url()).searchParams.has('entity'), `Adding an entity with ${added} did not put it in the URL.`);
+        await remove();
+        await crumbs.waitFor({ state: 'detached' });
+        await page.waitForFunction(
+          ([n, v]) => {
+            const val = (label) => [...document.querySelectorAll('.kpi')].find((k) => k.querySelector('.kpi__label')?.textContent === label)?.querySelector('.kpi__value')?.textContent;
+            return Number(val('Contracts')) === n && val('Annual value') === v && !document.querySelector('.overview [aria-busy="true"]');
+          },
+          [cfoCount, cfoValue],
+        );
+        // Wait a moment: the release 3 bug wrote the entity back into the URL right after removal.
+        await page.waitForTimeout(400);
+        check(!new URL(page.url()).searchParams.has('entity'), `The entity came back in the URL after removing it with ${removed} (added with ${added}).`);
+        check(!(await crumbs.count()), `The entity breadcrumb came back after removing it with ${removed} (added with ${added}).`);
+        check((await entitySelect.inputValue()) === '', `The Entity filter still shows a value after removing it with ${removed}.`);
+        check(Number(await kpi('Contracts')) === cfoCount && (await kpi('Annual value')) === cfoValue, `Totals did not return to ${cfoCount} / ${cfoValue} after removing the entity with ${removed}.`);
+        if (!phone) check((await visible(page.getByRole('combobox', { name: 'Legal entity scope' })).inputValue()) === '', `The top-bar entity scope still shows an entity after removing it with ${removed}.`);
+        log(`entity added with ${added} (${entityCount} contracts), removed with ${removed}: back to ${cfoCount} contracts, ${cfoValue}`);
+      }
+    }
+    await shot('overview-entity-removed');
+
     // 2. The same page as a reader shows only her scope (different totals).
     await switchTo('Emma Nygaard');
     await openOverview();
@@ -399,6 +467,214 @@ async function journeyR3(browser, baseUrl, width, height) {
   }
 }
 
+/**
+ * Release 4 journey (one page load): filters can be removed (Overview chips, Search "All", the
+ * top-bar scope), a register header filter, template categories, the logo upload, e-signature
+ * (simulated) by a permitted user and the "ask a colleague" path for another, and the dark theme.
+ */
+async function journeyR4(browser, baseUrl, width, height) {
+  const phone = width < 720;
+  const tag = `${width}px r4`;
+  const log = (text) => console.log(`  [${tag}] ${text}`);
+  const context = await browser.newContext({ viewport: { width, height } });
+  await context.addInitScript(() => {
+    if (!sessionStorage.getItem('e2e.started')) {
+      localStorage.setItem('dafa.mock.userId', 'signed-out');
+      localStorage.removeItem('dafa.theme');
+      sessionStorage.setItem('e2e.started', '1');
+    }
+  });
+  const page = await context.newPage();
+  page.setDefaultTimeout(15_000);
+  const problems = [];
+  page.on('pageerror', (e) => problems.push(`page error: ${e.message}`));
+  page.on('console', (m) => {
+    if (m.type() === 'error') problems.push(`console error: ${m.text()}`);
+  });
+  const shot = async (name) => {
+    if (shotsDir) await page.screenshot({ path: join(shotsDir, `${width}-r4-${name}.png`), fullPage: !phone });
+  };
+  const openUserMenu = () => visible(page.locator('.user-card, .topbar__avatar, .home-head__avatar')).click();
+  const switchTo = async (name) => {
+    // New contract has no shell: go home first.
+    if (!(await page.locator('.shell').count())) {
+      await go('/');
+      await page.locator('.shell').waitFor();
+    }
+    await openUserMenu();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: new RegExp(`^(\\S+ )?${name}`) }).click();
+    await page.getByText(`You are now ${name}`).waitFor();
+    await dialog.waitFor({ state: 'detached' });
+  };
+  /** In-app navigation (the mock keeps its data only while the page is not reloaded). */
+  const go = async (path) => {
+    await page.evaluate((p) => {
+      window.history.pushState({}, '', p);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }, path);
+  };
+  const urlParam = (name) => new URL(page.url()).searchParams.getAll(name);
+  const kpi = async (label) => (await page.locator('.kpi', { has: page.locator('.kpi__label', { hasText: new RegExp(`^${label}$`) }) }).first().locator('.kpi__value').innerText()).trim();
+
+  try {
+    await page.goto(baseUrl, { waitUntil: 'networkidle' });
+    await page.getByText('Choose a demo user').waitFor();
+    await page.getByRole('button', { name: /Rasmus Holm/ }).click();
+    await page.locator('.shell').waitFor();
+
+    // 1. Search: choose an entity, then set it back to All (owner bug A2).
+    await go('/search?q=supply');
+    await page.getByRole('heading', { level: 1, name: 'Search' }).waitFor();
+    const entity = page.getByRole('combobox', { name: 'Entity', exact: true });
+    const entityId = await entity.locator('option').nth(2).getAttribute('value');
+    await entity.selectOption(entityId);
+    await page.waitForFunction(() => new URL(location.href).searchParams.has('entity'));
+    await entity.selectOption('');
+    await page.waitForTimeout(400);
+    check(urlParam('entity').length === 0, 'Search: the entity came back after choosing All.');
+    log('Search: entity chosen and set back to All; it stays removed');
+
+    // 2. Top-bar scope (desktop): set, scopes Renewals with a removable chip, then cleared.
+    if (!phone) {
+      await go('/renewals');
+      await page.getByRole('heading', { level: 1, name: 'Renewals' }).waitFor();
+      const scope = visible(page.getByRole('combobox', { name: 'Legal entity scope' }));
+      await scope.selectOption(entityId);
+      const chip = page.getByRole('navigation', { name: 'Entity scope' });
+      await chip.waitFor();
+      await chip.getByRole('button', { name: /^Remove entity scope/ }).click();
+      await chip.waitFor({ state: 'detached' });
+      await page.waitForTimeout(400);
+      check(urlParam('entity').length === 0 && (await scope.inputValue()) === '', 'The top-bar scope came back after removing its chip.');
+      log('top-bar entity scope: set on Renewals (chip shown), removed with the chip');
+    }
+
+    // 3. Register header filter (desktop table; on a phone the register shows cards).
+    if (!phone) {
+      await go('/contracts?cols=contract,owner,annualValue,status');
+      await page.getByRole('heading', { level: 1, name: 'Contracts' }).waitFor();
+      await page.locator('table tbody tr').first().waitFor();
+      const before = await page.locator('table tbody tr').count();
+      await page.getByRole('button', { name: 'Filter Annual value' }).click();
+      const pop = page.getByRole('dialog', { name: 'Filter Annual value' });
+      await pop.getByLabel('Min').pressSequentially('1000000', { delay: 5 });
+      check((await pop.getByLabel('Min').inputValue()) === '1,000,000', 'The header filter amount has no thousand separators.');
+      await pop.getByRole('button', { name: 'Apply' }).click();
+      await page.waitForFunction(() => new URL(location.href).searchParams.get('annualValueMin') === '1000000');
+      await page.getByRole('button', { name: 'Filter Annual value (active)' }).waitFor();
+      const chips = page.getByRole('navigation', { name: 'More filters' });
+      await chips.getByRole('button', { name: /^Remove Annual value/ }).click();
+      await page.waitForFunction(() => !new URL(location.href).searchParams.has('annualValueMin'));
+      log(`register: header filter "Annual value from 1,000,000" applied (${before} rows before) and removed with its chip`);
+    }
+
+    // 4. Template categories in New contract.
+    await go('/contracts/new?start=template');
+    const cats = page.getByRole('group', { name: 'Template category' });
+    await cats.waitFor();
+    await cats.getByRole('button', { name: /Confidentiality/ }).click();
+    await page.getByRole('button', { name: /Mutual NDA/ }).waitFor();
+    check((await page.getByRole('button', { name: /Supply agreement/ }).count()) === 0, 'The Confidentiality category still lists the Supply agreement.');
+    log('New contract: the Confidentiality category shows only its template');
+
+    // 5. E-signature: Henrik has no signing right (asks a colleague); Rasmus sends and the simulated signing completes.
+    await switchTo('Henrik Madsen');
+    await go('/contracts?q=Fire%20protection');
+    // The register title opens the contract on a phone; on a desktop a double-click does.
+    const fire = page.getByRole('button', { name: /(Open|Preview) Fire protection service agreement/ }).first();
+    if (phone) await fire.click();
+    else await fire.dblclick();
+    await page.getByRole('heading', { level: 1, name: 'Fire protection service agreement' }).waitFor();
+    const recordUrl = new URL(page.url()).pathname;
+    await visible(page.getByRole('button', { name: 'Send for signature' })).click();
+    const ask = page.getByRole('dialog', { name: 'Ask a colleague with signing rights' });
+    await ask.getByRole('list', { name: 'People with signing rights' }).getByText('Rasmus Holm').waitFor();
+    await ask.getByRole('button', { name: 'Close' }).first().click();
+    log('Henrik Madsen (no signing right) is shown who can send it');
+
+    // 5a. Review finding H2: the owner edits a non-draft contract that has no master counterparty
+    // (a name only, as on older and imported contracts) and saves.
+    await go('/contracts?q=Temporary%20staff');
+    const temp = page.getByRole('button', { name: /(Open|Preview) Temporary staff – production/ }).first();
+    if (phone) await temp.click();
+    else await temp.dblclick();
+    await page.getByRole('heading', { level: 1, name: 'Temporary staff – production' }).waitFor();
+    await visible(page.getByRole('button', { name: 'Edit details' })).click();
+    const edit = page.getByRole('dialog', { name: 'Edit details' });
+    const counterparty = edit.getByRole('combobox', { name: /Counterparty/ });
+    await counterparty.waitFor();
+    check(await counterparty.isDisabled(), 'The counterparty of an active contract is not locked for its owner.');
+    await edit.getByText(/is kept as it is/).waitFor();
+    await edit.getByLabel(/Payment terms/).fill('45 days net, end of month');
+    await edit.getByRole('button', { name: 'Save changes' }).click();
+    await page.getByText('Details saved').first().waitFor();
+    await edit.waitFor({ state: 'detached' });
+    check((await page.getByText('Pick the counterparty from the list').count()) === 0, 'Edit details still asks for a counterparty from the list.');
+    await page.getByText('45 days net, end of month').first().waitFor();
+    log('Henrik Madsen (owner) edited an active contract without a master counterparty and saved');
+    await switchTo('Rasmus Holm');
+    await go(recordUrl);
+    await page.getByRole('heading', { level: 1, name: 'Fire protection service agreement' }).waitFor();
+    await visible(page.getByRole('button', { name: 'Send for signature' })).click();
+    const send = page.getByRole('dialog', { name: 'Send for signature' });
+    const signer = send.getByRole('combobox', { name: 'Signatory 1' });
+    await signer.click();
+    await signer.pressSequentially('Rasm', { delay: 10 });
+    await page.getByRole('listbox').getByRole('option', { name: /Rasmus Holm/ }).click();
+    await send.getByLabel('Signatory 2 name').fill('Klaus Weber');
+    await send.getByLabel('Signatory 2 e-mail').fill('klaus@example.de');
+    await send.getByRole('button', { name: 'Preview' }).click();
+    await send.getByRole('button', { name: 'Send now' }).click();
+    await page.getByText('Sent for signature').first().waitFor();
+    await page.getByRole('group', { name: 'Simulate signing for Rasmus Holm' }).getByRole('button', { name: 'Simulate signing' }).click();
+    await page.getByRole('group', { name: 'Simulate signing for Klaus Weber' }).getByRole('button', { name: 'Simulate signing' }).click();
+    await page.getByText(/Signed by everyone/).first().waitFor();
+    await page.getByText(/– signed\.pdf/).first().waitFor();
+    log('Rasmus Holm sent it for signature; simulated signing stored the signed document and the contract is active');
+    await shot('signed');
+
+    // 6. Logo upload (desktop: the sidebar shows it).
+    if (!phone) {
+      await switchTo('Peter Aagaard');
+      await go('/settings/general');
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="32"><rect width="32" height="32" rx="8" fill="#c0392b"/><text x="40" y="22" font-size="16">E2E logo</text></svg>';
+      await page.getByLabel('Upload logo', { exact: true }).setInputFiles({ name: 'logo.svg', mimeType: 'image/svg+xml', buffer: Buffer.from(svg) });
+      await page.getByText('Logo saved').waitFor();
+      const img = page.getByRole('navigation', { name: 'Main' }).getByRole('img', { name: 'DAFA Contracts' });
+      await img.waitFor();
+      const box = await img.boundingBox();
+      check(box && box.height <= 40.5, `The logo is ${box?.height}px high, expected at most 40.`);
+      const bg = await img.evaluate((el) => getComputedStyle(el).backgroundColor);
+      check(bg === 'rgba(0, 0, 0, 0)', `The logo has a background (${bg}).`);
+      log(`Peter Aagaard uploaded an SVG logo: shown in the sidebar as an image, ${Math.round(box.height)}px high, transparent`);
+    }
+
+    // 7. Dark theme from My settings: page background and text tokens change.
+    await go('/preferences');
+    await page.getByRole('heading', { level: 1, name: 'My settings' }).waitFor();
+    const tokens = () => page.evaluate(() => ({ theme: document.documentElement.getAttribute('data-theme'), page: getComputedStyle(document.body).backgroundColor, text: getComputedStyle(document.body).color }));
+    const light = await tokens();
+    await page.getByRole('radiogroup', { name: 'Theme' }).getByRole('radio', { name: 'Dark' }).click();
+    await page.waitForFunction(() => document.documentElement.getAttribute('data-theme') === 'dark');
+    const dark = await tokens();
+    check(dark.page !== light.page && dark.text !== light.text, `Dark theme did not change the page colors: ${JSON.stringify({ light, dark })}`);
+    check(dark.page === 'rgb(15, 22, 32)', `Dark page background is ${dark.page}, expected rgb(15, 22, 32).`);
+    check((await page.evaluate(() => localStorage.getItem('dafa.theme'))) === 'dark', 'The theme was not kept for the next page load.');
+    await shot('dark');
+    await page.getByRole('radiogroup', { name: 'Theme' }).getByRole('radio', { name: 'Light' }).click();
+    await page.waitForFunction(() => document.documentElement.getAttribute('data-theme') === 'light');
+    log(`theme: dark (page ${dark.page}, text ${dark.text}) and back to light (page ${light.page})`);
+
+    check(problems.length === 0, `Browser errors:\n    ${problems.join('\n    ')}`);
+  } catch (e) {
+    if (shotsDir) await page.screenshot({ path: join(shotsDir, `${width}-r4-FAILED.png`) }).catch(() => {});
+    throw new Error(`[${tag}] ${e.message}`);
+  } finally {
+    await context.close();
+  }
+}
+
 async function main() {
   check(existsSync(join(root, 'dist', 'index.html')), 'dist/index.html is missing. Run `npm run build:demo` first (`npm run e2e:demo` does both).');
   if (shotsDir) mkdirSync(shotsDir, { recursive: true });
@@ -424,6 +700,13 @@ async function main() {
       try {
         await journeyR3(browser, baseUrl, width, height);
         console.log(`PASS ${width}px release 3`);
+      } catch (e) {
+        failed = true;
+        console.error(`FAIL ${e.message}`);
+      }
+      try {
+        await journeyR4(browser, baseUrl, width, height);
+        console.log(`PASS ${width}px release 4`);
       } catch (e) {
         failed = true;
         console.error(`FAIL ${e.message}`);

@@ -27,6 +27,12 @@ export interface RegisterRow {
   exclusivity?: string | null;
   changeOfControl?: boolean | null;
   autoRenew?: boolean;
+  // ----- release 4 (header filters) -----
+  delegateId?: Id | null;
+  responsibleId?: Id | null;
+  currency?: string;
+  annualDkk?: number;
+  totalDkk?: number;
 }
 
 const STATUS_ORDER = ['Draft', 'InApproval', 'Approved', 'Active', 'NoticeGiven', 'Expired', 'Terminated'];
@@ -132,10 +138,52 @@ export function matchesFilter(row: RegisterRow, f: ContractFilter, ctx: FilterCo
     if (missing !== bool(f.missingSignedDocument)) return false;
   }
   if (f.watching !== undefined && f.watching !== null && !!row.watching !== bool(f.watching)) return false;
-  for (const [key, wanted] of Object.entries(f.cf ?? {})) {
-    if (wanted === '' || wanted === undefined) continue;
+  for (const [rawKey, wantedRaw] of Object.entries(f.cf ?? {})) {
+    const wanted = list(wantedRaw).filter((w) => w !== '' && w !== undefined && w !== null);
+    if (wanted.length === 0) continue;
+    // Release 4: `cf.<key>.min` / `.max` for Number, Money and Date fields.
+    const bound = /\.(min|max)$/.exec(rawKey)?.[1];
+    const key = bound ? rawKey.slice(0, -4) : rawKey;
     const def = ctx.customFields?.find((d) => d.key === key);
-    if (!matchesCustom(row.customFields?.[key], wanted, def)) return false;
+    const value = row.customFields?.[key];
+    if (bound) {
+      if (value === undefined || value === null) return false;
+      const w = wanted[0] as string;
+      const actual = typeof value === 'number' ? value : typeof value === 'object' && !Array.isArray(value) ? value.amount : typeof value === 'string' ? value : null;
+      if (actual === null) return false;
+      const cmp = typeof actual === 'number' ? actual - Number(w) : actual.localeCompare(w);
+      if (bound === 'min' ? cmp < 0 : cmp > 0) return false;
+      continue;
+    }
+    if (!wanted.some((w) => matchesCustom(value, w, def))) return false;
+  }
+  return matchesFilterV4(row, f);
+}
+
+const contains = (text: string | null | undefined, needle: string | undefined) => !needle?.trim() || (text ?? '').toLowerCase().includes(needle.trim().toLowerCase());
+const num = (v: unknown): number | null => (v === undefined || v === null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+
+/** Release 4 header filters (docs/CONTRACT_V4.md §2). */
+function matchesFilterV4(row: RegisterRow, f: ContractFilter): boolean {
+  const { item } = row;
+  if (!contains(item.title, f.title) || !contains(item.contractNo, f.contractNo) || !contains(item.counterparty, f.counterpartyName)) return false;
+  if (!anyOf(f.delegateId, row.delegateId ?? null) || !anyOf(f.responsibleId, row.responsibleId ?? null)) return false;
+  if (!anyOf(f.currency, row.currency ?? item.currency)) return false;
+  const ranges: [number | undefined, number | null, number | null][] = [
+    [row.annualDkk, num(f.annualValueMin), num(f.annualValueMax)],
+    [row.totalDkk, num(f.totalValueMin), num(f.totalValueMax)],
+  ];
+  for (const [v, min, max] of ranges) {
+    if (min === null && max === null) continue;
+    const x = v ?? 0;
+    if ((min !== null && x < min) || (max !== null && x > max)) return false;
+  }
+  for (const field of ['notice', 'end', 'start', 'signed', 'created'] as const) {
+    const from = f[`${field}From`];
+    const to = f[`${field}To`];
+    if (!from && !to) continue;
+    const d = row.dates?.[field]?.slice(0, 10) ?? null;
+    if (!d || (from && d < from) || (to && d > to)) return false;
   }
   return true;
 }

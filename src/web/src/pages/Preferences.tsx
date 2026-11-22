@@ -2,8 +2,9 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { qk, useApi, useLookups, useMe } from '../app/context';
-import type { DigestFrequency, LandingPage, UserPreferences } from '../api/types';
+import type { ThemePreference, DigestFrequency, LandingPage, UserPreferences } from '../api/types';
 import { Button, Card, CardTitle, ErrorState, Field, Segmented, Select, SkeletonRows, useToast } from '../components';
+import { applyTheme } from '../lib/theme';
 
 export const LANDING_OPTIONS: { value: LandingPage; label: string }[] = [
   { value: 'home', label: 'My work' },
@@ -36,6 +37,14 @@ export function Preferences() {
     onError: (e) => toast.error(e),
   });
 
+  const themeSave = useMutation({
+    mutationFn: (p: UserPreferences) => api.updatePreferences(p),
+    onSuccess: (p) => {
+      client.setQueryData(qk.preferences, p);
+      toast.show(`Theme: ${p.theme === 'dark' ? 'dark' : p.theme === 'system' ? 'follows this device' : 'light'}`);
+    },
+    onError: (e) => toast.error(e, 'The theme could not be saved for your account; it applies on this device.'),
+  });
   const set = (patch: Partial<UserPreferences>) => setDraft((d) => (d ? { ...d, ...patch } : d));
   const setEvent = (event: string, patch: Partial<UserPreferences['events'][number]>) =>
     setDraft((d) => (d ? { ...d, events: d.events.map((e) => (e.event === event ? { ...e, ...patch } : e)) } : d));
@@ -64,6 +73,32 @@ export function Preferences() {
         </Card>
       ) : (
         <div className="settings-grid">
+          <Card pad className="stack" style={{ gap: 16 }}>
+            <CardTitle>Appearance</CardTitle>
+            <div className="stack" style={{ gap: 8 }}>
+              <span className="field__label" id="theme-label">
+                Theme
+              </span>
+              <Segmented
+                mode="radio"
+                ariaLabel="Theme"
+                options={[
+                  { value: 'light', label: 'Light' },
+                  { value: 'dark', label: 'Dark' },
+                  { value: 'system', label: 'System' },
+                ]}
+                value={draft.theme ?? 'light'}
+                onChange={(v) => {
+                  const theme = v as ThemePreference;
+                  // Applies at once and is saved at once: no need to press Save for the theme.
+                  applyTheme(theme);
+                  set({ theme });
+                  themeSave.mutate({ ...draft, theme });
+                }}
+              />
+              <span className="field__hint">System follows the light or dark setting of this device.</span>
+            </div>
+          </Card>
           <Card pad className="stack" style={{ gap: 16 }}>
             <CardTitle>Start and scope</CardTitle>
             <Field label="Open the app on" hint="Leave on the default to follow what the administrator set for your role.">

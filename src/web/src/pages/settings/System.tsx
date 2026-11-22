@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { qk, useApi, useAppConfig, useLookups } from '../../app/context';
-import { DATA_QUALITY_FIELDS, type AppSettings, type JobInfo, type NotificationChannel, type NotificationEventSetting, type NotificationSettings, type RecipientRule, type Role, type Schedule, type TemplatePreview } from '../../api/types';
+import { DATA_QUALITY_FIELDS, type AppSettings, type JobInfo, type LogoVariant, type NotificationChannel, type NotificationEventSetting, type NotificationSettings, type RecipientRule, type Role, type Schedule, type TemplatePreview } from '../../api/types';
 import { Button, Card, ErrorState, Field, Modal, Pill, Select, SkeletonRows, Table, Textarea, TextInput, useToast } from '../../components';
 import { formatDateTime } from '../../lib/dates';
 import { LANDING_OPTIONS } from '../Preferences';
@@ -238,6 +239,8 @@ export function JobsAdmin() {
       <Card clip>
         {q.isLoading ? (
           <SkeletonRows rows={8} />
+        ) : q.isError ? (
+          <ErrorState text="The jobs could not be loaded." onRetry={() => void q.refetch()} />
         ) : (
           <Table<JobInfo>
             caption="Jobs" minWidth={760}
@@ -325,12 +328,13 @@ export function GeneralAdmin() {
       toast.error(e);
     },
   });
-  if (!s) return <SkeletonRows rows={8} />;
+  if (!s) return q.isError ? <ErrorState text="The general settings could not be loaded." onRetry={() => void q.refetch()} /> : <SkeletonRows rows={8} />;
   const dqOptions = [...DATA_QUALITY_FIELDS.map((k) => ({ key: k as string, label: DQ_LABEL[k] ?? k })), ...config.customFields.map((d) => ({ key: `cf.${d.key}`, label: `${d.label} (custom field)` }))];
   return (
     <>
       <SectionHead title="General" text="Name, formats, start pages, features and what counts as complete data." action={<Button loading={save.isPending} onClick={() => save.mutate(s)}>Save changes</Button>} />
       <div className="settings-grid">
+        <LogoAdmin />
         <Card pad className="stack" style={{ gap: 14 }}>
           <h3 className="card-title">App</h3>
           <Field label="App name" error={errors.appName}>
@@ -338,6 +342,9 @@ export function GeneralAdmin() {
           </Field>
           <Field label="Date format">
             {(p) => <Select {...p} value={s.dateFormat} options={['d MMM yyyy', 'dd-MM-yyyy', 'dd.MM.yyyy', 'yyyy-MM-dd', 'MM/dd/yyyy'].map((x) => ({ value: x, label: x }))} onChange={(e) => setS({ ...s, dateFormat: e.target.value as AppSettings['dateFormat'] })} />}
+          </Field>
+          <Field label="Who may create counterparties" hint="In the counterparty picker of New contract and Edit details.">
+            {(p) => <Select {...p} value={s.counterpartyCreation ?? 'AdminOnly'} options={[{ value: 'AdminOnly', label: 'Administrators only' }, { value: 'ContractOwners', label: 'Contract owners and administrators' }, { value: 'AllUsers', label: 'Everyone' }]} onChange={(e) => setS({ ...s, counterpartyCreation: e.target.value as AppSettings['counterpartyCreation'] })} />}
           </Field>
           <Field label="Number format">
             {(p) => <Select {...p} value={s.numberFormat} options={[{ value: 'en-GB', label: '1,250,000.50' }, { value: 'da-DK', label: '1.250.000,50' }, { value: 'de-DE', label: '1.250.000,50 (German)' }, { value: 'en-US', label: '1,250,000.50 (US)' }]} onChange={(e) => setS({ ...s, numberFormat: e.target.value as AppSettings['numberFormat'] })} />}
@@ -365,10 +372,11 @@ export function GeneralAdmin() {
             <input type="checkbox" checked={s.features.templates} onChange={(e) => setS({ ...s, features: { ...s.features, templates: e.target.checked } })} />
             Start new contracts from Word templates
           </label>
-          <label className="check">
-            <input type="checkbox" checked={s.features.eSign} onChange={(e) => setS({ ...s, features: { ...s.features, eSign: e.target.checked } })} />
-            E-signature (placeholder; no provider is connected yet)
-          </label>
+          {/* Review finding L2: the API derives this from the e-signature provider; it cannot be set here. */}
+          <p className="secondary" style={{ fontSize: 13 }} aria-label="E-signature">
+            E-signature is <strong>{(config.eSign?.enabled ?? s.features.eSign) ? 'on' : 'off'}</strong>
+            {config.eSign?.enabled ? ` (${config.eSign.provider === 'Simulated' ? 'simulated signing' : config.eSign.provider})` : ''}. It follows the signing service chosen under <Link to="/settings/esign">Settings &gt; E-signature</Link>.
+          </p>
           <Field label="Due diligence threshold, DKK" hint="Overview lists contracts at or above this value." error={errors.ddThresholdDkk}>
             {(p) => <TextInput {...p} inputMode="numeric" value={String(s.ddThresholdDkk)} onChange={(e) => setS({ ...s, ddThresholdDkk: Number(e.target.value.replace(/\D/g, '')) || 0 })} />}
           </Field>
@@ -387,5 +395,77 @@ export function GeneralAdmin() {
         </Card>
       </div>
     </>
+  );
+}
+
+const LOGO_ACCEPT = '.png,.svg,.jpg,.jpeg,.webp,image/png,image/svg+xml,image/jpeg,image/webp';
+const LOGO_VARIANTS: { variant: LogoVariant; label: string; hint: string }[] = [
+  { variant: 'full', label: 'Logo', hint: 'Top of the menu and the sign-in screen.' },
+  { variant: 'dark', label: 'Logo for the dark theme', hint: 'Optional. Without it the logo above is used.' },
+  { variant: 'compact', label: 'Compact icon', hint: 'Optional, for small spaces.' },
+];
+
+/** Settings > General: logo upload (owner item F; dark logo, item I). */
+function LogoAdmin() {
+  const api = useApi();
+  const client = useQueryClient();
+  const toast = useToast();
+  const config = useAppConfig();
+  const b = config.branding;
+  const urlOf = (v: LogoVariant) => {
+    const u = v === 'full' ? b?.logoUrl : v === 'dark' ? b?.darkLogoUrl : b?.compactLogoUrl;
+    return u ? api.assetUrl(u) : null;
+  };
+  const done = async (text: string) => {
+    await Promise.all([client.invalidateQueries({ queryKey: qk.appConfig }), client.invalidateQueries({ queryKey: ['branding'] })]);
+    toast.show(text);
+  };
+  const upload = useMutation({
+    mutationFn: ({ variant, file }: { variant: LogoVariant; file: File }) => api.admin.uploadLogo(variant, file),
+    onSuccess: () => done('Logo saved'),
+    onError: (e) => toast.error(e, 'The logo could not be saved.'),
+  });
+  const remove = useMutation({
+    mutationFn: (variant: LogoVariant) => api.admin.deleteLogo(variant),
+    onSuccess: () => done('Logo removed: the default mark is shown'),
+    onError: (e) => toast.error(e),
+  });
+  const pick = (variant: LogoVariant, file: File | undefined) => {
+    if (!file) return;
+    if (!/\.(png|svg|jpe?g|webp)$/i.test(file.name)) return toast.error(null, 'Use a PNG, SVG, JPG or WebP image.');
+    if (file.size > 1024 * 1024) return toast.error(null, 'The logo can be at most 1 MB.');
+    upload.mutate({ variant, file });
+  };
+  return (
+    <Card pad className="stack settings-grid__full" style={{ gap: 14 }}>
+      <h3 className="card-title">Logo</h3>
+      <p className="secondary prose">PNG, SVG, JPG or WebP, up to 1 MB. Use a transparent background: the logo is shown as it is, up to 40 px high, with no box behind it.</p>
+      {LOGO_VARIANTS.map(({ variant, label, hint }) => {
+        const url = urlOf(variant);
+        return (
+          <div key={variant} className="logo-preview">
+            <div className="stack" style={{ gap: 4, minWidth: 200 }}>
+              <strong>{label}</strong>
+              <span className="caption">{hint}</span>
+            </div>
+            <div className="logo-preview__box logo-preview__box--light" aria-label={`${label} on the light menu`} role="img">
+              {url ? <img className="brand__logo" src={url} alt="" /> : <span className="caption">Default mark</span>}
+            </div>
+            <div className="logo-preview__box logo-preview__box--dark" aria-label={`${label} on the dark menu`} role="img">
+              {url || (variant === 'dark' && urlOf('full')) ? <img className="brand__logo" src={url ?? urlOf('full') ?? ''} alt="" /> : <span className="caption">Default mark</span>}
+            </div>
+            <label className="btn btn--secondary btn--sm">
+              {url ? 'Replace' : 'Upload'}
+              <input type="file" className="sr-only" accept={LOGO_ACCEPT} aria-label={`Upload ${label.toLowerCase()}`} onChange={(e) => { pick(variant, e.target.files?.[0]); e.target.value = ''; }} />
+            </label>
+            {url ? (
+              <Button variant="ghost" size="sm" loading={remove.isPending && remove.variables === variant} onClick={() => remove.mutate(variant)}>
+                Remove
+              </Button>
+            ) : null}
+          </div>
+        );
+      })}
+    </Card>
   );
 }

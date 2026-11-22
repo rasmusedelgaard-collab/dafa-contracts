@@ -19,6 +19,7 @@ import {
   refs,
 } from '../../lib/settingsForms';
 import { ConfirmDelete, SectionHead } from './common';
+import { PersonPicker } from '../../features/Pickers';
 
 // ---------------------------------------------------------------------------
 // Reminders
@@ -291,11 +292,9 @@ export function Retention() {
 const toInput = (c: Cover): HolidayCoverInput => ({ userId: c.userId, deputyId: c.deputyId, from: c.from, to: c.to });
 
 function CoverDialog({ cover, others, pending, onSave, onClose }: { cover: Cover | null; others: HolidayCoverInput[]; pending: boolean; onSave: (input: HolidayCoverInput) => void; onClose: () => void }) {
-  const lookups = useLookups();
   const [draft, setDraft] = useState<HolidayCoverInput>(cover ? toInput(cover) : { userId: '', deputyId: '', from: '', to: '' });
   const [tried, setTried] = useState(false);
   const errors: CoverErrors = tried ? validateCover(draft, others) : {};
-  const users = lookups.users.map((u) => ({ value: u.id, label: u.name }));
   const set = (patch: Partial<HolidayCoverInput>) => setDraft((d) => ({ ...d, ...patch }));
   const submit = () => {
     setTried(true);
@@ -320,10 +319,10 @@ function CoverDialog({ cover, others, pending, onSave, onClose }: { cover: Cover
     >
       <div className="form-grid form-grid--flat">
         <Field label="Who is away" error={errors.userId}>
-          {(p) => <Select {...p} data-autofocus="" value={draft.userId} placeholder="Choose a person" onChange={(e) => set({ userId: e.target.value })} options={users} />}
+          {(p) => <PersonPicker {...p} value={draft.userId || null} clearLabel="Clear person" onChange={(id) => set({ userId: id ?? '' })} />}
         </Field>
         <Field label="Deputy" error={errors.deputyId}>
-          {(p) => <Select {...p} value={draft.deputyId} placeholder="Choose a person" onChange={(e) => set({ deputyId: e.target.value })} options={users} />}
+          {(p) => <PersonPicker {...p} value={draft.deputyId || null} clearLabel="Clear deputy" onChange={(id) => set({ deputyId: id ?? '' })} />}
         </Field>
         <Field label="First day" error={errors.from}>
           {(p) => <TextInput {...p} type="date" value={draft.from} onChange={(e) => set({ from: e.target.value })} />}
