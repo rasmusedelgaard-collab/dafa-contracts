@@ -5,6 +5,7 @@ using Dafa.Contracts.Core.Domain;
 using Dafa.Contracts.Core.Dtos;
 using Dafa.Contracts.Core.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace Dafa.Contracts.Tests;
 

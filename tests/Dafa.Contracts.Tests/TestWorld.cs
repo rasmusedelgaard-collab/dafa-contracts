@@ -6,6 +6,7 @@ using Dafa.Contracts.Infrastructure.Data;
 using Dafa.Contracts.Infrastructure.Providers;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Dafa.Contracts.Tests;
