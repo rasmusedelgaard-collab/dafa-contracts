@@ -117,7 +117,7 @@ export function RenewalDialog({ contractId, initial, onClose }: { contractId: st
             <legend className="sr-only">Decision</legend>
             <div className="choices">
               {options.map((o, i) => (
-                <label key={o.value} className="choice">
+                <label key={o.value} className="choice" data-checked={decision === o.value || undefined}>
                   <input type="radio" name="renewal-decision" value={o.value} checked={decision === o.value} onChange={() => setDecision(o.value)} data-autofocus={(initial ? o.value === initial : i === 0) ? '' : undefined} />
                   <span className="choice__title">{o.title}</span>
                   <span className="choice__text">{o.text}</span>

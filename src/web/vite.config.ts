@@ -17,8 +17,12 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     define: {
       __API_MODE__: JSON.stringify(apiMode),
+      __BUILD_ID__: JSON.stringify(mode === 'test' ? 'test' : `${new Date().toISOString().slice(0, 16)}Z ${apiMode}`),
     },
-    build: { outDir: 'dist', sourcemap: false },
+    // An explicit floor instead of Vite's moving default: iPads that no longer get updates stay
+    // on Safari 14/15. Syntax and CSS are lowered to this; `src/polyfills.ts` adds the few newer
+    // library functions the app uses. (No top-level await: see main.tsx.)
+    build: { outDir: 'dist', sourcemap: false, target: ['es2020', 'safari14'], cssTarget: ['safari14'] },
     server: {
       port: 5173,
       proxy: apiMode === 'real' ? { '/api': { target: 'http://localhost:5080', changeOrigin: true } } : undefined,

@@ -4,8 +4,9 @@ import { Route, Routes } from 'react-router-dom';
 import { ApiError } from './api/api';
 import type { DevConfig } from './api/types';
 import { qk, ScopeProvider, SessionProvider, useApi, useLookupsQuery, useMeQuery, useSessionActions } from './app/context';
-import { browser, currentPath, entraLoginUrl, isSignedOut, markSignedOut, readAccessCode, redirectedRecently, storeAccessCode } from './app/signin';
-import { isThrottled, NO_ACCESS_MESSAGE, THROTTLED_MESSAGE } from './lib/errors';
+import { SignInHelp } from './app/SignInHelp';
+import { browser, currentPath, entraLoginUrl, isInsecurePage, isSignedOut, markSignedOut, readAccessCode, redirectedRecently, secureUrl, SessionNotKeptError, signInAsDemoUser, storeAccessCode, takeSignInNotice } from './app/signin';
+import { errorMessage, isThrottled, NO_ACCESS_MESSAGE, SESSION_ENDED_MESSAGE, THROTTLED_MESSAGE } from './lib/errors';
 import { lazyPage } from './lib/lazyPage';
 import { Avatar, Button, Card, ErrorState, Field, Icon, RouteErrorBoundary, Skeleton, SkeletonRows, TextInput, useToast } from './components';
 import { Home } from './pages/Home';
@@ -49,6 +50,7 @@ function SignInCard({ title, children }: { title: string; children: ReactNode })
         </div>
         <h1 className="h2">{title}</h1>
         {children}
+        <SignInHelp />
       </Card>
     </div>
   );
@@ -99,6 +101,7 @@ function AccessCodeForm({ notice, onAccepted }: { notice?: string; onAccepted: (
   const error = typedError ?? (touched ? undefined : notice);
   const check = useMutation({
     mutationFn: (value: string) => api.getDevUsers(value),
+    networkMode: 'always',
     onSuccess: (users, value) => {
       storeAccessCode(value);
       client.setQueryData(qk.devUsers, users);
@@ -151,29 +154,58 @@ function AccessCodeForm({ notice, onAccepted }: { notice?: string; onAccepted: (
   );
 }
 
+/**
+ * The browser did not keep the session cookie: say so, and say what to do. On plain http the cause
+ * is certain (the cookie is `Secure`), so the secure address is offered.
+ */
+function CookieNotKept() {
+  const insecure = isInsecurePage();
+  return (
+    <div className="signin-error" role="alert">
+      <strong>Your browser did not keep the sign-in cookie, so you are not signed in.</strong>{' '}
+      {insecure ? (
+        <>
+          <span>This page is open on an address that is not secure (http). Sign-in only works on the secure address.</span>
+          <a className="btn btn--block" href={secureUrl()}>
+            Open the secure address (https)
+          </a>
+        </>
+      ) : (
+        <span>
+          Allow cookies for this site and try again. On an iPad or iPhone: Settings &gt; Safari, switch off &quot;Block All Cookies&quot;. If it keeps happening, open &quot;Having trouble signing in?&quot; below and send us what it shows.
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** Dev mode: pick a seeded demo user (after the access code, when the site requires one). */
 function DevSignIn({ config }: { config: DevConfig }) {
   const api = useApi();
   const client = useQueryClient();
   const session = useSessionActions();
-  const toast = useToast();
   const [code, setCode] = useState(() => readAccessCode());
   const [notice, setNotice] = useState<string>();
+  // Why this screen is showing, when a 401 brought the user back here (app/queryClient.ts).
+  const [arrival] = useState(() => takeSignInNotice());
   const needsCode = config.accessCodeRequired && !code;
 
-  const users = useQuery({ queryKey: qk.devUsers, queryFn: () => api.getDevUsers(code), retry: false, enabled: !needsCode });
+  // `networkMode: 'always'`: a browser that wrongly reports "offline" must not park sign-in for ever.
+  const users = useQuery({ queryKey: qk.devUsers, queryFn: () => api.getDevUsers(code), retry: false, enabled: !needsCode, networkMode: 'always' });
   const login = useMutation({
-    mutationFn: (userId: string) => api.devLogin(userId, code),
+    // `dev/login`, then `me` with the new cookie: the app is shown only when the session really works.
+    mutationFn: (userId: string) => signInAsDemoUser(api, userId, code),
+    networkMode: 'always',
     onSuccess: (me) => {
-      // `dev/login` returns Me: show the app right away and drop anything loaded while signed out.
+      // Show the app right away and drop anything loaded while signed out.
       markSignedOut(false);
       session.signedIn(me);
     },
-    onError: (e) => toast.error(e),
   });
 
-  // A remembered code the server no longer accepts: forget it and ask again.
-  const rejected = config.accessCodeRequired && !!code && users.error instanceof ApiError && (users.error.status === 401 || users.error.status === 403);
+  // A remembered code the server no longer accepts (on the list or at sign-in): forget it and ask again.
+  const refused = (e: unknown) => e instanceof ApiError && (e.status === 401 || e.status === 403);
+  const rejected = config.accessCodeRequired && !!code && (refused(users.error) || refused(login.error));
   useEffect(() => {
     if (!rejected) return;
     storeAccessCode(null);
@@ -188,12 +220,14 @@ function DevSignIn({ config }: { config: DevConfig }) {
         notice={notice}
         onAccepted={(value) => {
           setNotice(undefined);
+          login.reset();
           setCode(value);
         }}
       />
     );
   }
 
+  const cookieLost = login.error instanceof SessionNotKeptError || (!login.isPending && !login.isError && arrival === 'cookie-not-kept');
   return (
     <SignInCard title="Sign in">
       {users.isLoading ? (
@@ -205,16 +239,32 @@ function DevSignIn({ config }: { config: DevConfig }) {
       ) : (
         <>
           <p className="secondary">Test environment. Choose a demo user; each one has different access.</p>
+          {cookieLost ? (
+            <CookieNotKept />
+          ) : login.isError ? (
+            <div className="signin-error" role="alert">
+              <strong>You could not be signed in.</strong>{' '}
+              <span>{errorMessage(login.error, 'Something went wrong in the browser. Reload the page and try again.')}</span>
+            </div>
+          ) : arrival === 'session-ended' && !login.isPending ? (
+            <p className="signin-error" role="status">
+              {SESSION_ENDED_MESSAGE}
+            </p>
+          ) : null}
           <div className="user-list">
-            {(users.data ?? []).map((u) => (
-              <button key={u.id} type="button" className="user-opt" disabled={login.isPending} onClick={() => login.mutate(u.id)}>
-                <Avatar initials={u.initials} />
-                <span className="kv">
-                  <span className="user-opt__name">{u.name}</span>
-                  <span className="kv__k">{u.title}</span>
-                </span>
-              </button>
-            ))}
+            {(users.data ?? []).map((u) => {
+              const busy = login.isPending && login.variables === u.id;
+              return (
+                <button key={u.id} type="button" className="user-opt" disabled={login.isPending} aria-busy={busy || undefined} onClick={() => login.mutate(u.id)}>
+                  <Avatar initials={u.initials} />
+                  <span className="kv">
+                    <span className="user-opt__name">{u.name}</span>
+                    <span className="kv__k">{busy ? 'Signing in…' : u.title}</span>
+                  </span>
+                  {busy ? <span className="btn__spinner user-opt__spinner" aria-hidden="true" /> : null}
+                </button>
+              );
+            })}
           </div>
         </>
       )}
@@ -249,10 +299,19 @@ function StartError({ text, onRetry }: { text: string; onRetry: () => void }) {
 export function App() {
   const api = useApi();
   // Anonymous, asked on start: decides between the demo-user picker and the Entra redirect.
-  const config = useQuery({ queryKey: qk.devConfig, queryFn: () => api.getDevConfig(), retry: false, staleTime: Infinity });
+  const config = useQuery({ queryKey: qk.devConfig, queryFn: () => api.getDevConfig(), retry: false, staleTime: Infinity, networkMode: 'always' });
   const me = useMeQuery();
   const lookups = useLookupsQuery(!!me.data);
 
+  // The session cookie is `Secure`, so on plain http nobody can sign in: the browser drops it. A
+  // site that says it needs https (`dev/config`) is moved there before anything else is shown.
+  // It cannot loop: once on https this is never true again.
+  const toHttps = config.data?.httpsRequired === true && isInsecurePage();
+  useEffect(() => {
+    if (toHttps) browser.replace(secureUrl());
+  }, [toHttps]);
+
+  if (toHttps) return <Splash />;
   if (me.isLoading) return <Splash />;
   if (me.isError || !me.data) {
     if (me.error instanceof ApiError && me.error.status === 401) {

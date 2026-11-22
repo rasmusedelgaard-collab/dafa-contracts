@@ -56,6 +56,7 @@ import { conflict, forbidden, invalid, invalidFields, notFound } from './problem
 import { filterRows, matchesFilter, pageRows, sortRows, toCsv, type RegisterRow } from './query';
 import { EVENT_DEFS } from './seedR3';
 import { makeZip } from './zip';
+import { localStore } from '../../lib/storage';
 
 export interface MockCtx {
   db: Db;
@@ -143,12 +144,8 @@ const SYNCED_FIELDS = ['name', 'email', 'title', 'isActive'];
 const LANDING: LandingPage[] = ['home', 'contracts', 'renewals', 'approvals', 'overview'];
 
 function browserTheme(): 'light' | 'dark' | 'system' {
-  try {
-    const v = globalThis.localStorage?.getItem('dafa.theme');
-    return v === 'dark' || v === 'system' ? v : 'light';
-  } catch {
-    return 'light';
-  }
+  const v = localStore.get('dafa.theme');
+  return v === 'dark' || v === 'system' ? v : 'light';
 }
 
 export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersChanged: (c: ContractRec, actor: UserRec, change: string) => void } {

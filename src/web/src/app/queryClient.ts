@@ -1,6 +1,7 @@
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
 import { ApiError } from '../api/api';
 import { isConflict, isUnauthorized } from '../lib/errors';
+import { noteSessionEnded } from './signin';
 
 /** Query keys that describe the session itself; they survive a refresh after a conflict. */
 const SESSION_KEYS = new Set(['me', 'dev-config', 'dev-users', 'lookups']);
@@ -24,6 +25,8 @@ export function createQueryClient(options: { retry?: boolean } = {}): QueryClien
     if (!isUnauthorized(error)) return;
     if (key && SIGN_IN_KEYS.has(String(key[0]))) return;
     if (client.getQueryState(ME_KEY)?.status !== 'success') return;
+    // The sign-in screen says why it is back ("Your session has ended", or that the cookie was not kept).
+    noteSessionEnded();
     void client.resetQueries({ queryKey: ME_KEY });
   };
   const client: QueryClient = new QueryClient({

@@ -53,6 +53,13 @@ public sealed class AuthSettings
     public bool IsDev => Mode == AuthModes.Dev;
     public bool AccessCodeRequired => IsDev && DevAccessCode is not null;
 
+    /// <summary>
+    /// True when the session cookie is always marked Secure (see <see cref="CookieSetup"/>): a
+    /// browser only keeps it on https, so sign-in cannot work on a plain http address. Reported by
+    /// GET api/dev/config; the web app then moves an http page to https by itself.
+    /// </summary>
+    public bool HttpsRequired { get; init; }
+
     public const int MinAccessCodeLength = 12;
 
     /// <summary>
@@ -361,10 +368,20 @@ public static class CookieSetup
 {
     public const string CookieName = "dafa.contracts.auth";
 
+    /// <summary>
+    /// False (the default outside Development): the session cookie is always marked Secure, whatever
+    /// scheme the app sees behind the host's proxy. True only in the Development environment or with
+    /// Auth:Cookie:AllowInsecure=true; then the cookie follows the request (plain http works).
+    /// </summary>
+    public static bool AllowsInsecure(IConfiguration configuration, bool isDevelopment)
+    {
+        return isDevelopment || configuration.GetValue("Auth:Cookie:AllowInsecure", false);
+    }
+
     /// <summary>Shared session cookie settings: HttpOnly, SameSite=Lax, Secure, and 401/403 instead of redirects.</summary>
     public static void Configure(CookieAuthenticationOptions options, IConfiguration configuration, IHostEnvironment environment)
     {
-        var allowInsecure = environment.IsDevelopment() || configuration.GetValue("Auth:Cookie:AllowInsecure", false);
+        var allowInsecure = AllowsInsecure(configuration, environment.IsDevelopment());
         options.Cookie.Name = CookieName;
         options.Cookie.HttpOnly = true;
         options.Cookie.SameSite = SameSiteMode.Lax;

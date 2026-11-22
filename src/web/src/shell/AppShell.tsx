@@ -9,6 +9,7 @@ import { NotificationBell } from './NotificationBell';
 import { UserSwitcher } from './UserSwitcher';
 import { BrandMark } from './Brand';
 import { applyTheme } from '../lib/theme';
+import { localStore, sessionStore } from '../lib/storage';
 
 interface NavItem {
   to: string;
@@ -134,13 +135,8 @@ function useStartPreferences() {
   useEffect(() => {
     if (done.current || !config.loaded) return;
     done.current = true;
-    let started = false;
-    try {
-      started = sessionStorage.getItem(STARTED) === '1';
-      sessionStorage.setItem(STARTED, '1');
-    } catch {
-      /* storage unavailable */
-    }
+    const started = sessionStore.get(STARTED) === '1';
+    sessionStore.set(STARTED, '1');
     if (started) return;
     // The scope lives only in the URL, so the landing page navigation must carry it itself.
     // Order: the link's own scope, else the user's last scope on this device, else their default.
@@ -154,22 +150,14 @@ function useStartPreferences() {
   const current = scope.entityIds.length === 1 ? (scope.entityIds[0] ?? '') : '';
   useEffect(() => {
     if (!done.current) return;
-    try {
-      localStorage.setItem(`${SCOPE_KEY}.${me.id}`, current);
-    } catch {
-      /* storage unavailable */
-    }
+    localStore.set(`${SCOPE_KEY}.${me.id}`, current);
   }, [current, me.id]);
 }
 
 const SCOPE_KEY = 'dafa.scope';
 /** The user's last scope on this device: an id, '' (explicitly all entities) or null (never set). */
 function readStoredScope(userId: string): string | null {
-  try {
-    return localStorage.getItem(`${SCOPE_KEY}.${userId}`);
-  } catch {
-    return null;
-  }
+  return localStore.get(`${SCOPE_KEY}.${userId}`);
 }
 
 /** Item I: the signed-in user's theme from `me/preferences` (localStorage only bridges the first paint). */

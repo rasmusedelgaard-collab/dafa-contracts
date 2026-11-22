@@ -538,6 +538,11 @@ export interface DevConfig {
   authMode: 'Dev' | 'Entra';
   /** Dev mode only: a shared access code must be entered before the demo-user picker. */
   accessCodeRequired: boolean;
+  /**
+   * The session cookie is `Secure`: sign-in only works on https. On a plain http page the app
+   * moves to the https address by itself. Absent on an API from before this field.
+   */
+  httpsRequired?: boolean;
 }
 
 export interface GetContractOptions {

@@ -8,8 +8,11 @@ using Dafa.Contracts.Api.Hosting;
 using Dafa.Contracts.Core.Common;
 using Dafa.Contracts.Core.Domain;
 using Dafa.Contracts.Infrastructure.Seed;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 
 namespace Dafa.Contracts.Tests;
 
@@ -790,5 +793,103 @@ public class EntraProvisioningTests
         db.SaveChanges();
         db.Users.Add(new AppUser { Id = Guid.NewGuid(), Name = "B", Email = "b@dafa.example", Initials = "B", ExternalId = "same-oid" });
         Assert.Throws<DbUpdateException>(() => db.SaveChanges());
+    }
+}
+
+/// <summary>
+/// The session cookie (owner's report, 2026-11-22: sign-in "did nothing" on an iPad). A browser
+/// keeps a Secure cookie only on https, so the API says in dev/config when https is required and
+/// the web app moves there; the cookie itself stays HttpOnly, Secure and SameSite=Lax.
+/// </summary>
+public class SessionCookieSettingsTests
+{
+    private sealed class FakeEnvironment : IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = "Production";
+        public string ApplicationName { get; set; } = "Tests";
+        public string ContentRootPath { get; set; } = "";
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+    }
+
+    private static IConfiguration Config(string? allowInsecure = null)
+    {
+        var data = new Dictionary<string, string?>();
+        if (allowInsecure is not null)
+        {
+            data["Auth:Cookie:AllowInsecure"] = allowInsecure;
+        }
+        return new ConfigurationBuilder().AddInMemoryCollection(data).Build();
+    }
+
+    [Fact]
+    public void PlainHttp_IsOnlyAllowed_InDevelopment_OrWhenSwitchedOn()
+    {
+        Assert.False(CookieSetup.AllowsInsecure(Config(), isDevelopment: false));
+        Assert.False(CookieSetup.AllowsInsecure(Config("false"), isDevelopment: false));
+        Assert.True(CookieSetup.AllowsInsecure(Config("true"), isDevelopment: false));
+        Assert.True(CookieSetup.AllowsInsecure(Config(), isDevelopment: true));
+    }
+
+    [Fact]
+    public void OnAHostedSite_TheCookieIsHttpOnly_AlwaysSecure_Lax_AndHasNoPrefix()
+    {
+        var options = new CookieAuthenticationOptions { Events = new CookieAuthenticationEvents() };
+        CookieSetup.Configure(options, Config(), new FakeEnvironment { EnvironmentName = "Production" });
+
+        Assert.True(options.Cookie.HttpOnly);
+        Assert.Equal(Microsoft.AspNetCore.Http.CookieSecurePolicy.Always, options.Cookie.SecurePolicy);
+        Assert.Equal(Microsoft.AspNetCore.Http.SameSiteMode.Lax, options.Cookie.SameSite);
+        // No __Host- or __Secure- prefix: those add conditions a shared host may not meet.
+        Assert.Equal("dafa.contracts.auth", options.Cookie.Name);
+        Assert.Null(options.Cookie.Domain);
+    }
+
+    [Fact]
+    public void InDevelopment_TheCookieFollowsTheRequest()
+    {
+        var options = new CookieAuthenticationOptions { Events = new CookieAuthenticationEvents() };
+        CookieSetup.Configure(options, Config(), new FakeEnvironment { EnvironmentName = "Development" });
+
+        Assert.True(options.Cookie.HttpOnly);
+        Assert.Equal(Microsoft.AspNetCore.Http.CookieSecurePolicy.SameAsRequest, options.Cookie.SecurePolicy);
+    }
+}
+
+/// <summary>The same over HTTP, on the Development host the tests boot.</summary>
+[Collection(ApiCollection.Name)]
+public class SessionCookieApiTests : IClassFixture<ApiFactory>
+{
+    private readonly ApiFactory _factory;
+
+    public SessionCookieApiTests(ApiFactory factory)
+    {
+        _factory = factory;
+    }
+
+    [Fact]
+    public async Task DevConfig_SaysWhetherHttpsIsRequired()
+    {
+        var client = _factory.CreateClient();
+        var config = await client.GetFromJsonAsync<JsonElement>("/api/dev/config");
+        // Development: plain http is allowed, so the web app must not redirect.
+        Assert.False(config.GetProperty("httpsRequired").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Login_SetsOneSessionCookie_HttpOnly_Lax_ForTheWholeSite()
+    {
+        var client = _factory.CreateApiClient();
+        var response = await client.PostAsJsonAsync("/api/dev/login", new { userId = SeedIds.User("jonas") });
+        response.EnsureSuccessStatusCode();
+
+        Assert.True(response.Headers.TryGetValues("Set-Cookie", out var values));
+        var cookie = Assert.Single(values!, v => v.StartsWith(CookieSetup.CookieName + "=", StringComparison.Ordinal));
+        var lower = cookie.ToLowerInvariant();
+        Assert.Contains("; httponly", lower);
+        Assert.Contains("; samesite=lax", lower);
+        Assert.Contains("; path=/", lower);
+        Assert.DoesNotContain("; domain=", lower);
+        // Small enough for every browser (4096 bytes per cookie), so it is never split or dropped.
+        Assert.True(cookie.Length < 3500, "The session cookie is " + cookie.Length + " characters.");
     }
 }

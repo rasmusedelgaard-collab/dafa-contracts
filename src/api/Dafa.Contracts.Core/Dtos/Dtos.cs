@@ -537,6 +537,11 @@ public class DevConfigDto
 {
     public string AuthMode { get; set; } = "Dev";
     public bool AccessCodeRequired { get; set; }
+    /// <summary>
+    /// The session cookie is marked Secure, so sign-in only works on https. The web app moves a
+    /// plain http page to the https address when this is true (owner's iPad report, 2026-11-22).
+    /// </summary>
+    public bool HttpsRequired { get; set; }
     /// <summary>Release 4: logo for the sign-in screen.</summary>
     public BrandingDto Branding { get; set; } = new();
 }

@@ -57,6 +57,7 @@ import { createR3, type MockCtx } from './r3';
 import { createR4 } from './r4';
 import { validateCustomFields, rulesForType, validateStandardRules, enforcesRequired, displayValue } from '../../lib/customFields';
 import { matchesAll, terms as searchTerms } from '../../lib/search';
+import { localStore } from '../../lib/storage';
 import type { NotificationEvent, RenewalItem } from '../types';
 
 export interface MockOptions {
@@ -106,19 +107,11 @@ const DECISION_TEXT = { Renew: 'Renew', Renegotiate: 'Renegotiate', GiveNotice: 
 
 /** `undefined`: nothing stored. `null`: the user signed out, so a reload stays signed out. */
 function remembered(): Id | null | undefined {
-  try {
-    const v = globalThis.localStorage?.getItem(USER_KEY);
-    return v === SIGNED_OUT ? null : (v ?? undefined);
-  } catch {
-    return undefined;
-  }
+  const v = localStore.get(USER_KEY);
+  return v === SIGNED_OUT ? null : (v ?? undefined);
 }
 function remember(id: Id | null): void {
-  try {
-    globalThis.localStorage?.setItem(USER_KEY, id ?? SIGNED_OUT);
-  } catch {
-    /* storage unavailable */
-  }
+  localStore.set(USER_KEY, id ?? SIGNED_OUT);
 }
 
 export function createMockApi(options: MockOptions = {}): MockApi {

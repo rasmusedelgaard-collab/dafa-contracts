@@ -538,3 +538,90 @@ button.step:disabled {
     padding: 0 6px;
   }
 }
+
+/* ---------- Sign-in: errors, pending state, help ---------- */
+/* Touch: a row is at least 44 px high, hover styling only where a pointer can hover (on an iPad a
+   sticky :hover looks like a selection), and a pressed state that shows the tap was taken. */
+.user-opt {
+  min-height: 48px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+@media (hover: none) {
+  .user-opt:hover {
+    background: transparent;
+  }
+}
+.user-opt:active:not(:disabled),
+.user-opt[aria-busy='true'] {
+  background: var(--tint-2);
+  border-color: var(--suggest-border);
+}
+.user-opt:disabled:not([aria-busy='true']) {
+  opacity: 0.55;
+}
+.user-opt__spinner {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+.signin-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--red-fg);
+  color: var(--red-fg);
+  font-size: 14px;
+}
+.signin-help {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+.signin-help__toggle {
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: 13px;
+  text-decoration: underline;
+  touch-action: manipulation;
+  align-self: flex-start;
+  -webkit-tap-highlight-color: transparent;
+}
+.diag {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+.diag__list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.diag__row {
+  display: flex;
+  gap: 10px;
+}
+.diag__row dt {
+  flex: 0 0 132px;
+  color: var(--text-2);
+}
+.diag__row dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.diag__row--bad dd {
+  color: var(--red-fg);
+  font-weight: 600;
+}

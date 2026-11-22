@@ -1,0 +1,321 @@
+{
+ "users": [
+  {
+   "id": "00000004-0000-4000-8000-000000000001",
+   "name": "Rasmus Holm",
+   "initials": "RH",
+   "title": "Group CFO · group management"
+  },
+  {
+   "id": "00000004-0000-4000-8000-000000000002",
+   "name": "Karen Lindberg",
+   "initials": "KL",
+   "title": "Group CEO · group management"
+  },
+  {
+   "id": "00000004-0000-4000-8000-000000000003",
+   "name": "Mette Kjær",
+   "initials": "MK",
+   "title": "Purchasing manager · department head"
+  },
+  {
+   "id": "00000004-0000-4000-8000-000000000004",
+   "name": "Jonas Bak",
+   "initials": "JB",
+   "title": "Category manager · Purchasing"
+  }
+ ],
+ "me": {
+  "id": "00000004-0000-4000-8000-000000000001",
+  "name": "Rasmus Holm",
+  "email": "rasmus.holm@dafa.example",
+  "initials": "RH",
+  "roles": [
+   "ContractOwner",
+   "Approver"
+  ],
+  "departmentIds": [
+   "00000002-0000-4000-8000-000000000002",
+   "00000002-0000-4000-8000-000000000001"
+  ],
+  "managedEntityIds": [],
+  "isGroupManagement": true,
+  "authMode": "Dev",
+  "entityId": "00000001-0000-4000-8000-000000000001",
+  "canSendForSignature": true,
+  "signatureEntityIds": []
+ },
+ "lookups": {
+  "entities": [
+   {
+    "id": "00000001-0000-4000-8000-000000000001",
+    "name": "DAFA Group A/S",
+    "country": "DK",
+    "currency": "DKK",
+    "isActive": true
+   },
+   {
+    "id": "00000001-0000-4000-8000-000000000002",
+    "name": "DAFA A/S",
+    "country": "DK",
+    "currency": "DKK",
+    "isActive": true
+   },
+   {
+    "id": "00000001-0000-4000-8000-000000000003",
+    "name": "DAFA Building Solutions A/S",
+    "country": "DK",
+    "currency": "DKK",
+    "isActive": true
+   },
+   {
+    "id": "00000001-0000-4000-8000-000000000004",
+    "name": "DAFA Sverige AB",
+    "country": "SE",
+    "currency": "SEK",
+    "isActive": true
+   },
+   {
+    "id": "00000001-0000-4000-8000-000000000005",
+    "name": "DAFA Deutschland GmbH",
+    "country": "DE",
+    "currency": "EUR",
+    "isActive": true
+   },
+   {
+    "id": "00000001-0000-4000-8000-000000000006",
+    "name": "DAFA Sealing Technology (Tianjin) Co., Ltd.",
+    "country": "CN",
+    "currency": "CNY",
+    "isActive": true
+   },
+   {
+    "id": "00000001-0000-4000-8000-000000000007",
+    "name": "DAFA US Inc.",
+    "country": "US",
+    "currency": "USD",
+    "isActive": true
+   },
+   {
+    "id": "00000001-0000-4000-8000-000000000008",
+    "name": "DAFA Polska sp. z o.o.",
+    "country": "PL",
+    "currency": "PLN",
+    "isActive": true
+   },
+   {
+    "id": "00000001-0000-4000-8000-000000000009",
+    "name": "DAFA Italia S.r.l.",
+    "country": "IT",
+    "currency": "EUR",
+    "isActive": true
+   }
+  ],
+  "departments": [
+   {
+    "id": "00000002-0000-4000-8000-000000000001",
+    "name": "Management",
+    "isActive": true
+   },
+   {
+    "id": "00000002-0000-4000-8000-000000000002",
+    "name": "Finance",
+    "isActive": true
+   },
+   {
+    "id": "00000002-0000-4000-8000-000000000003",
+    "name": "Purchasing",
+    "isActive": true
+   },
+   {
+    "id": "00000002-0000-4000-8000-000000000004",
+    "name": "Sales",
+    "isActive": true
+   },
+   {
+    "id": "00000002-0000-4000-8000-000000000005",
+    "name": "Production",
+    "isActive": true
+   },
+   {
+    "id": "00000002-0000-4000-8000-000000000006",
+    "name": "Supply chain and logistics",
+    "isActive": true
+   },
+   {
+    "id": "00000002-0000-4000-8000-000000000007",
+    "name": "Quality",
+    "isActive": true
+   },
+   {
+    "id": "00000002-0000-4000-8000-000000000008",
+    "name": "R&D and engineering",
+    "isActive": true
+   },
+   {
+    "id": "00000002-0000-4000-8000-000000000009",
+    "name": "Maintenance and facilities",
+    "isActive": true
+   },
+   {
+    "id": "00000002-0000-4000-8000-000000000010",
+    "name": "HSE",
+    "isActive": true
+   },
+   {
+    "id": "00000002-0000-4000-8000-000000000011",
+    "name": "IT",
+    "isActive": true
+   },
+   {
+    "id": "00000002-0000-4000-8000-000000000012",
+    "name": "HR",
+    "isActive": true
+   },
+   {
+    "id": "00000002-0000-4000-8000-000000000013",
+    "name": "Marketing",
+    "isActive": true
+   }
+  ],
+  "contractTypes": [
+   {
+    "id": "00000003-0000-4000-8000-000000000001",
+    "name": "Supplier – direct materials",
+    "isActive": true
+   },
+   {
+    "id": "00000003-0000-4000-8000-000000000002",
+    "name": "Supplier – indirect and services",
+    "isActive": true
+   },
+   {
+    "id": "00000003-0000-4000-8000-000000000003",
+    "name": "Logistics",
+    "isActive": true
+   },
+   {
+    "id": "00000003-0000-4000-8000-000000000004",
+    "name": "IT and SaaS",
+    "isActive": true
+   },
+   {
+    "id": "00000003-0000-4000-8000-000000000005",
+    "name": "Lease and property",
+    "isActive": true
+   },
+   {
+    "id": "00000003-0000-4000-8000-000000000006",
+    "name": "Finance and insurance",
+    "isActive": true
+   },
+   {
+    "id": "00000003-0000-4000-8000-000000000007",
+    "name": "NDA",
+    "isActive": true
+   },
+   {
+    "id": "00000003-0000-4000-8000-000000000008",
+    "name": "R&D and partnership",
+    "isActive": true
+   },
+   {
+    "id": "00000003-0000-4000-8000-000000000009",
+    "name": "Corporate (shareholder, M&A)",
+    "isActive": true
+   },
+   {
+    "id": "00000003-0000-4000-8000-000000000010",
+    "name": "Other",
+    "isActive": true
+   }
+  ],
+  "users": [
+   {
+    "id": "00000004-0000-4000-8000-000000000001",
+    "name": "Rasmus Holm",
+    "initials": "RH",
+    "departmentIds": [
+     "00000002-0000-4000-8000-000000000002",
+     "00000002-0000-4000-8000-000000000001"
+    ],
+    "roles": [
+     "ContractOwner",
+     "Approver"
+    ],
+    "isActive": true,
+    "email": "rasmus.holm@dafa.example",
+    "title": "Group CFO · group management",
+    "entityId": "00000001-0000-4000-8000-000000000001",
+    "canSendForSignature": true,
+    "signatureEntityIds": []
+   },
+   {
+    "id": "00000004-0000-4000-8000-000000000002",
+    "name": "Karen Lindberg",
+    "initials": "KL",
+    "departmentIds": [
+     "00000002-0000-4000-8000-000000000001"
+    ],
+    "roles": [
+     "ContractOwner",
+     "Approver"
+    ],
+    "isActive": true,
+    "email": "karen.lindberg@dafa.example",
+    "title": "Group CEO · group management",
+    "entityId": "00000001-0000-4000-8000-000000000001",
+    "canSendForSignature": true,
+    "signatureEntityIds": []
+   },
+   {
+    "id": "00000004-0000-4000-8000-000000000003",
+    "name": "Mette Kjær",
+    "initials": "MK",
+    "departmentIds": [
+     "00000002-0000-4000-8000-000000000003"
+    ],
+    "roles": [
+     "ContractOwner",
+     "Approver"
+    ],
+    "isActive": true,
+    "email": "mette.kjaer@dafa.example",
+    "title": "Purchasing manager · department head",
+    "entityId": "00000001-0000-4000-8000-000000000002",
+    "canSendForSignature": true,
+    "signatureEntityIds": [
+     "00000001-0000-4000-8000-000000000002",
+     "00000001-0000-4000-8000-000000000001"
+    ]
+   },
+   {
+    "id": "00000004-0000-4000-8000-000000000004",
+    "name": "Jonas Bak",
+    "initials": "JB",
+    "departmentIds": [
+     "00000002-0000-4000-8000-000000000003"
+    ],
+    "roles": [
+     "ContractOwner"
+    ],
+    "isActive": true,
+    "email": "jonas.bak@dafa.example",
+    "title": "Category manager · Purchasing",
+    "entityId": null,
+    "canSendForSignature": false,
+    "signatureEntityIds": []
+   }
+  ],
+  "currencies": [
+   "DKK",
+   "EUR",
+   "SEK",
+   "USD",
+   "PLN",
+   "CNY",
+   "GBP",
+   "NOK"
+  ]
+ }
+}

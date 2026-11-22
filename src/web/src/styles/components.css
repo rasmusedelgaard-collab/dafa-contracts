@@ -838,6 +838,14 @@
   margin: 0;
   cursor: pointer;
 }
+/* `data-checked` repeats `:has(input:checked)` for Safari before 15.4, which has no `:has()`:
+   without it the chosen card would not be marked at all. Kept as two rules: one unknown selector
+   in a list makes a browser drop the whole rule. */
+.choice[data-checked] {
+  border-color: var(--primary);
+  background: var(--tint-2);
+  box-shadow: 0 0 0 1px var(--primary);
+}
 .choice:has(input:checked) {
   border-color: var(--primary);
   background: var(--tint-2);
