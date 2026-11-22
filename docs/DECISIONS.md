@@ -174,6 +174,30 @@
 - FE: Settings are grouped Organization / Data / Rules / System; departments and contract types are deactivated through `PUT` with `isActive` (delete stays for unused rows).
 - FE: Mock: one seeded user (Louise Winther) is marked as an Entra ID account to demo read-only synced fields in Dev mode; the data-room zip is built in the browser (stored entries) and is ready at once.
 
+## Backend release 4 (2026-11-22)
+
+- BE: SharePoint access is app-only ("the app is the only door", owner's decision): application permission `Sites.Selected` per site, no delegated SharePoint permissions, users get no access to sites or libraries, "Open in SharePoint" (`storeUrl`) for administrators only and taken from the contract row, never from a call to the store.
+- BE: The site and library of a file come only from the mapping an administrator made (legal entity -> site, department -> library name). No default site, no "first library", no matching by name. Unmapped means the upload is refused with 409 `storage-not-configured`.
+- BE: Files are never overwritten: `conflictBehavior=fail`, version in the file name, a random suffix when the name is taken. The intake file of a new contract is stored only after the contract row (and number) is saved; if the store refuses, the draft is kept and the upload stays for 7 days.
+- BE: A final approval never fails because of storage; the approval log is written later by the `UploadCleanup` job (`ApprovalInstances.LogPending`).
+- BE: One shared Graph client with retries (429/502/503/504, timeouts, connection errors), Retry-After honoured up to 20 s, per-try timeouts and a circuit breaker whose state lives in a singleton (handlers are recycled). A Retry-After longer than 20 s is passed to the user as 503 with the header instead of being waited for.
+- BE: Reconciliation reports only and runs synchronously within 50 s; it never moves, renames or deletes. Changing a contract's entity or department does not move files.
+- BE: Graph sign-in supports client secret, certificate (hand-built client assertion, no new package) and managed identity (`Graph:Auth`).
+- BE: Memberships in Entra mode come from the mapped groups: a mapped group is the source of truth for Entra-linked users (added and removed); unmapped departments and entities and unlinked users are never touched; a failed group read removes nothing.
+- BE: The e-signature provider is an admin setting, not configuration; credentials stay in server configuration (`Signing:*`). A provider can only be chosen when it is configured. `Simulated` is allowed by default only with Dev sign-in (`Signing:AllowSimulated`).
+- BE: Administrators have no implicit right to send for signature; the right is per user, optionally per legal entity, and is checked on send, resend, cancel and simulate together with normal contract access.
+- BE: The webhook is the only route exempt from `X-Requested-With`, exactly `POST /api/esign/webhooks/{provider}`. It is closed (404) without a secret of at least 24 characters, compares in constant time, throttles wrong attempts per address, and never reveals whether an envelope exists. Events are applied idempotently, so webhook and polling can both deliver the same event.
+- BE: One open signature request per contract, enforced by the service and by a filtered unique index. Partially signed is stored but reported as `Sent`.
+- BE: Completion makes a contract Active only from Approved; a contract sent without approval (`requireApproved=false`) keeps its status. Manual "record signature" is refused while a request is open.
+- BE: The Simulated provider's signed copy is a PDF the app writes itself (`SimplePdf`, text only, a signature page listing the signers); it is not a copy of the original with a stamp.
+- BE: SVG logos are refused when they contain anything executable or external, and every logo is served with a script-forbidding policy and `nosniff`; both, because the file is public. Logos are stored in the database, not in the document store.
+- BE: Contracts must point to a counterparty master record; the counterparty name is always taken from it. Old contracts without a record keep their text until one is chosen; a chosen one cannot be removed. Who may create counterparties is a general setting, default administrators only.
+- BE: An empty filter value is "no filter" everywhere; a repeated custom-field parameter means any of. Value ranges never match contracts without that value.
+- BE: `theme` is a personal preference stored on the server (default light); the dark logo is a third branding variant handled exactly like the others.
+- BE: Every `/api` answer is `no-store` unless the action sets its own caching (the logo does); the SPA shell is `no-cache`.
+- BE: Schema changes are steps 3 (release 4) and 4 (storage hardening) of the upgrader: additive, guarded, defaults for NOT NULL columns.
+- BE: A missing file is recorded and reported to administrators once per document version, not once a day (the document service has no clock; the reconciliation report repeats it nightly anyway).
+
 ## Frontend release 4 (2026-11-22)
 - FE: The entity scope is only the URL (`?entity=`, repeatable). It is carried to another page, never re-added on the same page; removal by any path sticks. The last scope per user is remembered on the device.
 - FE: Pickers filter the lookups locally (all users are already loaded); free text is dropped on blur. A counterparty must be a master record (validation and API).
