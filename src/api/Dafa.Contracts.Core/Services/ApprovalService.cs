@@ -599,21 +599,85 @@ public class ApprovalService
 
         var directory = await ApproverDirectory.LoadAsync(_db, cancellationToken);
         var log = BuildApprovalLog(contract, instance, steps, directory);
-        await _documents.AddAsync(
-            contract,
-            "Approval log " + contract.ContractNo + ".txt",
-            DocumentKind.ApprovalLog,
-            Encoding.UTF8.GetBytes(log),
-            null,
-            cancellationToken);
+        // SharePoint hardening: the approval itself must not fail because the document store is
+        // down. When the log cannot be stored now, the approval is saved anyway and the
+        // UploadCleanup job writes the log later (WritePendingLogsAsync).
+        var logSaved = true;
+        try
+        {
+            await _documents.AddAsync(
+                contract,
+                "Approval log " + contract.ContractNo + ".txt",
+                DocumentKind.ApprovalLog,
+                Encoding.UTF8.GetBytes(log),
+                null,
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logSaved = false;
+            instance.LogPending = true;
+        }
 
-        _audit.Record("approval.completed", "Fully approved. Approval log saved to documents.", contract.Id);
+        _audit.Record("approval.completed",
+            logSaved
+                ? "Fully approved. Approval log saved to documents."
+                : "Fully approved. The approval log could not be stored right now and will be added to the documents automatically.",
+            contract.Id);
         await _notifier.SendAsync(new Notification(
             contract.OwnerId,
             "ApprovalCompleted",
             "Approved: " + contract.Title,
             "Contract " + contract.ContractNo + " is fully approved. Mark it as signed once the signatures are in place.",
             contract.Id), cancellationToken);
+    }
+
+    /// <summary>
+    /// SharePoint hardening: writes the approval logs that could not be stored when the approval
+    /// was completed. Each instance on its own; one that still fails stays pending for the next
+    /// run. Returns how many logs were written.
+    /// </summary>
+    public async Task<int> WritePendingLogsAsync(CancellationToken cancellationToken = default)
+    {
+        var pendingIds = await _db.ApprovalInstances.AsNoTracking().Where(i => i.LogPending).Select(i => i.Id).ToListAsync(cancellationToken);
+        var written = 0;
+        foreach (var instanceId in pendingIds)
+        {
+            try
+            {
+                var instance = await _db.ApprovalInstances.FirstOrDefaultAsync(i => i.Id == instanceId, cancellationToken);
+                if (instance is null || !instance.LogPending)
+                {
+                    continue;
+                }
+                var contractId = instance.ContractId;
+                var contract = await _db.Contracts.FirstOrDefaultAsync(c => c.Id == contractId, cancellationToken);
+                if (contract is null)
+                {
+                    instance.LogPending = false;
+                    await _db.SaveChangesAsync(cancellationToken);
+                    continue;
+                }
+                var steps = await _db.ApprovalSteps.AsNoTracking().Where(s => s.InstanceId == instanceId).ToListAsync(cancellationToken);
+                var directory = await ApproverDirectory.LoadAsync(_db, cancellationToken);
+                var log = BuildApprovalLog(contract, instance, steps, directory);
+                await _documents.AddAsync(contract, "Approval log " + contract.ContractNo + ".txt", DocumentKind.ApprovalLog, Encoding.UTF8.GetBytes(log), null, cancellationToken);
+                instance.LogPending = false;
+                _audit.Record("approval.log-saved", "Approval log saved to documents (it could not be stored when the approval was completed).", contract.Id);
+                await _db.SaveChangesAsync(cancellationToken);
+                written++;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                // Still not possible: forget this attempt's rows and try again on the next run.
+                _db.DiscardChanges();
+            }
+        }
+        return written;
     }
 
     public static string BuildApprovalLog(Contract contract, ApprovalInstance instance, IEnumerable<ApprovalStep> steps, ApproverDirectory directory)

@@ -234,6 +234,46 @@ public class LinkService
 
 public sealed record DocumentContent(Stream Stream, string FileName, string ContentType);
 
+/// <summary>
+/// SharePoint hardening: tells the administrators about a storage problem with rows in the
+/// notification outbox (kind StorageProblem) and in-app notifications. Adds to the unit of work.
+/// </summary>
+public static class StorageAlerts
+{
+    public const string Event = "StorageProblem";
+
+    public static async Task NotifyAdminsAsync(IAppDbContext db, Contract? contract, string text, CancellationToken cancellationToken = default)
+    {
+        var users = await db.Users.AsNoTracking().Where(u => u.IsActive).ToListAsync(cancellationToken);
+        var now = DateTime.UtcNow;
+        foreach (var admin in users.Where(u => (u.Roles & AppRole.Admin) == AppRole.Admin))
+        {
+            db.OutboxMessages.Add(new OutboxMessage
+            {
+                Id = Guid.NewGuid(),
+                CreatedAt = now,
+                RecipientId = admin.Id,
+                RecipientEmail = admin.Email,
+                Kind = Event,
+                Subject = "Storage problem" + (contract is null ? "" : ": " + contract.ContractNo),
+                Body = text,
+                ContractId = contract?.Id
+            });
+            db.Notifications.Add(new InAppNotification
+            {
+                Id = Guid.NewGuid(),
+                UserId = admin.Id,
+                Event = Event,
+                Title = "Storage problem" + (contract is null ? "" : ": " + contract.ContractNo),
+                Body = text,
+                ContractId = contract?.Id,
+                Link = "/settings/storage",
+                CreatedAt = now
+            });
+        }
+    }
+}
+
 public class DocumentService
 {
     private readonly IAppDbContext _db;
@@ -374,7 +414,27 @@ public class DocumentService
         }
         // Access to a file follows access to its contract.
         var contract = await _access.GetReadableAsync(document.ContractId, false, cancellationToken);
-        var stream = await _store.OpenReadAsync(document.StoreKey, cancellationToken);
+        Stream stream;
+        try
+        {
+            stream = await _store.OpenReadAsync(document.StoreKey, cancellationToken);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException || ex is StorageFileMissingException)
+        {
+            // The row exists but the file is gone: record it (once per document version) so the
+            // administrators see it in the audit log and the reconciliation report, and answer 404 file-missing.
+            var text = "The file of " + document.Name + " (v" + document.Version + ") is missing from storage";
+            var contractKey = contract.Id;
+            var known = await _db.AuditEvents.AsNoTracking()
+                .AnyAsync(e => e.ContractId == contractKey && e.Action == "storage.file-missing" && e.Text == text, cancellationToken);
+            if (!known)
+            {
+                _audit.Record("storage.file-missing", text, contract.Id);
+                await StorageAlerts.NotifyAdminsAsync(_db, contract, text + ". Contract " + contract.ContractNo + ".", cancellationToken);
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+            throw new StorageFileMissingException(document.StoreKey);
+        }
         _audit.Record("document.opened", "Opened " + document.Name, contract.Id);
         await _db.SaveChangesAsync(cancellationToken);
         return new DocumentContent(stream, document.Name, DocumentWriter.ContentTypeFor(document.Name));
@@ -474,25 +534,12 @@ public class IntakeService
         };
     }
 
-    public static TemplateDto ToDto(ContractTemplate template)
-    {
-        return new TemplateDto
-        {
-            Id = template.Id,
-            Name = template.Name,
-            Description = template.Description ?? "",
-            TypeId = template.TypeId,
-            FileName = template.FileName,
-            Placeholders = (template.Placeholders ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList(),
-            IsActive = template.IsActive
-        };
-    }
+    public static TemplateDto ToDto(ContractTemplate template) => TemplateCatalog.ToDto(template);
 
+    /// <summary>Release 4: active templates in active categories, by category order then name (see TemplateCatalogService.ListAsync).</summary>
     public async Task<List<TemplateDto>> GetTemplatesAsync(CancellationToken cancellationToken = default)
     {
-        await _currentUser.GetProfileAsync(cancellationToken);
-        var templates = await _db.Templates.AsNoTracking().Where(t => t.IsActive).ToListAsync(cancellationToken);
-        return templates.OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Select(ToDto).ToList();
+        return await new TemplateCatalogService(_db, _currentUser, _audit).ListAsync(null, null, null, null, cancellationToken);
     }
 
     public async Task<FromTemplateResultDto> FromTemplateAsync(FromTemplateInput input, CancellationToken cancellationToken = default)

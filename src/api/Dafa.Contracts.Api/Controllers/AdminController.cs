@@ -149,7 +149,8 @@ public class AdminController : ApiControllerBase
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(30L * 1024 * 1024)]
     public async Task<ActionResult<TemplateDto>> UploadTemplate(
-        IFormFile? file, [FromForm] string? name, [FromForm] string? description, [FromForm] Guid? typeId, CancellationToken cancellationToken)
+        IFormFile? file, [FromForm] string? name, [FromForm] string? description, [FromForm] Guid? typeId,
+        [FromForm] Guid? categoryId, [FromForm] List<Guid>? typeIds, [FromForm] string? language, CancellationToken cancellationToken)
     {
         if (file is null || file.Length == 0)
         {
@@ -160,7 +161,16 @@ public class AdminController : ApiControllerBase
             throw new InputValidationException("file", "The file is larger than 25 MB.");
         }
         var bytes = await ReadAllAsync(file, cancellationToken);
-        var input = new TemplateInput { Name = name, Description = description, TypeId = typeId };
+        // Release 4: category, contract types (repeated form field typeIds) and language.
+        var input = new TemplateInput
+        {
+            Name = name,
+            Description = description,
+            TypeId = typeId,
+            CategoryId = categoryId,
+            TypeIds = typeIds is null || typeIds.Count == 0 ? null : typeIds,
+            Language = language
+        };
         return await _admin.CreateTemplateAsync(input, file.FileName, bytes, cancellationToken);
     }
 

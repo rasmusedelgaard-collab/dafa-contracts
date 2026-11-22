@@ -32,6 +32,16 @@ public class DocumentWriter
         }
         var chars = name.Select(ch => char.IsControl(ch) || "<>:\"|?*".IndexOf(ch) >= 0 ? '_' : ch).ToArray();
         name = new string(chars).Trim().TrimStart('.');
+        // SharePoint does not accept these: a leading ~ (temporary files), _vti_ anywhere, and the
+        // reserved device names.
+        name = name.TrimStart('~', '$', ' ');
+        name = name.Replace("_vti_", "_vti-", StringComparison.OrdinalIgnoreCase);
+        var stem = Path.GetFileNameWithoutExtension(name).TrimEnd('.', ' ').ToUpperInvariant();
+        if (stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL" || stem == ".LOCK" || stem == "DESKTOP"
+            || (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.Ordinal) || stem.StartsWith("LPT", StringComparison.Ordinal)) && char.IsDigit(stem[3])))
+        {
+            name = "file " + name;
+        }
         if (name.Length > 120)
         {
             var extension = Path.GetExtension(name);
@@ -61,13 +71,21 @@ public class DocumentWriter
         };
     }
 
+    /// <summary>
+    /// Release 4: the location carries the SharePoint mapping of the contract's legal entity (site)
+    /// and department (library) as the administrator linked them.
+    /// </summary>
     public async Task<DocumentLocation> GetLocationAsync(Contract contract, CancellationToken cancellationToken = default)
     {
-        var entityName = await _db.LegalEntities.AsNoTracking()
-            .Where(e => e.Id == contract.EntityId).Select(e => e.Name).FirstOrDefaultAsync(cancellationToken);
-        var departmentName = await _db.Departments.AsNoTracking()
-            .Where(d => d.Id == contract.DepartmentId).Select(d => d.Name).FirstOrDefaultAsync(cancellationToken);
-        return new DocumentLocation(contract.Id, contract.ContractNo, entityName ?? "", departmentName ?? "");
+        var entity = await _db.LegalEntities.AsNoTracking()
+            .FirstOrDefaultAsync(e => e.Id == contract.EntityId, cancellationToken);
+        var department = await _db.Departments.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == contract.DepartmentId, cancellationToken);
+        return new DocumentLocation(
+            contract.Id, contract.ContractNo, entity?.Name ?? "", department?.Name ?? "",
+            string.IsNullOrWhiteSpace(entity?.SharePointSiteUrl) ? null : entity!.SharePointSiteUrl,
+            string.IsNullOrWhiteSpace(entity?.SharePointSiteId) ? null : entity!.SharePointSiteId,
+            string.IsNullOrWhiteSpace(department?.LibraryName) ? null : department!.LibraryName);
     }
 
     public async Task<ContractDocument> AddAsync(
@@ -82,12 +100,19 @@ public class DocumentWriter
             .ToListAsync(cancellationToken);
         // Also count documents added in this unit of work that are not saved yet.
         versions.AddRange(_db.Documents.Local.Where(d => d.ContractId == contractId && d.Name == name).Select(d => d.Version));
-        // A same-name upload is always a new version; the unique index on (contract, name, version)
-        // and the store's unique keys make sure an existing file is never overwritten.
+        // A same-name upload is always a new version: the unique index on (contract, name, version)
+        // refuses a second row, and the store never overwrites (Local: a random part in the key and
+        // CreateNew; SharePoint: conflictBehavior=fail and a new name when the name is taken).
         var version = versions.Count == 0 ? 1 : versions.Max() + 1;
 
+        // The bytes are hashed before they leave, so the row always knows what was uploaded.
+        using var buffer = new MemoryStream();
+        await content.CopyToAsync(buffer, cancellationToken);
+        var bytes = buffer.ToArray();
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+
         var location = await GetLocationAsync(contract, cancellationToken);
-        var stored = await _store.SaveAsync(location, name, version, content, cancellationToken);
+        var stored = await _store.SaveAsync(location, name, version, new MemoryStream(bytes, false), cancellationToken);
 
         var document = new ContractDocument
         {
@@ -99,9 +124,24 @@ public class DocumentWriter
             Version = version,
             Size = stored.Size,
             UploadedById = uploadedById,
-            UploadedAt = _clock.UtcNow
+            UploadedAt = _clock.UtcNow,
+            SiteId = stored.SiteId,
+            DriveId = stored.DriveId,
+            ItemId = stored.ItemId,
+            RelativePath = stored.RelativePath,
+            ETag = stored.ETag,
+            CTag = stored.CTag,
+            ContentHash = hash
         };
         _db.Documents.Add(document);
+        // The contract's folder is stored once (when the contract row is tracked), so reading a
+        // contract never has to ask the store for it.
+        if (stored.Folder is not null && string.IsNullOrEmpty(contract.StoreFolderId))
+        {
+            contract.StoreDriveId = stored.Folder.DriveId;
+            contract.StoreFolderId = stored.Folder.ItemId;
+            contract.StoreFolderUrl = stored.Folder.WebUrl;
+        }
         return document;
     }
 

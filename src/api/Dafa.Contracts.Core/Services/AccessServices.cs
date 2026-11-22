@@ -33,7 +33,10 @@ public static class AccessProfileLoader
             Roles = user.Roles,
             IsGroupManagement = user.IsGroupManagement,
             DepartmentIds = new HashSet<Guid>(departmentIds),
-            ManagedEntityIds = new HashSet<Guid>(entityIds)
+            ManagedEntityIds = new HashSet<Guid>(entityIds),
+            HomeEntityId = user.HomeEntityId,
+            CanSendForSignature = user.CanSendForSignature,
+            SignatureEntityIds = new HashSet<Guid>(JsonDefaults.ReadList<Guid>(user.SignatureEntityIdsJson))
         };
     }
 }
@@ -188,7 +191,9 @@ public class AuditService
         "contract.updated", "contract.signed", "contract.expired", "contract.terminated",
         "approval.started", "approval.completed", "approval.rejected",
         "renewal.decided", "renewal.renewed", "renewal.automatic",
-        "document.uploaded", "comment.added", "contract.reassigned", "import.contract-updated"
+        "document.uploaded", "comment.added", "contract.reassigned", "import.contract-updated",
+        // Release 4
+        "signature.sent", "signature.completed", "signature.declined", "signature.cancelled", "signature.expired"
     };
 
     private readonly HashSet<Guid> _watchersNotified = new();

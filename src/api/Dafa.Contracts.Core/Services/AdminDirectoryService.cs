@@ -60,7 +60,12 @@ public class AdminDirectoryService
         Country = entity.Country ?? "",
         Currency = entity.Currency ?? "",
         IsActive = entity.IsActive,
-        ContractCount = count
+        ContractCount = count,
+        SharePointSiteUrl = entity.SharePointSiteUrl,
+        SharePointSiteId = entity.SharePointSiteId,
+        ManagementGroupId = entity.ManagementGroupId,
+        ManagementGroupName = entity.ManagementGroupName,
+        Link = OrgLinkRules.ToDto(entity)
     };
 
     private async Task ApplyEntityAsync(LegalEntity entity, LegalEntityInput input, CancellationToken cancellationToken)
@@ -76,6 +81,15 @@ public class AdminDirectoryService
         var entityId = entity.Id;
         if (name.Length > 0 && await _db.LegalEntities.AnyAsync(e => e.Id != entityId && e.Name == name, cancellationToken))
             ContractValidator.Add(errors, "name", "Another legal entity has this name.");
+        // Release 4: SharePoint site and Entra management group (set as given; null clears).
+        var siteUrl = OrgLinkRules.NormalizeSiteUrl(input?.SharePointSiteUrl, errors);
+        var groupId = OrgLinkRules.NormalizeGroupId(input?.ManagementGroupId, "managementGroupId", errors);
+        if (siteUrl is not null)
+        {
+            var others = await _db.LegalEntities.AsNoTracking().Where(e => e.Id != entityId && e.SharePointSiteUrl != null).Select(e => e.SharePointSiteUrl).ToListAsync(cancellationToken);
+            if (others.Any(other => string.Equals(other, siteUrl, StringComparison.OrdinalIgnoreCase)))
+                ContractValidator.Add(errors, "sharePointSiteUrl", "Another legal entity is linked to this site. Every legal entity has its own site.");
+        }
         if (errors.Count > 0)
         {
             throw new InputValidationException(errors);
@@ -84,6 +98,7 @@ public class AdminDirectoryService
         entity.Country = country;
         entity.Currency = currency;
         entity.IsActive = input!.IsActive ?? true;
+        OrgLinkRules.Apply(entity, siteUrl, groupId, OrgLinkRules.NormalizeName(input.ManagementGroupName));
     }
 
     public async Task<LegalEntityDto> CreateEntityAsync(LegalEntityInput input, CancellationToken cancellationToken = default)
@@ -213,7 +228,10 @@ public class AdminDirectoryService
             SyncedFields = !string.IsNullOrEmpty(u.ExternalId) ? SyncedFields.ToList() : new List<string>(),
             ExternalId = u.ExternalId,
             LastSignInAt = u.LastSignInAt,
-            ContractCount = contracts.Count(c => c.OwnerId == u.Id || c.DelegateId == u.Id || c.ResponsibleId == u.Id)
+            ContractCount = contracts.Count(c => c.OwnerId == u.Id || c.DelegateId == u.Id || c.ResponsibleId == u.Id),
+            EntityId = u.HomeEntityId,
+            CanSendForSignature = u.CanSendForSignature,
+            SignatureEntityIds = JsonDefaults.ReadList<Guid>(u.SignatureEntityIdsJson)
         }).ToList();
     }
 
@@ -246,6 +264,87 @@ public class AdminDirectoryService
             if (!await _db.LegalEntities.AnyAsync(e => e.Id == entityId, cancellationToken))
                 ContractValidator.Add(errors, "managedEntityIds", "Unknown legal entity.");
         }
+    }
+
+    /// <summary>
+    /// Release 4: validates the home entity and the signing permission of a user input and returns
+    /// what to store. homeEntity: (false, _) = unchanged; (true, id or null) = set.
+    /// </summary>
+    private async Task<(bool SetHome, Guid? HomeEntityId, List<Guid>? SignatureEntityIds)> ValidateRelease4Async(
+        AdminUserInput input, Guid? currentHomeEntityId, Dictionary<string, string[]> errors, CancellationToken cancellationToken)
+    {
+        var setHome = false;
+        Guid? home = null;
+        var element = input.EntityId;
+        if (element.ValueKind == System.Text.Json.JsonValueKind.Null)
+        {
+            setHome = true;
+        }
+        else if (element.ValueKind == System.Text.Json.JsonValueKind.String)
+        {
+            var text = element.GetString();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                setHome = true;
+            }
+            else if (!Guid.TryParse(text, out var parsed))
+            {
+                ContractValidator.Add(errors, "entityId", "Not a valid id.");
+            }
+            else
+            {
+                // The entity the user already has stays valid even when it was deactivated since.
+                var known = parsed == currentHomeEntityId
+                    ? await _db.LegalEntities.AnyAsync(e => e.Id == parsed, cancellationToken)
+                    : await _db.LegalEntities.AnyAsync(e => e.Id == parsed && e.IsActive, cancellationToken);
+                if (!known)
+                    ContractValidator.Add(errors, "entityId", "Choose an active legal entity.");
+                setHome = true;
+                home = parsed;
+            }
+        }
+        else if (element.ValueKind != System.Text.Json.JsonValueKind.Undefined)
+        {
+            ContractValidator.Add(errors, "entityId", "Not a valid id.");
+        }
+
+        List<Guid>? signatureEntityIds = null;
+        if (input.SignatureEntityIds is not null)
+        {
+            signatureEntityIds = input.SignatureEntityIds.Distinct().ToList();
+            foreach (var entityId in signatureEntityIds)
+            {
+                if (!await _db.LegalEntities.AnyAsync(e => e.Id == entityId, cancellationToken))
+                    ContractValidator.Add(errors, "signatureEntityIds", "Unknown legal entity.");
+            }
+        }
+        return (setHome, home, signatureEntityIds);
+    }
+
+    private static void ApplyRelease4(AppUser user, AdminUserInput input, (bool SetHome, Guid? HomeEntityId, List<Guid>? SignatureEntityIds) values)
+    {
+        if (values.SetHome)
+        {
+            user.HomeEntityId = values.HomeEntityId;
+        }
+        if (input.CanSendForSignature is not null)
+        {
+            user.CanSendForSignature = input.CanSendForSignature.Value;
+        }
+        if (values.SignatureEntityIds is not null)
+        {
+            user.SignatureEntityIdsJson = values.SignatureEntityIds.Count == 0 ? null : JsonDefaults.Write(values.SignatureEntityIds);
+        }
+    }
+
+    private static string SigningText(AppUser user)
+    {
+        if (!user.CanSendForSignature)
+        {
+            return "";
+        }
+        var limit = JsonDefaults.ReadList<Guid>(user.SignatureEntityIdsJson).Count;
+        return ", may send for signature (" + (limit == 0 ? "all legal entities" : limit + (limit == 1 ? " legal entity" : " legal entities")) + ")";
     }
 
     private async Task SetMembershipsAsync(Guid userId, AdminUserInput input, CancellationToken cancellationToken)
@@ -282,6 +381,7 @@ public class AdminDirectoryService
         if (!EmailPattern.IsMatch(email) || email.Length > 256) ContractValidator.Add(errors, "email", "Enter a valid e-mail address.");
         ParseRoles(input.Roles, errors, out var roles);
         await ValidateMembershipsAsync(input, errors, cancellationToken);
+        var release4 = await ValidateRelease4Async(input, null, errors, cancellationToken);
         if (errors.Count > 0)
         {
             throw new InputValidationException(errors);
@@ -303,9 +403,10 @@ public class AdminDirectoryService
             IsActive = input.IsActive ?? true,
             Source = "Manual"
         };
+        ApplyRelease4(user, input, release4);
         _db.Users.Add(user);
         await SetMembershipsAsync(user.Id, input, cancellationToken);
-        _audit.Record("settings.users", "Created user " + user.Name + " (" + string.Join(", ", roles.ToNames()) + ")");
+        _audit.Record("settings.users", "Created user " + user.Name + " (" + string.Join(", ", roles.ToNames()) + ")" + SigningText(user));
         await _db.SaveChangesAsync(cancellationToken);
         return await GetUserAsync(user.Id, cancellationToken);
     }
@@ -326,6 +427,7 @@ public class AdminDirectoryService
             ParseRoles(input.Roles, errors, out roles);
         }
         await ValidateMembershipsAsync(input, errors, cancellationToken);
+        var release4 = await ValidateRelease4Async(input, user.HomeEntityId, errors, cancellationToken);
         if (errors.Count > 0)
         {
             throw new InputValidationException(errors);
@@ -364,9 +466,14 @@ public class AdminDirectoryService
         user.Roles = roles;
         user.IsGroupManagement = input.IsGroupManagement ?? user.IsGroupManagement;
         user.IsActive = isActive;
+        var signingBefore = SigningText(user);
+        ApplyRelease4(user, input, release4);
         await SetMembershipsAsync(user.Id, input, cancellationToken);
         _audit.Record("settings.users", "Updated user " + user.Name + ": roles " + string.Join(", ", before) + " -> " + string.Join(", ", roles.ToNames())
-            + (user.IsActive ? "" : " (inactive)") + (user.IsGroupManagement ? ", group management" : ""));
+            + (user.IsActive ? "" : " (inactive)") + (user.IsGroupManagement ? ", group management" : "")
+            + (signingBefore != SigningText(user)
+                ? "; signing permission changed" + (user.CanSendForSignature ? SigningText(user) : ": may no longer send for signature")
+                : ""));
         await _db.SaveChangesAsync(cancellationToken);
         return await GetUserAsync(user.Id, cancellationToken);
     }

@@ -57,6 +57,8 @@ public class ApiFactory : WebApplicationFactory<Program>
             ["Auth__Mode"] = "Dev",
             ["Auth__Dev__AccessCode"] = null,
             ["Auth__BootstrapAdmins"] = null,
+            ["Signing__Webhook__Secret"] = null,
+            ["Signing__AllowSimulated"] = null,
             ["AzureAd__Instance"] = null,
             ["AzureAd__TenantId"] = null,
             ["AzureAd__ClientId"] = null,

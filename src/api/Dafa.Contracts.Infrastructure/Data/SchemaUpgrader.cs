@@ -32,6 +32,7 @@ public sealed class SchemaUpgradeResult
 ///   an existence check, so a step can run any number of times; nothing is ever dropped or rewritten.
 /// - Column types, nullability, keys and indexes are read from the EF Core relational model for the
 ///   current provider, so the DDL is exactly what EnsureCreated would have produced.
+/// - Step 1 = phase 2 baseline, step 2 = release 3, step 3 = release 4, step 4 = SharePoint hardening.
 /// - A failed table or column statement stops startup (better than running on a half schema); a
 ///   failed index (for example duplicates already in the data) is logged as a warning.
 /// </summary>
@@ -117,13 +118,67 @@ public sealed class SchemaUpgrader
                 "Contracts", "AuditEvents", "DocumentTexts", "CustomFieldDefinitions", "CustomFieldValues",
                 "ContractTypeFieldRules", "ContractTags", "ImportRuns", "NotificationSettings", "ReminderSchedules",
                 "SavedViews", "ContractWatchers", "ContractComments", "InAppNotifications", "DataRoomExports"
-            })
+            }),
+        new Step(3,
+            "Release 4: template categories, branding, e-signature requests and signatories, SharePoint and Entra mapping on legal entities and departments, signing permission and home entity on users, category, types and language on templates, theme preference",
+            new[] { "TemplateCategories", "BrandingAssets", "SignatureRequests", "Signatories" },
+            new[]
+            {
+                new ColumnRef("LegalEntities", "SharePointSiteUrl"),
+                new ColumnRef("LegalEntities", "SharePointSiteId"),
+                new ColumnRef("LegalEntities", "ManagementGroupId"),
+                new ColumnRef("LegalEntities", "ManagementGroupName"),
+                new ColumnRef("LegalEntities", "LinkStatus"),
+                new ColumnRef("LegalEntities", "LinkCheckedAt"),
+                new ColumnRef("LegalEntities", "LinkMessage"),
+                new ColumnRef("Departments", "LibraryName"),
+                new ColumnRef("Departments", "GroupId"),
+                new ColumnRef("Departments", "GroupName"),
+                new ColumnRef("Departments", "LinkStatus"),
+                new ColumnRef("Departments", "LinkCheckedAt"),
+                new ColumnRef("Departments", "LinkMessage"),
+                // NOT NULL: existing users get 0 (nobody may send for signature until an administrator says so).
+                new ColumnRef("Users", "CanSendForSignature"),
+                new ColumnRef("Users", "SignatureEntityIdsJson"),
+                new ColumnRef("Users", "HomeEntityId"),
+                new ColumnRef("Templates", "CategoryId"),
+                new ColumnRef("Templates", "ContractTypeIdsJson"),
+                new ColumnRef("Templates", "Language"),
+                // NOT NULL: existing preference rows get 'light'.
+                new ColumnRef("UserPreferences", "Theme")
+            },
+            new[] { "Templates", "SignatureRequests", "Signatories" }),
+        new Step(4,
+            "SharePoint hardening: store address and content hash on documents, the contract folder on contracts, deferred approval log, retry bookkeeping for search text, reconciliation reports",
+            new[] { "StorageReconciliationReports" },
+            new[]
+            {
+                new ColumnRef("Documents", "SiteId"),
+                new ColumnRef("Documents", "DriveId"),
+                new ColumnRef("Documents", "ItemId"),
+                new ColumnRef("Documents", "RelativePath"),
+                new ColumnRef("Documents", "ETag"),
+                new ColumnRef("Documents", "CTag"),
+                new ColumnRef("Documents", "ContentHash"),
+                new ColumnRef("Contracts", "StoreDriveId"),
+                new ColumnRef("Contracts", "StoreFolderId"),
+                new ColumnRef("Contracts", "StoreFolderUrl"),
+                // NOT NULL, default 0: no approval log is pending on existing approvals.
+                new ColumnRef("ApprovalInstances", "LogPending"),
+                // NOT NULL, default 0: existing text rows have had no retries.
+                new ColumnRef("DocumentTexts", "Attempts"),
+                new ColumnRef("DocumentTexts", "NextAttemptAt")
+            },
+            new[] { "StorageReconciliationReports" })
     };
 
     /// <summary>Defaults for NOT NULL columns added to tables that already have rows, where 0/''/empty is wrong.</summary>
     private static readonly Dictionary<string, string> DefaultOverrides = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["LegalEntities.IsActive"] = "1"
+        ["LegalEntities.IsActive"] = "1",
+        // Release 4. Stated explicitly although 0 is also the generic default: the permission must be off.
+        ["Users.CanSendForSignature"] = "0",
+        ["UserPreferences.Theme"] = "'light'"
     };
 
     private bool IsSqlServer => (_db.Database.ProviderName ?? "").IndexOf("SqlServer", StringComparison.OrdinalIgnoreCase) >= 0;

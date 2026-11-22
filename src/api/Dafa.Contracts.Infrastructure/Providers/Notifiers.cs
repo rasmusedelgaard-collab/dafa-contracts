@@ -115,7 +115,7 @@ public sealed class GraphMailNotifier : OutboxNotifier
                 ["saveToSentItems"] = false
             };
 
-            var client = _httpClientFactory.CreateClient("graph");
+            var client = _httpClientFactory.CreateClient("graph-mail");
             var token = await _tokens.GetTokenAsync(GraphScope, cancellationToken);
             using var request = new HttpRequestMessage(
                 HttpMethod.Post, "https://graph.microsoft.com/v1.0/users/" + Uri.EscapeDataString(sender) + "/sendMail");

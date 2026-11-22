@@ -61,7 +61,66 @@ public class DatabaseInitializer
             await SeedDemoUsersAsync(cancellationToken);
             await SeedDemoContractsAsync(cancellationToken);
             await SeedDemoTagsAsync(cancellationToken);
+            await SeedRelease4DemoAsync(cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// Release 4 demo data, once (when there are no template categories yet; also on a test database
+    /// that was seeded by an earlier release): template categories for the seeded templates, the
+    /// Simulated e-signature provider, and the signing permission for two demo users (the Group CFO
+    /// for every legal entity, the Head of Purchasing for two). Administrators get nothing implicitly.
+    /// </summary>
+    private async Task SeedRelease4DemoAsync(CancellationToken cancellationToken)
+    {
+        if (await _db.TemplateCategories.AnyAsync(cancellationToken))
+        {
+            return;
+        }
+        var supply = new TemplateCategory { Id = SeedIds.For("template-category:supply"), Name = "Supply and purchasing", Description = "Agreements with suppliers of materials and services.", SortOrder = 1, IsActive = true };
+        var confidentiality = new TemplateCategory { Id = SeedIds.For("template-category:nda"), Name = "Confidentiality", Description = "Non-disclosure agreements.", SortOrder = 2, IsActive = true };
+        var services = new TemplateCategory { Id = SeedIds.For("template-category:services"), Name = "IT and services", Description = "Software, hosting and service agreements.", SortOrder = 3, IsActive = true };
+        _db.TemplateCategories.AddRange(supply, confidentiality, services);
+        var templates = await _db.Templates.ToListAsync(cancellationToken);
+        foreach (var template in templates.Where(t => t.CategoryId == null))
+        {
+            if (template.Name.Contains("NDA", StringComparison.OrdinalIgnoreCase))
+            {
+                template.CategoryId = confidentiality.Id;
+                template.Language = "en";
+            }
+            else if (template.Name.Contains("Supply", StringComparison.OrdinalIgnoreCase))
+            {
+                template.CategoryId = supply.Id;
+                template.Language = "en";
+            }
+        }
+
+        if (!await _db.AppSettings.AnyAsync(s => s.Key == ESignSettingsStore.Key, cancellationToken))
+        {
+            _db.AppSettings.Add(new AppSetting
+            {
+                Key = ESignSettingsStore.Key,
+                Value = JsonDefaults.Write(new Dafa.Contracts.Core.Dtos.ESignSettingsDto { Provider = SignatureProviderNames.Simulated }),
+                UpdatedAt = _clock.UtcNow
+            });
+        }
+
+        var cfoId = SeedIds.User("lars");
+        var cfo = await _db.Users.FirstOrDefaultAsync(u => u.Id == cfoId, cancellationToken);
+        if (cfo is not null)
+        {
+            cfo.CanSendForSignature = true;
+        }
+        var buyerId = SeedIds.User("jonas");
+        var buyer = await _db.Users.FirstOrDefaultAsync(u => u.Id == buyerId, cancellationToken);
+        if (buyer is not null)
+        {
+            buyer.CanSendForSignature = true;
+            buyer.SignatureEntityIdsJson = JsonDefaults.Write(new List<Guid> { SeedIds.Entity("DAFA A/S"), SeedIds.Entity("DAFA Building Solutions A/S") });
+            buyer.HomeEntityId = SeedIds.Entity("DAFA A/S");
+        }
+        await _db.SaveChangesAsync(cancellationToken);
     }
 
     /// <summary>Release 3: a few demo tags on demo contracts (only when there are no tags yet).</summary>

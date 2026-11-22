@@ -145,7 +145,8 @@ public class ApprovedTermsLockTests
         var contract = world.AddContract();
         var input = ReviewTestHelpers.InputFor(world, contract.Id);
         input.AnnualValue = 750_000m;
-        input.CounterpartyName = "New Counterparty A/S";
+        // Release 4: the counterparty changes by choosing another master record, not by typing a name.
+        input.SupplierId = world.AddSupplier("New Counterparty A/S");
 
         await world.As(world.Admin).Commands.UpdateAsync(contract.Id, input);
 

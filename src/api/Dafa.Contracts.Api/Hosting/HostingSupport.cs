@@ -39,6 +39,22 @@ public sealed class ApiExceptionMiddleware
             };
             await WriteAsync(context, problem);
         }
+        catch (StorageUnavailableException ex)
+        {
+            // SharePoint hardening: "busy", never a generic 500. The technical reason goes to the log only.
+            _logger.LogWarning("Storage unavailable for {Method} {Path}: {Detail}", context.Request.Method, context.Request.Path, ex.TechnicalDetail);
+            if (ex.RetryAfterSeconds is not null && !context.Response.HasStarted)
+            {
+                context.Response.Headers["Retry-After"] = ex.RetryAfterSeconds.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+            await WriteAsync(context, new ProblemDetails
+            {
+                Status = ex.StatusCode,
+                Title = ex.Title,
+                Type = ex.ProblemType,
+                Detail = ex.Message
+            }, keepHeaders: true);
+        }
         catch (AppException ex)
         {
             var problem = new ProblemDetails
@@ -50,6 +66,13 @@ public sealed class ApiExceptionMiddleware
             if (ex.ProblemType is not null)
             {
                 problem.Type = ex.ProblemType;
+            }
+            if (ex.Extensions is not null)
+            {
+                foreach (var pair in ex.Extensions)
+                {
+                    problem.Extensions[pair.Key] = pair.Value;
+                }
             }
             await WriteAsync(context, problem);
         }
@@ -68,7 +91,13 @@ public sealed class ApiExceptionMiddleware
         catch (FileNotFoundException ex)
         {
             _logger.LogWarning(ex, "A stored file is missing");
-            await WriteAsync(context, new ProblemDetails { Status = 404, Title = "Not found", Detail = "The file is missing from the document store." });
+            await WriteAsync(context, new ProblemDetails
+            {
+                Status = 404,
+                Title = "File missing",
+                Type = StorageProblemTypes.FileMissing,
+                Detail = StorageFileMissingException.UserMessage
+            });
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {
@@ -87,13 +116,26 @@ public sealed class ApiExceptionMiddleware
         }
     }
 
-    public static async Task WriteAsync(HttpContext context, ProblemDetails problem)
+    public static async Task WriteAsync(HttpContext context, ProblemDetails problem, bool keepHeaders = false)
     {
         if (context.Response.HasStarted)
         {
             return;
         }
-        context.Response.Clear();
+        if (keepHeaders)
+        {
+            // Keep headers set for this answer (Retry-After); Clear() would remove them.
+            var retryAfter = context.Response.Headers["Retry-After"].ToString();
+            context.Response.Clear();
+            if (retryAfter.Length > 0)
+            {
+                context.Response.Headers["Retry-After"] = retryAfter;
+            }
+        }
+        else
+        {
+            context.Response.Clear();
+        }
         context.Response.StatusCode = problem.Status ?? 500;
         await context.Response.WriteAsJsonAsync(problem, problem.GetType(), options: null, contentType: "application/problem+json");
     }
@@ -223,9 +265,29 @@ public sealed class RequestedWithMiddleware
 
     public static bool IsExempt(string method) => HttpMethods.IsGet(method) || HttpMethods.IsHead(method);
 
+    /// <summary>
+    /// Release 4: the ONE route that cannot send the header, because the caller is an e-signature
+    /// provider and not the browser: POST /api/esign/webhooks/{provider}. It carries no session and
+    /// must prove a shared secret instead (SignatureWebhookController). Nothing else is exempt.
+    /// </summary>
+    public static bool IsWebhook(HttpRequest request)
+    {
+        if (!HttpMethods.IsPost(request.Method))
+        {
+            return false;
+        }
+        if (!request.Path.StartsWithSegments("/api/esign/webhooks", StringComparison.OrdinalIgnoreCase, out var rest))
+        {
+            return false;
+        }
+        // Exactly one more segment: the provider name.
+        var provider = rest.Value?.Trim('/') ?? "";
+        return provider.Length > 0 && provider.IndexOf('/') < 0;
+    }
+
     public async Task InvokeAsync(HttpContext context)
     {
-        if (context.Request.Path.StartsWithSegments("/api") && !IsExempt(context.Request.Method))
+        if (context.Request.Path.StartsWithSegments("/api") && !IsExempt(context.Request.Method) && !IsWebhook(context.Request))
         {
             var value = context.Request.Headers[HeaderName].ToString();
             if (!string.Equals(value, HeaderValue, StringComparison.Ordinal))

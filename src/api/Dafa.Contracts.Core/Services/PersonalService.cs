@@ -15,13 +15,17 @@ public class PersonalService
     private readonly ICurrentUser _currentUser;
     private readonly IClock _clock;
     private readonly AuditService _audit;
+    private readonly RuntimeModes _modes;
 
-    public PersonalService(IAppDbContext db, ICurrentUser currentUser, IClock clock, AuditService audit)
+    public static readonly string[] Themes = { "light", "dark", "system" };
+
+    public PersonalService(IAppDbContext db, ICurrentUser currentUser, IClock clock, AuditService audit, RuntimeModes? modes = null)
     {
         _db = db;
         _currentUser = currentUser;
         _clock = clock;
         _audit = audit;
+        _modes = modes ?? new RuntimeModes();
     }
 
     /// <summary>Admin, group management or entity management may build data room exports.</summary>
@@ -60,9 +64,24 @@ public class PersonalService
             FieldRules = await customFields.GetFieldRulesAsync(cancellationToken),
             Tags = tags.OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Select(t => new TagRefDto { Id = t.Id, Name = t.Name, Color = t.Color }).ToList(),
             Rates = rates,
-            CanExportDataRoom = CanExportDataRoom(profile)
+            CanExportDataRoom = CanExportDataRoom(profile),
+            // Release 4
+            Branding = await BrandingService.LoadAsync(_db, cancellationToken),
+            StorageMode = _modes.IsSharePoint ? "SharePoint" : "Local",
+            ESign = await LoadESignConfigAsync(cancellationToken),
+            CanCreateCounterparty = AppSettingsStore.MayCreateCounterparty(settings, profile),
+            Theme = NormalizeTheme(preference?.Theme)
         };
     }
+
+    private async Task<ESignConfigDto> LoadESignConfigAsync(CancellationToken cancellationToken)
+    {
+        var eSign = await ESignSettingsStore.LoadAsync(_db, cancellationToken);
+        return new ESignConfigDto { Provider = eSign.Provider, Enabled = eSign.Provider != SignatureProviderNames.None };
+    }
+
+    /// <summary>Release 4: light (default), dark or system.</summary>
+    public static string NormalizeTheme(string? stored) => Themes.Contains(stored) ? stored! : "light";
 
     private async Task<UserPreferencesDto> ToDtoAsync(UserPreference? preference, CancellationToken cancellationToken)
     {
@@ -74,7 +93,8 @@ public class PersonalService
             Digest = preference?.Digest ?? digestDefault,
             DefaultEntityId = preference?.DefaultEntityId,
             LandingPage = preference?.LandingPage,
-            AutoWatch = preference?.AutoWatch ?? false
+            AutoWatch = preference?.AutoWatch ?? false,
+            Theme = NormalizeTheme(preference?.Theme)
         };
         foreach (var info in NotificationCatalog.All)
         {
@@ -112,6 +132,9 @@ public class PersonalService
         if (!DigestValues.Contains(input.Digest)) ContractValidator.Add(errors, "digest", "Use Off, Daily or Weekly.");
         if (input.LandingPage is not null && !AppSettingsStore.LandingPages.Contains(input.LandingPage))
             ContractValidator.Add(errors, "landingPage", "Unknown landing page.");
+        // Release 4: omitted = unchanged (older clients do not send it).
+        if (!string.IsNullOrEmpty(input.Theme) && !Themes.Contains(input.Theme))
+            ContractValidator.Add(errors, "theme", "Use light, dark or system.");
         if (input.DefaultEntityId is not null)
         {
             var entityId = input.DefaultEntityId.Value;
@@ -156,6 +179,10 @@ public class PersonalService
         preference.LandingPage = input.LandingPage;
         preference.DefaultEntityId = input.DefaultEntityId;
         preference.AutoWatch = input.AutoWatch;
+        if (!string.IsNullOrEmpty(input.Theme))
+        {
+            preference.Theme = input.Theme;
+        }
         if (input.Events is not null)
         {
             preference.EventsJson = JsonDefaults.Write(switches);

@@ -14,6 +14,32 @@ public static class ContractFilterParser
 {
     private static readonly string[] ListKeys = { "id", "entityId", "departmentId", "typeId", "status", "counterpartyId", "ownerId", "valueBand", "tagId", "columns" };
 
+    /// <summary>Release 4: the date columns that have their own &lt;name&gt;From / &lt;name&gt;To parameters.</summary>
+    public static readonly string[] RangeDateFields = { "notice", "end", "start", "signed", "created" };
+
+    /// <summary>
+    /// Release 4: the ids of a repeatable id parameter (for example the entity scope entityId) from a
+    /// query string. Empty values are ignored; a malformed id is 400 on the parameter.
+    /// </summary>
+    public static List<Guid> IdsFromQuery(IEnumerable<KeyValuePair<string, string[]>> query, string key)
+    {
+        var values = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in query)
+        {
+            if (!string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            if (!values.TryGetValue(key, out var list))
+            {
+                list = new List<string>();
+                values[key] = list;
+            }
+            list.AddRange(pair.Value.Where(v => v is not null));
+        }
+        return Ids(values, key).Distinct().ToList();
+    }
+
     public static ContractFilter FromQuery(IEnumerable<KeyValuePair<string, string[]>> query)
     {
         var values = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
@@ -52,7 +78,22 @@ public static class ContractFilterParser
             {
                 foreach (var custom in property.Value.EnumerateObject())
                 {
-                    values["cf." + custom.Name] = new List<string> { Scalar(custom.Value) ?? "" };
+                    // Release 4: null or "" = no filter; an array = any of.
+                    var customValues = new List<string>();
+                    if (custom.Value.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var item in custom.Value.EnumerateArray())
+                        {
+                            var itemText = Scalar(item);
+                            if (itemText is not null) customValues.Add(itemText);
+                        }
+                    }
+                    else
+                    {
+                        var customText = Scalar(custom.Value);
+                        if (customText is not null) customValues.Add(customText);
+                    }
+                    values["cf." + custom.Name] = customValues;
                 }
                 continue;
             }
@@ -119,6 +160,14 @@ public static class ContractFilterParser
         if (text is null) return null;
         if (int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)) return value;
         throw new InputValidationException(key, "Use a whole number.");
+    }
+
+    private static decimal? Number(Dictionary<string, List<string>> values, string key)
+    {
+        var text = One(values, key);
+        if (text is null) return null;
+        if (decimal.TryParse(text.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var value)) return value;
+        throw new InputValidationException(key, "Use a number.");
     }
 
     private static DateOnly? Date(Dictionary<string, List<string>> values, string key)
@@ -197,11 +246,49 @@ public static class ContractFilterParser
         {
             if (pair.Key.StartsWith("cf.", StringComparison.OrdinalIgnoreCase) && pair.Key.Length > 3)
             {
-                var value = pair.Value.LastOrDefault();
-                if (value is not null)
+                // Release 4: an empty value is "no filter"; several values are "any of".
+                var given = pair.Value.Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v.Trim()).Distinct().ToList();
+                if (given.Count == 0)
                 {
-                    filter.Custom[pair.Key.Substring(3)] = value;
+                    continue;
                 }
+                var key = pair.Key.Substring(3);
+                if (given.Count == 1 || key.EndsWith(".min", StringComparison.OrdinalIgnoreCase) || key.EndsWith(".max", StringComparison.OrdinalIgnoreCase))
+                {
+                    filter.Custom[key] = given[given.Count - 1];
+                }
+                else
+                {
+                    filter.CustomAny[key] = given;
+                }
+            }
+        }
+
+        // Release 4 (CONTRACT_V4 section 2): register header filters.
+        filter.Title = One(values, "title");
+        filter.ContractNo = One(values, "contractNo");
+        filter.CounterpartyName = One(values, "counterpartyName");
+        filter.DelegateIds = Ids(values, "delegateId");
+        filter.ResponsibleIds = Ids(values, "responsibleId");
+        if (values.TryGetValue("currency", out var currencies))
+        {
+            filter.Currencies = currencies
+                .SelectMany(c => c.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .Select(c => c.ToUpperInvariant())
+                .Distinct()
+                .ToList();
+        }
+        filter.AnnualValueMin = Number(values, "annualValueMin");
+        filter.AnnualValueMax = Number(values, "annualValueMax");
+        filter.TotalValueMin = Number(values, "totalValueMin");
+        filter.TotalValueMax = Number(values, "totalValueMax");
+        foreach (var field in RangeDateFields)
+        {
+            var rangeFrom = Date(values, field + "From");
+            var rangeTo = Date(values, field + "To");
+            if (rangeFrom is not null || rangeTo is not null)
+            {
+                filter.DateRanges[field] = new DateRange { From = rangeFrom, To = rangeTo };
             }
         }
         // The release 1 single-value parameters keep working: they are covered by the lists above.

@@ -68,6 +68,34 @@ public class ContractFilter
     public int? PageSize { get; set; }
     /// <summary>Export only: register column keys or cf.&lt;key&gt;.</summary>
     public List<string> Columns { get; set; } = new();
+
+    // ----- Release 4 (CONTRACT_V4 section 2): register header filters -----
+    public string? Title { get; set; }
+    public string? ContractNo { get; set; }
+    public string? CounterpartyName { get; set; }
+    public List<Guid> DelegateIds { get; set; } = new();
+    public List<Guid> ResponsibleIds { get; set; } = new();
+    public List<string> Currencies { get; set; } = new();
+    /// <summary>Annual value in DKK, inclusive.</summary>
+    public decimal? AnnualValueMin { get; set; }
+    public decimal? AnnualValueMax { get; set; }
+    /// <summary>Total value in DKK, inclusive.</summary>
+    public decimal? TotalValueMin { get; set; }
+    public decimal? TotalValueMax { get; set; }
+    /// <summary>Inclusive ranges per date column: key = notice, end, start, signed, created.</summary>
+    public Dictionary<string, DateRange> DateRanges { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// cf.&lt;key&gt; given several times (Choice, MultiChoice, Person: any of). Key without "cf.".
+    /// A key present here wins over the same key in <see cref="Custom"/>.
+    /// </summary>
+    public Dictionary<string, List<string>> CustomAny { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>An inclusive date range; either bound may be missing.</summary>
+public sealed class DateRange
+{
+    public DateOnly? From { get; set; }
+    public DateOnly? To { get; set; }
 }
 
 // ---------- overview analytics ----------
@@ -249,6 +277,14 @@ public class FullSearchQuery
     public DateOnly? UploadedTo { get; set; }
     public int? Page { get; set; }
     public int? PageSize { get; set; }
+    /// <summary>
+    /// Release 4: the entity scope (repeated entityId). Filled by the controller from the query
+    /// string; when empty, <see cref="EntityId"/> is used.
+    /// </summary>
+    public List<Guid> EntityIds { get; set; } = new();
+
+    public List<Guid> ScopeEntityIds() =>
+        EntityIds.Count > 0 ? EntityIds : (EntityId is null ? new List<Guid>() : new List<Guid> { EntityId.Value });
 }
 
 // ---------- person and counterparty pages ----------
@@ -600,6 +636,13 @@ public class LegalEntityDto
     public string Currency { get; set; } = "";
     public bool IsActive { get; set; }
     public int ContractCount { get; set; }
+    // Release 4: SharePoint site and Entra management group.
+    public string? SharePointSiteUrl { get; set; }
+    /// <summary>Read-only: resolved by the link test.</summary>
+    public string? SharePointSiteId { get; set; }
+    public string? ManagementGroupId { get; set; }
+    public string? ManagementGroupName { get; set; }
+    public LinkStatusDto Link { get; set; } = new();
 }
 
 public class LegalEntityInput
@@ -608,6 +651,11 @@ public class LegalEntityInput
     public string? Country { get; set; }
     public string? Currency { get; set; }
     public bool? IsActive { get; set; }
+    // Release 4. Both are set as given (null clears); changing either resets the link to NotLinked.
+    public string? SharePointSiteUrl { get; set; }
+    public string? ManagementGroupId { get; set; }
+    /// <summary>Optional display name; in Entra mode the link test replaces it with the directory's name.</summary>
+    public string? ManagementGroupName { get; set; }
 }
 
 public class CurrencyDto
@@ -658,6 +706,10 @@ public class AdminUserDto
     public string? ExternalId { get; set; }
     public DateTime? LastSignInAt { get; set; }
     public int ContractCount { get; set; }
+    // Release 4
+    public Guid? EntityId { get; set; }
+    public bool CanSendForSignature { get; set; }
+    public List<Guid> SignatureEntityIds { get; set; } = new();
 }
 
 public class AdminUserInput
@@ -670,6 +722,17 @@ public class AdminUserInput
     public List<Guid>? ManagedEntityIds { get; set; }
     public bool? IsGroupManagement { get; set; }
     public bool? IsActive { get; set; }
+    // Release 4. EntityId is a JSON element so that "omitted" (Undefined: unchanged) and null
+    // (cleared) differ; a string is the id of an active legal entity.
+    public JsonElement EntityId { get; set; }
+
+    /// <summary>For callers in code: sets the home entity (null clears it).</summary>
+    public void SetEntity(Guid? entityId)
+    {
+        EntityId = JsonSerializer.SerializeToElement(entityId);
+    }
+    public bool? CanSendForSignature { get; set; }
+    public List<Guid>? SignatureEntityIds { get; set; }
 }
 
 public class AccessReasonDto
@@ -845,13 +908,16 @@ public class FeatureTogglesDto
 public class AppSettingsDto
 {
     public string AppName { get; set; } = "DAFA Contracts";
-    public string DateFormat { get; set; } = "d MMM yyyy";
-    public string NumberFormat { get; set; } = "en-GB";
+    // Release 4 (CONTRACT_V4 section 4): Danish formats for new installations; stored settings are kept.
+    public string DateFormat { get; set; } = "dd-MM-yyyy";
+    public string NumberFormat { get; set; } = "da-DK";
     public Dictionary<string, string> LandingPageByRole { get; set; } = new();
     public FeatureTogglesDto Features { get; set; } = new();
     public int SessionTimeoutMinutes { get; set; } = 720;
     public List<string> DataQualityFields { get; set; } = new();
     public decimal DdThresholdDkk { get; set; } = 5_000_000m;
+    /// <summary>Release 4: AdminOnly (default), ContractOwners or AllUsers: who may use POST counterparties.</summary>
+    public string? CounterpartyCreation { get; set; }
 }
 
 public class AppConfigDto
@@ -870,6 +936,15 @@ public class AppConfigDto
     public List<TagRefDto> Tags { get; set; } = new();
     public Dictionary<string, decimal> Rates { get; set; } = new();
     public bool CanExportDataRoom { get; set; }
+    // Release 4
+    public BrandingDto Branding { get; set; } = new();
+    /// <summary>Local or SharePoint.</summary>
+    public string StorageMode { get; set; } = "Local";
+    [JsonPropertyName("eSign")]
+    public ESignConfigDto ESign { get; set; } = new();
+    public bool CanCreateCounterparty { get; set; }
+    /// <summary>The caller's theme preference: light (default), dark or system.</summary>
+    public string Theme { get; set; } = "light";
 }
 
 // ---------- saved views ----------
@@ -1030,4 +1105,6 @@ public class UserPreferencesDto
     public Guid? DefaultEntityId { get; set; }
     public string? LandingPage { get; set; }
     public bool AutoWatch { get; set; }
+    /// <summary>Release 4: light (default), dark or system. Omitted on PUT = unchanged.</summary>
+    public string? Theme { get; set; }
 }

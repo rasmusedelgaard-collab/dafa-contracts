@@ -142,7 +142,7 @@ public class SearchService
     }
 
     private async Task<List<ContractMatch>> MatchContractsAsync(
-        List<string> terms, Guid? personId, Guid? entityId, Guid? departmentId, Guid? typeId, ReferenceData reference, CancellationToken cancellationToken)
+        List<string> terms, Guid? personId, List<Guid> entityIds, Guid? departmentId, Guid? typeId, ReferenceData reference, CancellationToken cancellationToken)
     {
         var query = await VisibleAsync(cancellationToken);
         if (personId is not null)
@@ -150,7 +150,7 @@ public class SearchService
             var person = personId.Value;
             query = query.Where(c => c.OwnerId == person || c.DelegateId == person || c.ResponsibleId == person);
         }
-        if (entityId is not null) { var id = entityId.Value; query = query.Where(c => c.EntityId == id); }
+        if (entityIds.Count > 0) { var scope = entityIds.Distinct().ToList(); query = query.Where(c => scope.Contains(c.EntityId)); }
         if (departmentId is not null) { var id = departmentId.Value; query = query.Where(c => c.DepartmentId == id); }
         if (typeId is not null) { var id = typeId.Value; query = query.Where(c => c.TypeId == id); }
         var contracts = await query.ToListAsync(cancellationToken);
@@ -244,7 +244,8 @@ public class SearchService
     private async Task<List<DocumentRow>> MatchDocumentsAsync(FullSearchQuery query, List<string> terms, CancellationToken cancellationToken)
     {
         var visible = await VisibleAsync(cancellationToken);
-        if (query.EntityId is not null) { var id = query.EntityId.Value; visible = visible.Where(c => c.EntityId == id); }
+        var scopeIds = query.ScopeEntityIds().Distinct().ToList();
+        if (scopeIds.Count > 0) { visible = visible.Where(c => scopeIds.Contains(c.EntityId)); }
         if (query.DepartmentId is not null) { var id = query.DepartmentId.Value; visible = visible.Where(c => c.DepartmentId == id); }
         if (query.TypeId is not null) { var id = query.TypeId.Value; visible = visible.Where(c => c.TypeId == id); }
         var visibleIds = visible.Select(c => c.Id);
@@ -402,7 +403,7 @@ public class SearchService
         var byId = visibleContracts.ToDictionary(c => c.Id);
 
         // Contracts
-        var contractMatches = await MatchContractsAsync(terms, query.PersonId, query.EntityId, query.DepartmentId, query.TypeId, reference, cancellationToken);
+        var contractMatches = await MatchContractsAsync(terms, query.PersonId, query.ScopeEntityIds(), query.DepartmentId, query.TypeId, reference, cancellationToken);
         result.Contracts.Total = contractMatches.Count;
         if (Wants("contracts"))
         {
@@ -477,10 +478,13 @@ public class SearchService
     }
 
     /// <summary>GET search?q= (Ctrl+K): up to 4 contracts, 2 documents, 2 people, then suppliers; 8 at most.</summary>
-    public async Task<List<SearchResultDto>> PaletteAsync(string? q, CancellationToken cancellationToken = default)
+    public Task<List<SearchResultDto>> PaletteAsync(string? q, CancellationToken cancellationToken = default) => PaletteAsync(q, null, cancellationToken);
+
+    /// <summary>Release 4: entityIds = the entity scope, for contract and document hits (people and counterparties are not scoped).</summary>
+    public async Task<List<SearchResultDto>> PaletteAsync(string? q, IReadOnlyCollection<Guid>? entityIds, CancellationToken cancellationToken = default)
     {
         var results = new List<SearchResultDto>();
-        var full = await FullSearchAsync(new FullSearchQuery { Q = q, PageSize = 8 }, cancellationToken);
+        var full = await FullSearchAsync(new FullSearchQuery { Q = q, PageSize = 8, EntityIds = entityIds is null ? new List<Guid>() : entityIds.ToList() }, cancellationToken);
         foreach (var hit in full.Contracts.Items.Take(4))
         {
             results.Add(new SearchResultDto { Kind = "Contract", Id = hit.Item.Id, Title = hit.Item.Title, Subtitle = hit.Item.ContractNo + " · " + hit.Item.Counterparty });

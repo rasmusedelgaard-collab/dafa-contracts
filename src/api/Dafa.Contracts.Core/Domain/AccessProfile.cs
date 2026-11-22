@@ -11,6 +11,12 @@ public sealed class AccessProfile
     public bool IsGroupManagement { get; set; }
     public HashSet<Guid> DepartmentIds { get; set; } = new();
     public HashSet<Guid> ManagedEntityIds { get; set; } = new();
+    /// <summary>Release 4: the user's home legal entity (display only; not part of the access model).</summary>
+    public Guid? HomeEntityId { get; set; }
+    /// <summary>Release 4: may send contracts for e-signature. Administrators do not get this implicitly.</summary>
+    public bool CanSendForSignature { get; set; }
+    /// <summary>Release 4: legal entities the signing permission is limited to; empty = every entity.</summary>
+    public HashSet<Guid> SignatureEntityIds { get; set; } = new();
 
     public bool IsAdmin => (Roles & AppRole.Admin) == AppRole.Admin;
     public bool HasRole(AppRole role) => (Roles & role) == role;

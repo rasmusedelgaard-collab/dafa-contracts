@@ -27,11 +27,16 @@ public class JobRunner
     private readonly DigestService _digest;
     private readonly IExportStorage _exports;
     private readonly ILogger<JobRunner> _logger;
+    private readonly SignatureService? _signatures;
+    private readonly StorageService? _storage;
 
     public JobRunner(
         IAppDbContext db, IClock clock, JobService jobs, ApprovalService approvals, IDirectoryService directory,
-        SyncService sync, DocumentTextIndexer indexer, DigestService digest, IExportStorage exports, ILogger<JobRunner> logger)
+        SyncService sync, DocumentTextIndexer indexer, DigestService digest, IExportStorage exports, ILogger<JobRunner> logger,
+        SignatureService? signatures = null, StorageService? storage = null)
     {
+        _signatures = signatures;
+        _storage = storage;
         _db = db;
         _clock = clock;
         _jobs = jobs;
@@ -83,12 +88,38 @@ public class JobRunner
                 await _jobs.PurgePendingUploadsAsync(cancellationToken);
                 var sessions = await ImportService.PurgeSessionsAsync(_db, _clock, cancellationToken);
                 var indexed = await _indexer.BackfillAsync(DocumentTextIndexer.DefaultBatch, cancellationToken);
-                return ("Succeeded", sessions + " import sessions removed, " + indexed + " documents indexed for search");
+                // SharePoint hardening: approval logs that could not be stored when the approval was completed.
+                var logs = await _approvals.WritePendingLogsAsync(cancellationToken);
+                return ("Succeeded", sessions + " import sessions removed, " + indexed + " documents indexed for search"
+                    + (logs > 0 ? ", " + logs + " approval logs stored" : ""));
             }
             case JobKeys.DataRoomCleanup:
             {
                 var removed = await DataRoomService.CleanupAsync(_db, _exports, _clock, cancellationToken);
                 return ("Succeeded", removed + " expired exports removed");
+            }
+            case JobKeys.StorageReconciliation:
+            {
+                if (_storage is null)
+                {
+                    return ("Succeeded", "Storage reconciliation is not available");
+                }
+                var report = await _storage.RunAsync(cancellationToken);
+                var summary = report.CheckedDocuments + " documents and " + report.CheckedFolders + " folders checked, " + report.Items.Count + " findings";
+                return report.Status == "Failed" ? ("Failed", summary + "; " + report.Error) : ("Succeeded", summary);
+            }
+            case JobKeys.SignatureSync:
+            {
+                // Release 4: provider polling, reminders and expiry of e-signature requests.
+                if (_signatures is null)
+                {
+                    return ("Succeeded", "E-signature is not available");
+                }
+                var sync = await _signatures.SyncAsync(cancellationToken);
+                var text = sync.Checked + " open requests checked, " + sync.Completed + " completed, " + sync.Expired + " expired, " + sync.Reminded + " reminded";
+                return sync.Errors.Count == 0
+                    ? ("Succeeded", text)
+                    : ("PartiallySucceeded", text + "; " + string.Join(" ", sync.Errors.Take(5)));
             }
         }
         throw new NotFoundException("Unknown job.");

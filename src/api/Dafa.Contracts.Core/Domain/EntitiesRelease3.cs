@@ -36,6 +36,15 @@ public class DocumentText
     public string Status { get; set; } = "";
     public string? Note { get; set; }
     public DateTime ExtractedAt { get; set; }
+    /// <summary>
+    /// SharePoint hardening (schema step 4): Status Retry = the file could not be read from the
+    /// store; Attempts counts the tries and NextAttemptAt is when the backfill tries again
+    /// (backoff). After MaxAttempts the status becomes Failed for good.
+    /// </summary>
+    public int Attempts { get; set; }
+    public DateTime? NextAttemptAt { get; set; }
+
+    public const int MaxAttempts = 6;
 
     public const int MaxCharacters = 400_000;
 }
@@ -301,6 +310,8 @@ public class UserPreference
     public Guid? DefaultEntityId { get; set; }
     public string? LandingPage { get; set; }
     public bool AutoWatch { get; set; }
+    /// <summary>Release 4: light, dark or system. NOT NULL; existing rows get 'light' from schema step 3.</summary>
+    public string Theme { get; set; } = "light";
     public DateTime? LastDigestAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

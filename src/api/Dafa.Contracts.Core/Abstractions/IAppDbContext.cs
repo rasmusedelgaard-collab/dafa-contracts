@@ -51,6 +51,13 @@ public interface IAppDbContext
     DbSet<UserPreference> UserPreferences { get; }
     DbSet<DataRoomExport> DataRoomExports { get; }
 
+    // Release 4
+    DbSet<TemplateCategory> TemplateCategories { get; }
+    DbSet<BrandingAsset> BrandingAssets { get; }
+    DbSet<SignatureRequest> SignatureRequests { get; }
+    DbSet<Signatory> Signatories { get; }
+    DbSet<StorageReconciliationReport> StorageReconciliationReports { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>

@@ -59,8 +59,24 @@ public sealed class MemoryDocumentStore : IDocumentStore
 {
     public Dictionary<string, byte[]> Files { get; } = new();
 
+    /// <summary>Release 4: when set, every call fails with it (the store is down, or not configured).</summary>
+    public Exception? Failure { get; set; }
+    public int Calls { get; private set; }
+    public List<DocumentLocation> SavedLocations { get; } = new();
+
+    private void Touch()
+    {
+        Calls++;
+        if (Failure is not null)
+        {
+            throw Failure;
+        }
+    }
+
     public async Task<StoredDocument> SaveAsync(DocumentLocation location, string fileName, int version, Stream content, CancellationToken cancellationToken = default)
     {
+        Touch();
+        SavedLocations.Add(location);
         using var buffer = new MemoryStream();
         await content.CopyToAsync(buffer, cancellationToken);
         var key = location.ContractId.ToString("N") + "/v" + version + "_" + fileName;
@@ -70,19 +86,64 @@ public sealed class MemoryDocumentStore : IDocumentStore
 
     public Task<Stream> OpenReadAsync(string storeKey, CancellationToken cancellationToken = default)
     {
-        Stream stream = new MemoryStream(Files[storeKey], false);
+        Touch();
+        if (!Files.TryGetValue(storeKey, out var bytes))
+        {
+            throw new FileNotFoundException("The stored file is missing.", storeKey);
+        }
+        Stream stream = new MemoryStream(bytes, false);
         return Task.FromResult(stream);
     }
 
     public Task DeleteAsync(string storeKey, CancellationToken cancellationToken = default)
     {
+        Touch();
         Files.Remove(storeKey);
         return Task.CompletedTask;
     }
 
     public Task<string?> GetFolderUrlAsync(DocumentLocation location, CancellationToken cancellationToken = default)
     {
+        Touch();
         return Task.FromResult<string?>(null);
+    }
+
+    /// <summary>The health check: fails the same way as every other call when the store is "down".</summary>
+    public Task<StoreProbe> ProbeAsync(CancellationToken cancellationToken = default)
+    {
+        if (Failure is not null)
+        {
+            throw Failure;
+        }
+        return Task.FromResult(new StoreProbe(true, null));
+    }
+}
+
+/// <summary>Release 4: a link probe with canned answers, standing in for Microsoft Graph.</summary>
+public sealed class FakeOrgLinkProbe : IOrgLinkProbe
+{
+    public Dictionary<string, SiteInfo> Sites { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, List<string>> Libraries { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> Groups { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Exception? Failure { get; set; }
+
+    public Task<SiteInfo?> ResolveSiteAsync(string siteUrl, CancellationToken cancellationToken = default)
+    {
+        if (Failure is not null) throw Failure;
+        return Task.FromResult(Sites.TryGetValue(siteUrl, out var site) ? site : null);
+    }
+
+    public Task<IReadOnlyList<string>> GetLibraryNamesAsync(string siteId, CancellationToken cancellationToken = default)
+    {
+        if (Failure is not null) throw Failure;
+        IReadOnlyList<string> names = Libraries.TryGetValue(siteId, out var list) ? list : new List<string>();
+        return Task.FromResult(names);
+    }
+
+    public Task<string?> GetGroupNameAsync(string groupId, CancellationToken cancellationToken = default)
+    {
+        if (Failure is not null) throw Failure;
+        return Task.FromResult(Groups.TryGetValue(groupId, out var name) ? name : null);
     }
 }
 
@@ -239,8 +300,29 @@ public sealed class Actor
         Imports = new ImportService(Db, user, clock, audit, new TabularFileReader(), Dispatcher);
         Sync = new SyncService(Db, clock, audit, new DemoSyncSourceReader(new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build()), Imports, Dispatcher);
         Settings = new SettingsService(Db, clock, audit);
-        Personal = new PersonalService(Db, user, clock, audit);
+        Personal = new PersonalService(Db, user, clock, audit, world.Modes);
+
+        // Release 4 services, wired the same way the host wires them (Simulated e-signature provider).
+        Providers = new SignatureProviderRegistry(new ISignatureProvider[] { new SimulatedSignatureProvider(world.Configuration) });
+        Signatures = new SignatureService(Db, user, Access, clock, audit, writer, world.Store, Dispatcher, Providers);
+        Pickers = new PickerService(Db, user, clock, audit);
+        Distinct = new DistinctValuesService(Db, user, Access, clock);
+        Templates = new TemplateCatalogService(Db, user, audit, new DocumentTextExtractor());
+        Branding = new BrandingService(Db, user, clock, audit);
+        OrgLinks = new OrgLinkService(Db, clock, audit, world.Probe, world.Modes);
+        Storage = new StorageService(Db, world.Store, clock, audit, user, world.Modes, world.Health);
+        Admin = new AdminService(Db, clock, audit, new OpenXmlTemplateEngine());
     }
+
+    public SignatureProviderRegistry Providers { get; }
+    public SignatureService Signatures { get; }
+    public PickerService Pickers { get; }
+    public DistinctValuesService Distinct { get; }
+    public TemplateCatalogService Templates { get; }
+    public BrandingService Branding { get; }
+    public OrgLinkService OrgLinks { get; }
+    public StorageService Storage { get; }
+    public AdminService Admin { get; }
 
     public AuditService Audit { get; }
     public NotificationDispatcher Dispatcher { get; }
@@ -278,6 +360,31 @@ public sealed class TestWorld : IDisposable
     public FakeClock Clock { get; } = new(new DateTime(2026, 3, 2, 9, 0, 0, DateTimeKind.Utc));
     public MemoryDocumentStore Store { get; } = new();
     public MemoryExportStorage Exports { get; } = new();
+
+    // Release 4
+    /// <summary>Test mode by default (local files, seeded directory); a test may switch to SharePoint / Graph.</summary>
+    public RuntimeModes Modes { get; } = new();
+    public FakeOrgLinkProbe Probe { get; } = new();
+    public StorageHealthState Health { get; } = new();
+    /// <summary>Auth:Mode=Dev, so the Simulated e-signature provider is allowed.</summary>
+    public Microsoft.Extensions.Configuration.IConfiguration Configuration { get; } =
+        new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Auth:Mode"] = "Dev" })
+            .Build();
+    private Guid? _defaultSupplier;
+
+    /// <summary>
+    /// An active counterparty for contract inputs (the counterparty is always a master record).
+    /// Created on first use, so tests that count counterparties start from none.
+    /// </summary>
+    public Guid DefaultSupplier
+    {
+        get
+        {
+            _defaultSupplier ??= AddSupplier("Test Supplier A/S");
+            return _defaultSupplier.Value;
+        }
+    }
 
     public Guid EntityA { get; } = Guid.NewGuid();
     public Guid EntityB { get; } = Guid.NewGuid();
@@ -403,6 +510,25 @@ public sealed class TestWorld : IDisposable
         db.Contracts.Add(contract);
         db.SaveChanges();
         return contract;
+    }
+
+    /// <summary>Adds a counterparty master record and returns its id.</summary>
+    public Guid AddSupplier(string name, bool isActive = true, string? vatNo = null)
+    {
+        var supplier = new Supplier { Id = Guid.NewGuid(), Name = name, IsActive = isActive, VatNo = vatNo };
+        using var db = NewDb();
+        db.Suppliers.Add(supplier);
+        db.SaveChanges();
+        return supplier.Id;
+    }
+
+    /// <summary>Changes one user row (for example to grant the signing permission).</summary>
+    public void UpdateUser(Guid userId, Action<AppUser> change)
+    {
+        using var db = NewDb();
+        var user = db.Users.Single(u => u.Id == userId);
+        change(user);
+        db.SaveChanges();
     }
 
     public ApprovalRule AddRule(string name, decimal? min, decimal? max, Guid? typeId, int priority, params ApproverKind[][] stages)

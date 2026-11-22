@@ -17,6 +17,12 @@ public class MeDto
     public List<Guid> ManagedEntityIds { get; set; } = new();
     public bool IsGroupManagement { get; set; }
     public string AuthMode { get; set; } = "Dev";
+    /// <summary>Release 4: home legal entity, or null.</summary>
+    public Guid? EntityId { get; set; }
+    /// <summary>Release 4: may send contracts for e-signature.</summary>
+    public bool CanSendForSignature { get; set; }
+    /// <summary>Release 4: entities the signing permission is limited to; empty = all.</summary>
+    public List<Guid> SignatureEntityIds { get; set; } = new();
 }
 
 public class IdNameDto
@@ -43,6 +49,8 @@ public class LookupUserDto
     public bool IsActive { get; set; }
     public string Email { get; set; } = "";
     public string? Title { get; set; }
+    /// <summary>Release 4: home legal entity, or null.</summary>
+    public Guid? EntityId { get; set; }
     /// <summary>Reader, ContractOwner, Approver, Admin. Lets the UI offer only approvers as delegates.</summary>
     public List<string> Roles { get; set; } = new();
 }
@@ -257,6 +265,10 @@ public class ContractDetailDto : ContractListItemDto
     /// </summary>
     public List<string> LockedFields { get; set; } = new();
     public string? StoreUrl { get; set; }
+    /// <summary>Release 4: the open signature request, else the last finished one, else null.</summary>
+    public SignatureRequestDto? Signature { get; set; }
+    /// <summary>Release 4: the caller may send this contract for e-signature right now.</summary>
+    public bool CanSendForSignature { get; set; }
 }
 
 public class RenewingDto
@@ -401,6 +413,13 @@ public class TemplateDto
     public string FileName { get; set; } = "";
     public List<string> Placeholders { get; set; } = new();
     public bool IsActive { get; set; }
+    // Release 4
+    public Guid? CategoryId { get; set; }
+    public string? CategoryName { get; set; }
+    /// <summary>Empty = every contract type. TypeId stays the first of them for older clients.</summary>
+    public List<Guid> TypeIds { get; set; } = new();
+    public string? Language { get; set; }
+    public DateTime UpdatedAt { get; set; }
 }
 
 public class FromTemplateResultDto
@@ -518,6 +537,8 @@ public class DevConfigDto
 {
     public string AuthMode { get; set; } = "Dev";
     public bool AccessCodeRequired { get; set; }
+    /// <summary>Release 4: logo for the sign-in screen.</summary>
+    public BrandingDto Branding { get; set; } = new();
 }
 
 // ---------- Admin ----------
@@ -568,6 +589,12 @@ public class NamedItemDto
     public string? Name { get; set; }
     public bool? IsActive { get; set; }
     public int? SortOrder { get; set; }
+    // Release 4, departments only (null for contract types): SharePoint library and Entra group.
+    public string? DocumentLibrary { get; set; }
+    public string? GroupId { get; set; }
+    public string? GroupName { get; set; }
+    /// <summary>Output only.</summary>
+    public LinkStatusDto? Link { get; set; }
 }
 
 /// <summary>JSON body of POST/PUT admin/templates.</summary>
@@ -577,6 +604,10 @@ public class TemplateInput
     public string? Description { get; set; }
     public Guid? TypeId { get; set; }
     public bool? IsActive { get; set; }
+    // Release 4. On PUT an omitted (null) typeIds means "unchanged"; categoryId and language are set as given.
+    public Guid? CategoryId { get; set; }
+    public List<Guid>? TypeIds { get; set; }
+    public string? Language { get; set; }
 }
 
 public class ReminderSettingsDto

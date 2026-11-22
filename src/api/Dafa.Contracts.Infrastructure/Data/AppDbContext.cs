@@ -60,6 +60,12 @@ public class AppDbContext : DbContext, IAppDbContext
     public DbSet<UserPreference> UserPreferences => Set<UserPreference>();
     public DbSet<DataRoomExport> DataRoomExports => Set<DataRoomExport>();
 
+    public DbSet<TemplateCategory> TemplateCategories => Set<TemplateCategory>();
+    public DbSet<BrandingAsset> BrandingAssets => Set<BrandingAsset>();
+    public DbSet<SignatureRequest> SignatureRequests => Set<SignatureRequest>();
+    public DbSet<Signatory> Signatories => Set<Signatory>();
+    public DbSet<StorageReconciliationReport> StorageReconciliationReports => Set<StorageReconciliationReport>();
+
     public void DiscardChanges()
     {
         ChangeTracker.Clear();
@@ -100,11 +106,24 @@ public class AppDbContext : DbContext, IAppDbContext
             e.Property(x => x.Name).HasMaxLength(200);
             e.Property(x => x.Country).HasMaxLength(100);
             e.Property(x => x.Currency).HasMaxLength(3);
+            // Release 4 (schema step 3)
+            e.Property(x => x.SharePointSiteUrl).HasMaxLength(400);
+            e.Property(x => x.SharePointSiteId).HasMaxLength(300);
+            e.Property(x => x.ManagementGroupId).HasMaxLength(100);
+            e.Property(x => x.ManagementGroupName).HasMaxLength(200);
+            e.Property(x => x.LinkStatus).HasMaxLength(20);
+            e.Property(x => x.LinkMessage).HasMaxLength(1000);
         });
         modelBuilder.Entity<Department>(e =>
         {
             e.ToTable("Departments");
             e.Property(x => x.Name).HasMaxLength(200);
+            // Release 4 (schema step 3)
+            e.Property(x => x.LibraryName).HasMaxLength(200);
+            e.Property(x => x.GroupId).HasMaxLength(100);
+            e.Property(x => x.GroupName).HasMaxLength(200);
+            e.Property(x => x.LinkStatus).HasMaxLength(20);
+            e.Property(x => x.LinkMessage).HasMaxLength(1000);
         });
         modelBuilder.Entity<ContractType>(e =>
         {
@@ -163,6 +182,10 @@ public class AppDbContext : DbContext, IAppDbContext
             e.Property(x => x.AnnualValue).HasPrecision(18, 2);
             e.Property(x => x.TotalValue).HasPrecision(18, 2);
             e.Property(x => x.Version).IsConcurrencyToken();
+            // SharePoint hardening (schema step 4)
+            e.Property(x => x.StoreDriveId).HasMaxLength(200);
+            e.Property(x => x.StoreFolderId).HasMaxLength(200);
+            e.Property(x => x.StoreFolderUrl).HasMaxLength(1000);
             e.HasIndex(x => x.DepartmentId);
             e.HasIndex(x => x.EntityId);
             e.HasIndex(x => x.OwnerId);
@@ -184,6 +207,14 @@ public class AppDbContext : DbContext, IAppDbContext
             e.ToTable("Documents");
             e.Property(x => x.Name).HasMaxLength(260);
             e.Property(x => x.StoreKey).HasMaxLength(1000);
+            // SharePoint hardening (schema step 4)
+            e.Property(x => x.SiteId).HasMaxLength(300);
+            e.Property(x => x.DriveId).HasMaxLength(200);
+            e.Property(x => x.ItemId).HasMaxLength(200);
+            e.Property(x => x.RelativePath).HasMaxLength(1000);
+            e.Property(x => x.ETag).HasMaxLength(200);
+            e.Property(x => x.CTag).HasMaxLength(200);
+            e.Property(x => x.ContentHash).HasMaxLength(64);
             // Two uploads of the same name can never share a version (and so never one file).
             e.HasIndex(x => new { x.ContractId, x.Name, x.Version }).IsUnique();
         });
@@ -230,6 +261,9 @@ public class AppDbContext : DbContext, IAppDbContext
             e.ToTable("Templates");
             e.Property(x => x.Name).HasMaxLength(200);
             e.Property(x => x.FileName).HasMaxLength(260);
+            // Release 4 (schema step 3)
+            e.Property(x => x.Language).HasMaxLength(10);
+            e.HasIndex(x => x.CategoryId);
         });
         modelBuilder.Entity<AuditEvent>(e =>
         {
@@ -404,6 +438,7 @@ public class AppDbContext : DbContext, IAppDbContext
             e.HasKey(x => x.UserId);
             e.Property(x => x.Digest).HasMaxLength(20);
             e.Property(x => x.LandingPage).HasMaxLength(40);
+            e.Property(x => x.Theme).HasMaxLength(10);
         });
         modelBuilder.Entity<DataRoomExport>(e =>
         {
@@ -417,6 +452,59 @@ public class AppDbContext : DbContext, IAppDbContext
             e.Property(x => x.Error).HasMaxLength(1000);
             e.Property(x => x.CreatedByName).HasMaxLength(200);
             e.HasIndex(x => x.CreatedById);
+        });
+
+        // ---------- release 4 ----------
+        // Created on existing databases by schema step 3 (SchemaUpgrader).
+        modelBuilder.Entity<TemplateCategory>(e =>
+        {
+            e.ToTable("TemplateCategories");
+            e.Property(x => x.Name).HasMaxLength(80);
+            e.Property(x => x.Description).HasMaxLength(400);
+        });
+        modelBuilder.Entity<BrandingAsset>(e =>
+        {
+            e.ToTable("BrandingAssets");
+            e.HasKey(x => x.Kind);
+            e.Property(x => x.Kind).HasMaxLength(20);
+            e.Property(x => x.FileName).HasMaxLength(260);
+            e.Property(x => x.ContentType).HasMaxLength(100);
+            e.Property(x => x.ETag).HasMaxLength(64);
+        });
+        modelBuilder.Entity<SignatureRequest>(e =>
+        {
+            e.ToTable("SignatureRequests");
+            e.Property(x => x.Version).IsConcurrencyToken();
+            e.Property(x => x.Provider).HasMaxLength(20);
+            e.Property(x => x.ProviderReference).HasMaxLength(200);
+            e.Property(x => x.Message).HasMaxLength(2000);
+            e.Property(x => x.CreatedByName).HasMaxLength(200);
+            e.Property(x => x.StatusMessage).HasMaxLength(1000);
+            e.HasIndex(x => x.ContractId);
+            e.HasIndex(x => x.ProviderReference);
+            // At most one active request per contract. Status is stored as an int and the active
+            // statuses are Draft = 0, Sent = 1, PartiallySigned = 2 (see SignatureRequestStatus).
+            // The bracket syntax is accepted by both SQL Server and Sqlite.
+            e.HasIndex(x => x.ContractId, "IX_SignatureRequests_OneActivePerContract")
+                .IsUnique()
+                .HasFilter("[Status] < 3");
+        });
+        modelBuilder.Entity<StorageReconciliationReport>(e =>
+        {
+            e.ToTable("StorageReconciliationReports");
+            e.Property(x => x.Status).HasMaxLength(20);
+            e.Property(x => x.Error).HasMaxLength(1000);
+            e.Property(x => x.StartedByName).HasMaxLength(200);
+            e.HasIndex(x => x.StartedAt);
+        });
+        modelBuilder.Entity<Signatory>(e =>
+        {
+            e.ToTable("Signatories");
+            e.Property(x => x.Name).HasMaxLength(200);
+            e.Property(x => x.Email).HasMaxLength(256);
+            e.Property(x => x.DeclineReason).HasMaxLength(1000);
+            e.HasIndex(x => x.RequestId);
+            e.HasIndex(x => x.ContractId);
         });
 
         // DateTime values are always UTC; make sure they come back from the database marked as such.

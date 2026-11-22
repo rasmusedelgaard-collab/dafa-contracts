@@ -46,6 +46,16 @@ public static class ServiceCollectionExtensions
         services.AddScoped<JobRunner>();
         services.AddScoped<NotificationDispatcher>();
         services.AddScoped<INotifier>(serviceProvider => serviceProvider.GetRequiredService<NotificationDispatcher>());
+        // Release 4. The host also registers RuntimeModes, IOrgLinkProbe and the ISignatureProvider implementations.
+        services.AddScoped<SignatureProviderRegistry>();
+        services.AddScoped<SignatureService>();
+        services.AddScoped<PickerService>();
+        services.AddScoped<DistinctValuesService>();
+        services.AddScoped<TemplateCatalogService>();
+        services.AddScoped<BrandingService>();
+        services.AddScoped<OrgLinkService>();
+        // SharePoint hardening: storage health and reconciliation (the host registers StorageHealthState).
+        services.AddScoped<StorageService>();
         return services;
     }
 }

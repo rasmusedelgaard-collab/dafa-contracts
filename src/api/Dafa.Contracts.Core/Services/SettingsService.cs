@@ -41,7 +41,8 @@ public static class AppSettingsStore
     {
         var settings = new AppSettingsDto
         {
-            DataQualityFields = DataQuality.Defaults.ToList()
+            DataQualityFields = DataQuality.Defaults.ToList(),
+            CounterpartyCreation = "AdminOnly"
         };
         foreach (var role in Roles)
         {
@@ -51,6 +52,14 @@ public static class AppSettingsStore
     }
 
     public static async Task<AppSettingsDto> LoadAsync(IAppDbContext db, CancellationToken cancellationToken = default)
+    {
+        var settings = await LoadStoredAsync(db, cancellationToken);
+        // Release 4: features.eSign mirrors the e-sign settings (a provider other than None is chosen).
+        settings.Features.ESign = (await ESignSettingsStore.LoadAsync(db, cancellationToken)).Provider != SignatureProviderNames.None;
+        return settings;
+    }
+
+    private static async Task<AppSettingsDto> LoadStoredAsync(IAppDbContext db, CancellationToken cancellationToken)
     {
         var row = await db.AppSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == Key, cancellationToken);
         var settings = Defaults();
@@ -79,12 +88,42 @@ public static class AppSettingsStore
             if (stored.SessionTimeoutMinutes >= 15 && stored.SessionTimeoutMinutes <= 1440) settings.SessionTimeoutMinutes = stored.SessionTimeoutMinutes;
             if (stored.DataQualityFields is not null) settings.DataQualityFields = stored.DataQualityFields.Distinct().ToList();
             if (stored.DdThresholdDkk >= 0) settings.DdThresholdDkk = stored.DdThresholdDkk;
+            settings.CounterpartyCreation = NormalizeCounterpartyCreation(stored.CounterpartyCreation) ?? settings.CounterpartyCreation;
         }
         catch (JsonException)
         {
             // A damaged document falls back to the defaults.
         }
         return settings;
+    }
+
+    public static readonly string[] CounterpartyCreationValues = { "AdminOnly", "ContractOwners", "AllUsers" };
+
+    /// <summary>
+    /// The stored name of a counterpartyCreation value, or null when unknown. The names of the
+    /// release 4 brief (Admins, Everyone) are accepted as aliases.
+    /// </summary>
+    public static string? NormalizeCounterpartyCreation(string? value)
+    {
+        var text = (value ?? "").Trim();
+        if (text == "Admins") return "AdminOnly";
+        if (text == "Everyone") return "AllUsers";
+        return CounterpartyCreationValues.Contains(text) ? text : null;
+    }
+
+    /// <summary>Release 4: whether a user may create counterparties from the contract form (POST counterparties).</summary>
+    public static bool MayCreateCounterparty(AppSettingsDto settings, AccessProfile profile)
+    {
+        if (profile.IsAdmin)
+        {
+            return true;
+        }
+        switch (settings.CounterpartyCreation)
+        {
+            case "AllUsers": return true;
+            case "ContractOwners": return profile.HasRole(AppRole.ContractOwner);
+            default: return false;
+        }
     }
 
     public static async Task<string> LoadDigestDefaultAsync(IAppDbContext db, CancellationToken cancellationToken = default)
@@ -133,6 +172,10 @@ public static class NotificationCatalog
     public const string DataCompletionRequested = "DataCompletionRequested";
     public const string ImportFinished = "ImportFinished";
     public const string SyncFailed = "SyncFailed";
+    // Release 4 (CONTRACT_V4 section 8)
+    public const string SignatureRequested = "SignatureRequested";
+    public const string SignatureCompleted = "SignatureCompleted";
+    public const string SignatureDeclined = "SignatureDeclined";
 
     public static readonly string[] ChannelNames = { "Email", "Teams", "InApp" };
     public static readonly string[] RecipientRules = { "ReminderRecipient", "Owner", "Delegate", "Responsible", "Watchers", "Approver", "Mentioned", "Admins" };
@@ -196,7 +239,21 @@ public static class NotificationCatalog
         new(SyncFailed, "Sync failed", "Admins", EmailInApp, new[] { "Admins" },
             "Sync failed: {{source.name}}",
             "The sync source {{source.name}} failed: {{message}}",
-            new[] { "recipient.name", "actor.name", "app.name", "source.name", "import.file", "import.created", "import.failed", "message" })
+            new[] { "recipient.name", "actor.name", "app.name", "source.name", "import.file", "import.created", "import.failed", "message" }),
+        // Release 4: e-signature. Natural recipients: the internal signers (Requested); the owner,
+        // the delegate and the sender (Completed, Declined; Declined also covers an expired request).
+        new(SignatureRequested, "Signature requested", "Approver", EmailInApp, new[] { "Approver" },
+            "Please sign: {{contract.title}}",
+            "{{actor.name}} asks you to sign contract {{contract.no}} ({{contract.title}}) with {{contract.counterparty}}. You receive the signing link from the e-signature provider. {{comment}} {{contract.url}}",
+            With("step.role", "comment", "signer.name")),
+        new(SignatureCompleted, "Signature completed", "Owner", EmailInApp, new[] { "Owner", "Watchers" },
+            "Signed: {{contract.title}}",
+            "Contract {{contract.no}} ({{contract.title}}) has been signed by everyone. The signed document is in the contract's documents. {{contract.url}}",
+            With("step.role", "comment", "signer.name")),
+        new(SignatureDeclined, "Signature declined or expired", "Owner", EmailInApp, new[] { "Owner" },
+            "Signature not completed: {{contract.title}}",
+            "The signature request for contract {{contract.no}} ({{contract.title}}) was not completed. {{comment}} {{contract.url}}",
+            With("step.role", "comment", "signer.name"))
     };
 
     public static NotificationEventInfo? Find(string eventName) => All.FirstOrDefault(e => e.Event == eventName);
@@ -268,7 +325,8 @@ public static class NotificationCatalog
         ["import.file"] = "contracts.xlsx",
         ["import.created"] = "812",
         ["import.failed"] = "3",
-        ["source.name"] = "ERP vendors"
+        ["source.name"] = "ERP vendors",
+        ["signer.name"] = "Anna Lindqvist"
     };
 }
 
@@ -283,6 +341,10 @@ public static class JobKeys
     public const string DirectorySync = "DirectorySync";
     public const string UploadCleanup = "UploadCleanup";
     public const string DataRoomCleanup = "DataRoomCleanup";
+    /// <summary>Release 4: polls the e-signature provider, sends reminders, expires old requests.</summary>
+    public const string SignatureSync = "SignatureSync";
+    /// <summary>SharePoint hardening: the nightly storage reconciliation report.</summary>
+    public const string StorageReconciliation = "StorageReconciliation";
 
     public static readonly (string Key, string Label, string Description, ScheduleFrequency Frequency, string Time, int? Day)[] All =
     {
@@ -293,7 +355,9 @@ public static class JobKeys
         (CounterpartySync, "Counterparty sync", "Runs the sync sources that are due and the supplier master source.", ScheduleFrequency.Hourly, "06:00", null),
         (DirectorySync, "Directory sync", "Brings users up to date from the directory.", ScheduleFrequency.Daily, "05:00", null),
         (UploadCleanup, "Upload cleanup", "Deletes unused intake uploads after 7 days and expired import sessions; extracts document text for search.", ScheduleFrequency.Hourly, "06:00", null),
-        (DataRoomCleanup, "Data room cleanup", "Deletes data room exports after they expire.", ScheduleFrequency.Daily, "03:00", null)
+        (DataRoomCleanup, "Data room cleanup", "Deletes data room exports after they expire.", ScheduleFrequency.Daily, "03:00", null),
+        (SignatureSync, "E-signature sync", "Asks the e-signature provider for the status of open requests, reminds signers and expires requests.", ScheduleFrequency.Hourly, "06:00", null),
+        (StorageReconciliation, "Storage reconciliation", "Compares the registered documents with the files in storage and reports missing files, unknown files and differences. Nothing is repaired.", ScheduleFrequency.Daily, "02:00", null)
     };
 }
 
@@ -333,6 +397,18 @@ public class SettingsService
             ContractValidator.Add(errors, "sessionTimeoutMinutes", "Session timeout must be between 15 and 1440 minutes.");
         if (input.DdThresholdDkk < 0)
             ContractValidator.Add(errors, "ddThresholdDkk", "The threshold cannot be negative.");
+        // Release 4: omitted = unchanged (older clients do not send it).
+        var current = await AppSettingsStore.LoadAsync(_db, cancellationToken);
+        current.CounterpartyCreation ??= "AdminOnly";
+        var counterpartyCreation = current.CounterpartyCreation;
+        if (!string.IsNullOrWhiteSpace(input.CounterpartyCreation))
+        {
+            var normalized = AppSettingsStore.NormalizeCounterpartyCreation(input.CounterpartyCreation);
+            if (normalized is null)
+                ContractValidator.Add(errors, "counterpartyCreation", "Use AdminOnly, ContractOwners or AllUsers.");
+            else
+                counterpartyCreation = normalized;
+        }
         var landing = input.LandingPageByRole ?? new Dictionary<string, string>();
         foreach (var role in AppSettingsStore.Roles)
         {
@@ -361,10 +437,12 @@ public class SettingsService
             Features = input.Features ?? new FeatureTogglesDto(),
             SessionTimeoutMinutes = input.SessionTimeoutMinutes,
             DataQualityFields = (input.DataQualityFields ?? new List<string>()).Distinct().ToList(),
-            DdThresholdDkk = input.DdThresholdDkk
+            DdThresholdDkk = input.DdThresholdDkk,
+            CounterpartyCreation = counterpartyCreation
         };
         await SaveSettingAsync(AppSettingsStore.Key, JsonDefaults.Write(stored), cancellationToken);
-        _audit.Record("settings.general", "Updated general settings");
+        _audit.Record("settings.general", "Updated general settings"
+            + (counterpartyCreation != current.CounterpartyCreation ? " (counterparties may be created by: " + counterpartyCreation + ")" : ""));
         await _db.SaveChangesAsync(cancellationToken);
         return await AppSettingsStore.LoadAsync(_db, cancellationToken);
     }
