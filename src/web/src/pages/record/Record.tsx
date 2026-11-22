@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { apiMode } from '../../api';
 import { ApiError } from '../../api/api';
-import { qk, useApi, useAppConfig, useInvalidateContracts, useMe } from '../../app/context';
+import { permissions, qk, useApi, useAppConfig, useInvalidateContracts, useMe } from '../../app/context';
 import type { ContractDetail, ContractReminder, Obligation, RenewalDecision } from '../../api/types';
 import { Avatar, Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Icon, Pill, Segmented, Skeleton, StatusPill, useToast } from '../../components';
 import { ApprovalRoute, DecisionForm, Deviations } from '../../features/Approval';
@@ -13,6 +13,7 @@ import { fileExtension, formatFileSize, formatMoney, saveBlob } from '../../lib/
 import { EditDetailsDialog, LinkDialog, ObligationDialog, SignDialog, SubmitDialog, UploadDialog } from './dialogs';
 import { AdditionalDetails, CommentsTab, CompareDialog, TagsCard, WatchButton } from './collab';
 import { PersonLink } from '../../features/columns';
+import { useFileError } from '../../features/fileErrors';
 
 type Tab = 'overview' | 'obligations' | 'approvals' | 'comments' | 'activity';
 const TABS: { value: Tab; label: string }[] = [
@@ -255,14 +256,14 @@ function Facts({ c }: { c: ContractDetail }) {
 
 function Documents({ c, open }: { c: ContractDetail; open: (d: Dialog) => void }) {
   const api = useApi();
-  const toast = useToast();
+  const fileError = useFileError();
   // `?doc=<id>` (from search): the document is marked in the list.
   const [params] = useSearchParams();
   const highlight = params.get('doc');
   const download = useMutation({
     mutationFn: (id: string) => api.getDocumentContent(id),
     onSuccess: (file) => saveBlob(file.blob, file.fileName),
-    onError: (e) => toast.error(e, 'The document could not be downloaded. Try again.'),
+    onError: (e, id) => fileError(e, 'The document could not be downloaded. Try again.', () => download.mutate(id)),
   });
   return (
     <Card clip aria-labelledby="documents-heading">
@@ -684,6 +685,7 @@ function RecordSkeleton() {
 export function Record() {
   const { id = '' } = useParams();
   const api = useApi();
+  const me = useMe();
   const toast = useToast();
   const invalidate = useInvalidateContracts();
   const [params, setParams] = useSearchParams();
@@ -759,7 +761,8 @@ export function Record() {
               Send for e-signature
             </Button>
           ) : null}
-          {c.storeUrl ? (
+          {/* The app is the only door to storage: only administrators get the direct SharePoint link. */}
+          {c.storeUrl && permissions(me).canSeeSettings ? (
             <a className="btn btn--secondary" href={c.storeUrl} target="_blank" rel="noreferrer">
               Open in SharePoint
             </a>

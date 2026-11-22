@@ -15,6 +15,7 @@ import { draftToInput, emptyDraft, hasErrors, parseAmount, parseWhole, routeValu
 import { LINK_KINDS } from '../record/dialogs';
 import { PersonPicker } from '../../features/Pickers';
 import { TemplateChooser } from '../../features/TemplateChooser';
+import { useFileError } from '../../features/fileErrors';
 
 const STEPS = ['Upload', 'Details', 'Links and obligations', 'Approval'] as const;
 
@@ -280,6 +281,7 @@ export function NewContract() {
   const lookups = useLookups();
   const scope = useScope();
   const toast = useToast();
+  const fileError = useFileError();
   const navigate = useNavigate();
   const client = useQueryClient();
   const invalidate = useInvalidateContracts();
@@ -334,7 +336,7 @@ export function NewContract() {
       if (result.note) toast.show(result.note);
       else toast.show(`${plural(applied.fields.length, 'field')} suggested from ${result.fileName}`);
     },
-    onError: (e) => toast.error(e, 'The file could not be read. Try again.'),
+    onError: (e, file) => fileError(e, 'The file could not be read. Try again.', () => extract.mutate(file)),
   });
   /** Checks type and size before the file is sent for reading. */
   const readFile = (file: File) => {

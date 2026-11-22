@@ -11,6 +11,7 @@ import { formatFileSize, formatMoney, toDkk } from '../../lib/format';
 import { LOCKED_MESSAGE, UPLOAD_ACCEPT, UPLOAD_HINT, uploadError } from '../../lib/uploads';
 import { draftToInput, fieldsToDraft, hasErrors, parseWhole, validateDraft, type ContractDraft, type DraftErrors } from '../../lib/validation';
 import { PersonPicker } from '../../features/Pickers';
+import { useFileError } from '../../features/fileErrors';
 
 interface DialogProps {
   contract: ContractDetail;
@@ -188,6 +189,7 @@ const DOC_KINDS: { value: DocumentKind; label: string }[] = [
 export function UploadDialog({ contract, onClose }: DialogProps) {
   const api = useApi();
   const toast = useToast();
+  const fileError = useFileError();
   const invalidate = useInvalidateContracts();
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -206,7 +208,7 @@ export function UploadDialog({ contract, onClose }: DialogProps) {
       toast.show(`${f.name} uploaded`);
       onClose();
     },
-    onError: (e) => toast.error(e),
+    onError: (e, f) => fileError(e, 'The file could not be uploaded. Try again.', () => save.mutate(f)),
   });
 
   const submit = () => {

@@ -1,5 +1,16 @@
 import { ApiError } from '../api/api';
-import { PROBLEM } from '../api/types';
+import { PROBLEM, STORAGE_PROBLEMS } from '../api/types';
+
+export const STORAGE_BUSY_MESSAGE = 'SharePoint is busy. Try again in a moment.';
+export const FILE_MISSING_MESSAGE = 'This file can no longer be found in storage. An administrator has been notified.';
+
+export type StorageProblem = 'unavailable' | 'fileMissing' | 'notConfigured';
+/** Which storage problem (CONTRACT_V4 §9a) an error is, if any. */
+export function storageProblem(error: unknown): StorageProblem | null {
+  if (!(error instanceof ApiError)) return null;
+  const t = error.problem.type;
+  return t === STORAGE_PROBLEMS.unavailable ? 'unavailable' : t === STORAGE_PROBLEMS.fileMissing ? 'fileMissing' : t === STORAGE_PROBLEMS.notConfigured ? 'notConfigured' : null;
+}
 
 export const STALE_MESSAGE = 'This was just updated by someone else.';
 export const THROTTLED_MESSAGE = 'Too many attempts. Try again in a few minutes.';
@@ -29,6 +40,8 @@ export function isThrottled(error: unknown): boolean {
 export function errorMessage(error: unknown, fallback = 'Something went wrong. Try again.'): string {
   if (error instanceof ApiError) {
     if (error.status === 0) return 'The server could not be reached. Check your connection and try again.';
+    if (error.problem.type === STORAGE_PROBLEMS.unavailable) return STORAGE_BUSY_MESSAGE;
+    if (error.problem.type === STORAGE_PROBLEMS.fileMissing) return FILE_MISSING_MESSAGE;
     if (isStale(error)) return STALE_MESSAGE;
     if (isThrottled(error)) return THROTTLED_MESSAGE;
     return error.problem.detail ?? error.problem.title ?? fallback;

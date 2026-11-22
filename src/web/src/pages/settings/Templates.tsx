@@ -6,6 +6,7 @@ import { Button, Card, EmptyState, ErrorState, Field, Modal, Select, SkeletonRow
 import { fileExtension, formatFileSize, saveBlob } from '../../lib/format';
 import { refs, validateName } from '../../lib/settingsForms';
 import { ConfirmDelete, SectionHead } from './common';
+import { useFileError } from '../../features/fileErrors';
 
 const MAX_TEMPLATE_BYTES = 10 * 1024 * 1024;
 const LANGUAGES = [
@@ -126,6 +127,7 @@ export function Templates() {
   const lookups = useLookups();
   const client = useQueryClient();
   const toast = useToast();
+  const fileError = useFileError();
   const [editing, setEditing] = useState<Template | 'new' | null>(null);
   const [deleting, setDeleting] = useState<Template | null>(null);
   const templates = useQuery({ queryKey: qk.admin('templates'), queryFn: () => api.admin.getTemplates() });
@@ -134,7 +136,7 @@ export function Templates() {
   const download = useMutation({
     mutationFn: (t: Template) => api.admin.getTemplateContent(t.id),
     onSuccess: (file) => saveBlob(file.blob, file.fileName),
-    onError: (e) => toast.error(e, 'The template could not be downloaded. Try again.'),
+    onError: (e, t) => fileError(e, 'The template could not be downloaded. Try again.', () => download.mutate(t)),
   });
   const del = useMutation({
     mutationFn: (t: Template) => api.admin.deleteTemplate(t.id),

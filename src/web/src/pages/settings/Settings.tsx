@@ -17,11 +17,18 @@ import { SyncSources } from './Sync';
 import { GeneralAdmin, JobsAdmin, NotificationsAdmin } from './System';
 import { UsersAdmin } from './Users';
 import { HolidayCover, Reminders, Retention } from './Policies';
+import { AccessMappingAdmin, DepartmentLinks, StorageHealthAdmin } from './Storage';
 import { TemplateCategories, Templates } from './Templates';
 
 const SECTIONS: { id: string; label: string; group: string; render: () => ReactNode }[] = [
   { id: 'entities', label: 'Legal entities', group: 'Organization', render: () => <LegalEntitiesAdmin /> },
-  { id: 'departments', label: 'Departments', group: 'Organization', render: () => <Departments /> },
+  { id: 'departments', label: 'Departments', group: 'Organization', render: () => (
+    <>
+      <Departments />
+      <DepartmentLinks />
+    </>
+  ) },
+  { id: 'access-mapping', label: 'Access mapping', group: 'Organization', render: () => <AccessMappingAdmin /> },
   { id: 'contract-types', label: 'Contract types', group: 'Organization', render: () => <ContractTypes /> },
   { id: 'users', label: 'Users and access', group: 'Organization', render: () => <UsersAdmin /> },
   { id: 'currencies', label: 'Currencies', group: 'Organization', render: () => <CurrenciesAdmin /> },
@@ -40,6 +47,7 @@ const SECTIONS: { id: string; label: string; group: string; render: () => ReactN
   { id: 'holiday-cover', label: 'Holiday cover', group: 'Rules', render: () => <HolidayCover /> },
   { id: 'general', label: 'General', group: 'System', render: () => <GeneralAdmin /> },
   { id: 'jobs', label: 'Jobs', group: 'System', render: () => <JobsAdmin /> },
+  { id: 'storage', label: 'Storage health', group: 'System', render: () => <StorageHealthAdmin /> },
   { id: 'audit', label: 'Audit log', group: 'System', render: () => <AuditLog /> },
   { id: 'outbox', label: 'Notifications outbox', group: 'System', render: () => <Outbox /> },
 ];
