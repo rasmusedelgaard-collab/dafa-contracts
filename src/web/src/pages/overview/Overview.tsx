@@ -4,7 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { apiMode } from '../../api';
 import { qk, useApi, useAppConfig, useLookups, useMe, permissions } from '../../app/context';
 import { VALUE_BANDS, type Bucket, type ContractFilter, type ContractStatus, type DateField, type DueDiligenceItem, type OverviewAnalytics } from '../../api/types';
-import { Button, Card, ChipSelect, EmptyState, ErrorState, Field, Icon, Segmented, Skeleton, SkeletonRows, StatusDot, Table, TextInput, useToast } from '../../components';
+import { Button, Card, ChipSelect, EmptyState, ErrorState, Field, Icon, NumberInput, Segmented, Skeleton, SkeletonRows, StatusDot, Table, TextInput, useToast } from '../../components';
 import { BarList, Columns, dkk, KpiTile, ScoreList, StackedColumns, type StackColumn } from '../../features/charts';
 import { contractColumns, defaultColumns, useColumnBudget } from '../../features/columns';
 import { DataRoomDialog } from '../../features/DataRoom';
@@ -84,12 +84,12 @@ function DueDiligence({ data, filter, drill, threshold, setThreshold }: { data: 
           className="row-flex dd-card__threshold"
           onSubmit={(e) => {
             e.preventDefault();
-            const n = Number(text.replace(',', '.'));
+            const n = Number(text);
             if (Number.isFinite(n) && n >= 0) setThreshold(Math.round(n * 1_000_000));
           }}
         >
           <Field label="Threshold, DKK million" hint="Contract value: the larger of total and annual value.">
-            {(p) => <TextInput {...p} inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} style={{ width: 120 }} />}
+            {(p) => <NumberInput {...p} decimals={2} value={text} onValueChange={setText} style={{ width: 120 }} />}
           </Field>
           <Button type="submit" variant="secondary" size="md">
             Apply

@@ -4,12 +4,13 @@ import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiMode } from '../api';
 import { qk, useApi, useAppConfig, useLookups, useScope } from '../app/context';
-import type { ContractListItem, ContractQuery, ContractSort, ContractView, RegisterColumn } from '../api/types';
+import type { ContractFilter, ContractListItem, ContractQuery, ContractSort, ContractView, RegisterColumn } from '../api/types';
 import { Button, ButtonLink, Card, ChipSelect, EmptyState, ErrorState, Icon, Segmented, Skeleton, SkeletonRows, Table, useToast, type Column } from '../components';
 import { BulkBar } from '../features/Bulk';
 import { contractColumns, defaultColumns, TagList, useColumnBudget } from '../features/columns';
 import { ColumnChooser, ViewsMenu } from '../features/Views';
-import { chipsOf, filterToParams as filterParams, parseFilter } from '../lib/drill';
+import { applyDrill, chipsOf, filterToParams as filterParams, parseFilter } from '../lib/drill';
+import { filterSpecFor, HeaderFilter } from '../features/HeaderFilters';
 import { sanitizeColumns } from '../lib/views';
 import { formatDate, noticeTone } from '../lib/dates';
 import { ALL_STATUSES, formatMoneyCompact, plural, saveBlob, statusLabel } from '../lib/format';
@@ -228,13 +229,26 @@ export function Register() {
     className: 'col-select hide-phone',
     render: (r) => <input type="checkbox" className="check__box" aria-label={`Select ${r.title}`} checked={selected.includes(r.id)} onClick={(e) => e.stopPropagation()} onChange={(e) => setSelected(e.target.checked ? [...selected, r.id] : selected.filter((x) => x !== r.id))} />,
   };
-  const configured = contractColumns(columnKeys, { title: titleCell, customFields: config.customFields, lookups });
+  // Release 4 (owner item B): a filter in every column header, written to the URL like the rest.
+  const applyHeaderFilter = (patch: Partial<ContractFilter>) => {
+    const next = filterParams(applyDrill(parsed, patch), params);
+    next.delete('page');
+    next.delete('sel');
+    setParams(next, { replace: true });
+  };
+  const withFilters = (cols: Column<ContractListItem>[]) =>
+    cols.map((c) => {
+      const spec = filterSpecFor(c.key, config.customFields);
+      const label = typeof c.header === 'string' ? c.header : c.key;
+      return spec ? { ...c, filter: <HeaderFilter label={label} spec={spec} filter={parsed} onApply={applyHeaderFilter} /> } : c;
+    });
+  const configured = withFilters(contractColumns(columnKeys, { title: titleCell, customFields: config.customFields, lookups }));
   // Tablet (720–1000px): no room for five columns. Contract, Notice and Status stay; the entity and
   // the owner are in the record. (A phone shows cards; the CSS hides the extra cells there.)
   const tablet = narrow && !phone;
   const columns = [
     selectColumn,
-    ...(tablet ? contractColumns(['contract', 'notice', 'status'], { title: titleCell }).map((c) => (c.key === 'contract' ? { ...c, width: undefined } : c)) : configured),
+    ...(tablet ? withFilters(contractColumns(['contract', 'notice', 'status'], { title: titleCell })).map((c) => (c.key === 'contract' ? { ...c, width: undefined } : c)) : configured),
   ];
 
   const exportButton = (

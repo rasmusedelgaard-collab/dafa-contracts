@@ -1,3 +1,4 @@
+import { formatDateIn } from './displayFormat';
 // Date helpers. All contract dates are ISO `yyyy-MM-dd` strings and are treated as
 // calendar dates (UTC arithmetic, no time zones).
 
@@ -113,7 +114,8 @@ export function formatDate(iso: string | null | undefined, fallback = '–'): st
   if (!iso) return fallback;
   const d = toUtc(iso);
   if (Number.isNaN(d.getTime())) return fallback;
-  return `${d.getUTCDate()} ${MONTHS_SHORT[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+  // Release 4: the date format from General settings.
+  return formatDateIn(d);
 }
 
 /** "15 December 2026" */

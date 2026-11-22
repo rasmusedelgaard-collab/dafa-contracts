@@ -281,3 +281,57 @@ describe('Register and search: the same removal paths', () => {
     expect(urlParams().get('q')).toBe('supply');
   });
 });
+
+describe('Register column header filters (owner item B)', () => {
+  it('filters by a value range and by owners from the list; both show as removable chips and go to export', async () => {
+    const user = userEvent.setup();
+    const api = renderApp('/contracts?cols=contract,owner,annualValue,status');
+    await screen.findByRole('table');
+    // Range filter on Annual value (DKK).
+    await user.click(await screen.findByRole('button', { name: 'Filter Annual value' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Filter Annual value' });
+    await user.type(within(dialog).getByLabelText('Min'), '1000000');
+    expect(within(dialog).getByLabelText('Min')).toHaveValue('1,000,000');
+    await user.click(within(dialog).getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(urlParams().get('annualValueMin')).toBe('1000000'));
+    expect(screen.getByRole('button', { name: 'Filter Annual value (active)' })).toBeInTheDocument();
+    const all = await api.getContracts({ pageSize: 200 });
+    const big = await api.getContracts({ pageSize: 200, annualValueMin: 1_000_000 });
+    expect(big.total).toBeGreaterThan(0);
+    expect(big.total).toBeLessThan(all.total);
+
+    // Multi-select owner from the values in the current selection.
+    await user.click(screen.getByRole('button', { name: 'Filter Owner' }));
+    const owners = await screen.findByRole('dialog', { name: 'Filter Owner' });
+    const boxes = await within(owners).findAllByRole('checkbox');
+    await user.click(boxes[0]!);
+    await user.click(within(owners).getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(urlParams().getAll('owner')).toHaveLength(1));
+
+    // Chips remove them again.
+    const more = screen.getByRole('navigation', { name: 'More filters' });
+    await user.click(within(more).getByRole('button', { name: /^Remove Annual value/ }));
+    await waitFor(() => expect(urlParams().get('annualValueMin')).toBeNull());
+    await user.click(within(screen.getByRole('navigation', { name: 'More filters' })).getByRole('button', { name: /^Remove Owner/ }));
+    await waitFor(() => expect(urlParams().get('owner')).toBeNull());
+  });
+
+  it('a date header filter and a text filter round-trip through the URL', async () => {
+    const user = userEvent.setup();
+    renderApp('/contracts?cols=contract,end,status');
+    await user.click(await screen.findByRole('button', { name: 'Filter End' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Filter End' });
+    await user.type(within(dialog).getByLabelText('From'), '2027-01-01');
+    await user.click(within(dialog).getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(urlParams().get('endFrom')).toBe('2027-01-01'));
+    await user.click(screen.getByRole('button', { name: 'Filter Contract' }));
+    const text = await screen.findByRole('dialog', { name: 'Filter Contract' });
+    await user.type(within(text).getByLabelText('Title contains'), 'supply');
+    await user.click(within(text).getByRole('button', { name: 'Apply' }));
+    await waitFor(() => expect(urlParams().get('title')).toBe('supply'));
+    await user.click(screen.getByRole('button', { name: 'Filter Contract (active)' }));
+    await user.click(within(await screen.findByRole('dialog', { name: 'Filter Contract' })).getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(urlParams().get('title')).toBeNull());
+    expect(urlParams().get('endFrom')).toBe('2027-01-01');
+  });
+});

@@ -1,5 +1,6 @@
 // Custom fields and per-type field rules: which fields apply, defaults, validation, display.
 import type { ContractStatus, CustomFieldDef, CustomFieldValue, FieldRules, Id, Lookups, OptionalStandardField, TypeFieldRules } from '../api/types';
+import { formatNumber } from './displayFormat';
 
 /** Active definitions that apply to a contract type, in admin order. */
 export function fieldsForType(defs: CustomFieldDef[], typeId: Id | null | undefined): CustomFieldDef[] {
@@ -95,9 +96,9 @@ export function displayValue(def: Pick<CustomFieldDef, 'type'>, v: CustomFieldVa
     case 'MultiChoice':
       return Array.isArray(v) ? v.join(', ') : String(v);
     case 'Money':
-      return typeof v === 'object' && !Array.isArray(v) ? `${v.currency} ${new Intl.NumberFormat('en-US').format(v.amount)}` : String(v);
+      return typeof v === 'object' && !Array.isArray(v) ? `${v.currency} ${formatNumber(v.amount)}` : String(v);
     case 'Number':
-      return typeof v === 'number' ? new Intl.NumberFormat('en-US').format(v) : String(v);
+      return typeof v === 'number' ? formatNumber(v) : String(v);
     case 'Date':
       return typeof v === 'string' && formatDate ? formatDate(v) : String(v);
     case 'Person':

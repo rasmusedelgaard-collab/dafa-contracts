@@ -2,7 +2,7 @@
 import { useId } from 'react';
 import { useLookups } from '../app/context';
 import type { CustomFieldDef, CustomFieldValue, TagRef } from '../api/types';
-import { Field, Segmented, Select, TextInput } from '../components';
+import { Field, NumberValueInput, Segmented, Select, TextInput } from '../components';
 import { displayValue, isEmptyValue } from '../lib/customFields';
 import { formatDate } from '../lib/dates';
 import { PersonPicker } from './Pickers';
@@ -14,36 +14,12 @@ export function CustomFieldInput({ def, value, error, onChange, currency }: { de
     case 'Text':
       return <Field {...common}>{(p) => <TextInput {...p} value={typeof value === 'string' ? value : ''} onChange={(e) => onChange(e.target.value)} />}</Field>;
     case 'Number':
-      return (
-        <Field {...common}>
-          {(p) => (
-            <TextInput
-              {...p}
-              inputMode="decimal"
-              value={typeof value === 'number' ? String(value) : ''}
-              onChange={(e) => {
-                const t = e.target.value.replace(/[\s,]/g, '');
-                onChange(t === '' ? null : Number.isFinite(Number(t)) ? Number(t) : (t as unknown as number));
-              }}
-            />
-          )}
-        </Field>
-      );
+      return <Field {...common}>{(p) => <NumberValueInput {...p} value={typeof value === 'number' ? value : null} onNumberChange={(n) => onChange(n)} />}</Field>;
     case 'Money': {
       const money = value && typeof value === 'object' && !Array.isArray(value) ? value : null;
       return (
         <Field {...common} hint={def.helpText ?? `Amount in ${money?.currency ?? currency}`}>
-          {(p) => (
-            <TextInput
-              {...p}
-              inputMode="decimal"
-              value={money ? String(money.amount) : ''}
-              onChange={(e) => {
-                const t = e.target.value.replace(/[\s,]/g, '');
-                onChange(t === '' ? null : { amount: Number(t), currency: money?.currency ?? currency });
-              }}
-            />
-          )}
+          {(p) => <NumberValueInput {...p} value={money ? money.amount : null} onNumberChange={(n) => onChange(n === null ? null : { amount: n, currency: money?.currency ?? currency })} />}
         </Field>
       );
     }

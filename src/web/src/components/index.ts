@@ -14,3 +14,4 @@ export { Table } from './Table';
 export type { Column } from './Table';
 export { ToastProvider, useToast } from './Toast';
 export { RouteErrorBoundary } from './RouteErrorBoundary';
+export { NumberInput, NumberValueInput } from './NumberInput';

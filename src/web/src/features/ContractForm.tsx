@@ -4,7 +4,11 @@ import { fieldsForType, rulesForType } from '../lib/customFields';
 import { CustomFieldInput, TagPicker } from './CustomFields';
 import { CounterpartyPicker, PersonPicker } from './Pickers';
 import type { LookupUser } from '../api/types';
-import { Button, Field, Pill, Segmented, Select, Textarea, TextInput } from '../components';
+import { Button, Field, NumberInput, Pill, Segmented, Select, Textarea, TextInput } from '../components';
+import { canonicalAmount } from '../lib/displayFormat';
+
+/** Older drafts and AI suggestions may hold "1,250,000": keep digits and the "." decimal. */
+const toCanonical = (text: string) => (/^-?\d*(\.\d*)?$/.test(text) ? text : canonicalAmount(text.replace(/,/g, ''), 2, 'en-US'));
 import type { ContractDraft, DraftErrors, DraftField } from '../lib/validation';
 
 export interface SuggestionState {
@@ -91,11 +95,17 @@ export function ContractForm({ draft, errors, onPatch, suggestions, flat, locked
     return { suggested: false };
   };
 
-  const text = (field: 'title' | 'noticePeriodDays' | 'renewalMonths' | 'annualValue' | 'totalValue' | 'paymentTerms' | 'priceAdjustment' | 'governingLaw' | 'liabilityCap' | 'exclusivity', label: string, opts: { optional?: boolean; hint?: string; numeric?: boolean; full?: boolean; placeholder?: string } = {}) => {
+  const text = (field: 'title' | 'noticePeriodDays' | 'renewalMonths' | 'annualValue' | 'totalValue' | 'paymentTerms' | 'priceAdjustment' | 'governingLaw' | 'liabilityCap' | 'exclusivity', label: string, opts: { optional?: boolean; hint?: string; numeric?: boolean; amount?: boolean; full?: boolean; placeholder?: string } = {}) => {
     const s = ai(field, label);
     return (
       <Field label={label} optional={opts.optional && !ruleRequired(field)} error={errors[field]} hint={opts.hint} tag={s.tag} after={s.after} className={opts.full ? 'form-grid__full' : undefined}>
-        {(p) => <TextInput {...p} suggested={s.suggested} disabled={locked(field)} inputMode={opts.numeric ? 'decimal' : undefined} placeholder={opts.placeholder} value={draft[field]} onChange={(e) => onChange(field, e.target.value)} />}
+        {(p) =>
+          opts.amount ? (
+            <NumberInput {...p} suggested={s.suggested} disabled={locked(field)} placeholder={opts.placeholder} value={toCanonical(draft[field])} onValueChange={(v) => onChange(field, v)} />
+          ) : (
+            <TextInput {...p} suggested={s.suggested} disabled={locked(field)} inputMode={opts.numeric ? 'decimal' : undefined} placeholder={opts.placeholder} value={draft[field]} onChange={(e) => onChange(field, e.target.value)} />
+          )
+        }
       </Field>
     );
   };
@@ -245,8 +255,8 @@ export function ContractForm({ draft, errors, onPatch, suggestions, flat, locked
 
       <h2 className="form-section">Value</h2>
       {select('currency', 'Currency', lookups.currencies.map((c) => ({ value: c, label: c })))}
-      {text('annualValue', 'Annual value', { numeric: true, hint: 'Annual or total value is required. Enter 0 if there is none.' })}
-      {text('totalValue', 'Total value', { numeric: true, optional: true, hint: 'Decides the approval route when filled in.' })}
+      {text('annualValue', 'Annual value', { amount: true, hint: 'Annual or total value is required. Enter 0 if there is none.' })}
+      {text('totalValue', 'Total value', { amount: true, optional: true, hint: 'Decides the approval route when filled in.' })}
       {yesNo('changeOfControl', 'Change-of-control clause', 'Can the counterparty terminate or change terms if DAFA changes owner?')}
 
       <h2 className="form-section">More terms</h2>

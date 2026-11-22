@@ -4,6 +4,7 @@ import { useLocation, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Api } from '../api/api';
 import type { AppConfig, Lookups, Me, ReminderSettings } from '../api/types';
+import { setDisplayFormats } from '../lib/displayFormat';
 
 // ----- API -----
 const ApiContext = createContext<Api | null>(null);
@@ -157,6 +158,8 @@ const EMPTY_CONFIG: AppConfig = {
 export function useAppConfig(): AppConfig & { loaded: boolean } {
   const api = useApi();
   const q = useQuery({ queryKey: qk.appConfig, queryFn: () => api.getAppConfig(), staleTime: 5 * 60_000, retry: false });
+  // Release 4: the General settings formats apply to every number and date shown.
+  setDisplayFormats(q.data?.dateFormat, q.data?.numberFormat);
   return useMemo(() => ({ ...(q.data ?? EMPTY_CONFIG), loaded: !!q.data }), [q.data]);
 }
 
