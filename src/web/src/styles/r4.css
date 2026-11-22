@@ -185,3 +185,110 @@
   color: var(--primary);
   font-size: 13px;
 }
+
+/* ---------- Templates (categories, preview) ---------- */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.template-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px 8px;
+}
+.template-item .template-preview {
+  grid-column: 1 / -1;
+}
+.template-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--tint-2);
+}
+.template-preview__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.template-preview__fields code {
+  color: var(--primary);
+}
+.template-preview__text {
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-2);
+}
+.check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px 14px;
+  margin-top: 8px;
+}
+.fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+/* ---------- Logo (owner item F) ---------- */
+.brand__logo-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.brand__logo {
+  display: block;
+  max-height: 40px;
+  max-width: 200px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  background: transparent;
+}
+.brand__logo--dark,
+.brand__logo--compact {
+  display: none;
+}
+:root[data-theme='dark'] .brand__logo--light {
+  display: none;
+}
+:root[data-theme='dark'] .brand__logo--dark {
+  display: block;
+}
+.logo-preview {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.logo-preview__box {
+  display: flex;
+  align-items: center;
+  min-width: 220px;
+  min-height: 72px;
+  padding: 14px 18px;
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+}
+.logo-preview__box--light {
+  background: var(--sidebar-preview-light, #ffffff);
+}
+.logo-preview__box--dark {
+  background: var(--sidebar-preview-dark, #17202b);
+}
+.settings-grid__full { grid-column: 1 / -1; }

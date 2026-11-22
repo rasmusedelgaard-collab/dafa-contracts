@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError } from '../../api/api';
 import { permissions, qk, useApi, useAppConfig, useInvalidateContracts, useLookups, useMe, useReminderSettings, useScope } from '../../app/context';
 import type { ContractDetail, ExtractResult, LinkKind, ObligationInput, Template } from '../../api/types';
-import { Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Field, Icon, Pill, Select, Skeleton, TextInput, useToast } from '../../components';
+import { Button, ButtonLink, Card, CardTitle, EmptyState, Field, Icon, Pill, Select, Skeleton, TextInput, useToast } from '../../components';
 import { Deviations, RoutePreview } from '../../features/Approval';
 import { ContractForm } from '../../features/ContractForm';
 import { UPLOAD_ACCEPT, uploadError } from '../../lib/uploads';
@@ -14,6 +14,7 @@ import { applySuggestions } from '../../lib/suggestions';
 import { draftToInput, emptyDraft, hasErrors, parseAmount, parseWhole, routeValue, validateDraft, type ContractDraft, type DraftErrors } from '../../lib/validation';
 import { LINK_KINDS } from '../record/dialogs';
 import { PersonPicker } from '../../features/Pickers';
+import { TemplateChooser } from '../../features/TemplateChooser';
 
 const STEPS = ['Upload', 'Details', 'Links and obligations', 'Approval'] as const;
 
@@ -62,11 +63,8 @@ function ValueBands({ value }: { value: number }) {
 // ---------------------------------------------------------------------------
 
 function StartStep({ onFile, reading, onTemplate, onManual, preferTemplate }: { onFile: (f: File) => void; reading: boolean; onTemplate: (t: Template) => void; onManual: () => void; preferTemplate: boolean }) {
-  const api = useApi();
   const inputRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
-  const templates = useQuery({ queryKey: qk.templates, queryFn: () => api.getTemplates() });
-
   const onDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setOver(false);
@@ -119,30 +117,7 @@ function StartStep({ onFile, reading, onTemplate, onManual, preferTemplate }: { 
         Start from a template
       </h2>
       <span className="secondary">The draft is written from the DAFA template with the details you fill in, and saved to the contract's documents.</span>
-      {templates.isLoading ? (
-        <div className="stack" style={{ gap: 8 }} role="status" aria-label="Loading templates">
-          <Skeleton height={62} radius={12} />
-          <Skeleton height={62} radius={12} />
-        </div>
-      ) : templates.isError ? (
-        <ErrorState text="The templates could not be loaded." onRetry={() => void templates.refetch()} />
-      ) : (templates.data ?? []).length === 0 ? (
-        <EmptyState compact title="No templates yet" text="An administrator can add templates in Settings." />
-      ) : (
-        <div className="stack" style={{ gap: 8 }}>
-          {(templates.data ?? []).map((t) => (
-            <button key={t.id} type="button" className="template-opt" disabled={reading} onClick={() => onTemplate(t)}>
-              <span className="tile tone-blue" aria-hidden="true">
-                DOC
-              </span>
-              <span className="kv">
-                <span className="kv__v">{t.name}</span>
-                <span className="kv__k">{t.description}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
+      <TemplateChooser disabled={reading} onPick={onTemplate} />
     </Card>
   );
 

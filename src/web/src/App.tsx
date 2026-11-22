@@ -12,6 +12,7 @@ import { Home } from './pages/Home';
 import { NotFound } from './pages/NotFound';
 import { Register } from './pages/Register';
 import { AppShell } from './shell/AppShell';
+import { BrandMark, useBranding } from './shell/Brand';
 
 // Split by route: Home and the register load with the shell, everything else on demand.
 const Record = lazyPage(() => import('./pages/record/Record').then((m) => m.Record));
@@ -39,17 +40,12 @@ function Splash() {
 }
 
 function SignInCard({ title, children }: { title: string; children: ReactNode }) {
+  const branding = useBranding();
   return (
     <div className="center-page">
       <Card className="center-card">
         <div className="brand" style={{ padding: 0 }}>
-          <span className="brand__mark" aria-hidden="true">
-            <Icon name="doc" size={18} />
-          </span>
-          <span className="stack">
-            <span className="brand__name">DAFA Contracts</span>
-            <span className="caption">Group workspace</span>
-          </span>
+          <BrandMark branding={branding} />
         </div>
         <h1 className="h2">{title}</h1>
         {children}

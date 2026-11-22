@@ -68,7 +68,7 @@ interface DeptLink {
 export interface R4State {
   categories: CategoryRec[];
   templateMeta: Record<Id, TemplateMeta>;
-  branding: { full: string | null; compact: string | null; version: number };
+  branding: { full: string | null; compact: string | null; dark?: string | null; version: number };
   entityLinks: Record<Id, EntityLink>;
   deptLinks: Record<Id, DeptLink>;
   esign: ESignSettings;
@@ -182,7 +182,7 @@ export function createR4(ctx: MockCtx) {
   // ----- Branding -----
   const branding = (): Branding => {
     const b = state().branding;
-    return { logoUrl: b.full, compactLogoUrl: b.compact, version: String(b.version) };
+    return { logoUrl: b.full, compactLogoUrl: b.compact, darkLogoUrl: b.dark ?? null, version: String(b.version) };
   };
 
   // ----- Links -----
@@ -595,9 +595,10 @@ export function createR4(ctx: MockCtx) {
         const url = await readDataUrl(file);
         const b = state().branding;
         if (variant === 'compact') b.compact = url;
+        else if (variant === 'dark') b.dark = url;
         else b.full = url;
         b.version += 1;
-        ctx.audit('settings.branding', null, `${variant === 'compact' ? 'Compact icon' : 'Logo'} uploaded`, u.id);
+        ctx.audit('settings.branding', null, `${variant === 'compact' ? 'Compact icon' : variant === 'dark' ? 'Dark-theme logo' : 'Logo'} uploaded`, u.id);
         return branding();
       }),
     deleteLogo: (variant: LogoVariant) =>
@@ -605,6 +606,7 @@ export function createR4(ctx: MockCtx) {
         const u = ctx.admin();
         const b = state().branding;
         if (variant === 'compact') b.compact = null;
+        else if (variant === 'dark') b.dark = null;
         else b.full = null;
         b.version += 1;
         ctx.audit('settings.branding', null, `${variant === 'compact' ? 'Compact icon' : 'Logo'} removed`, u.id);

@@ -17,7 +17,7 @@ import { SyncSources } from './Sync';
 import { GeneralAdmin, JobsAdmin, NotificationsAdmin } from './System';
 import { UsersAdmin } from './Users';
 import { HolidayCover, Reminders, Retention } from './Policies';
-import { Templates } from './Templates';
+import { TemplateCategories, Templates } from './Templates';
 
 const SECTIONS: { id: string; label: string; group: string; render: () => ReactNode }[] = [
   { id: 'entities', label: 'Legal entities', group: 'Organization', render: () => <LegalEntitiesAdmin /> },
@@ -36,6 +36,7 @@ const SECTIONS: { id: string; label: string; group: string; render: () => ReactN
   { id: 'notifications', label: 'Notifications', group: 'Rules', render: () => <NotificationsAdmin /> },
   { id: 'retention', label: 'Retention', group: 'Rules', render: () => <Retention /> },
   { id: 'templates', label: 'Templates', group: 'Rules', render: () => <Templates /> },
+  { id: 'template-categories', label: 'Template categories', group: 'Rules', render: () => <TemplateCategories /> },
   { id: 'holiday-cover', label: 'Holiday cover', group: 'Rules', render: () => <HolidayCover /> },
   { id: 'general', label: 'General', group: 'System', render: () => <GeneralAdmin /> },
   { id: 'jobs', label: 'Jobs', group: 'System', render: () => <JobsAdmin /> },

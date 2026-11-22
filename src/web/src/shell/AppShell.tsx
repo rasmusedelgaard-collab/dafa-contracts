@@ -7,6 +7,7 @@ import { Avatar, ButtonLink, Icon, RouteErrorBoundary, Select, Skeleton, type Ic
 import { GlobalSearch } from './GlobalSearch';
 import { NotificationBell } from './NotificationBell';
 import { UserSwitcher } from './UserSwitcher';
+import { BrandMark } from './Brand';
 
 interface NavItem {
   to: string;
@@ -25,6 +26,7 @@ function useNavCounts() {
 function Sidebar({ work, manage, onUser }: { work: NavItem[]; manage: NavItem[]; onUser: () => void }) {
   const me = useMe();
   const lookups = useLookups();
+  const config = useAppConfig();
   const link = (item: NavItem) => (
     <NavLink key={item.to} to={item.to} end={item.end} className="nav-link">
       <Icon name={item.icon} />
@@ -39,14 +41,8 @@ function Sidebar({ work, manage, onUser }: { work: NavItem[]; manage: NavItem[];
   );
   return (
     <nav className="sidebar" aria-label="Main">
-      <Link to="/" className="brand">
-        <span className="brand__mark" aria-hidden="true">
-          <Icon name="doc" size={18} />
-        </span>
-        <span className="stack">
-          <span className="brand__name">DAFA Contracts</span>
-          <span className="caption">Group workspace</span>
-        </span>
+      <Link to="/" className="brand" aria-label="DAFA Contracts, home">
+        <BrandMark branding={config.branding} />
       </Link>
       <span className="nav-group">Work</span>
       {work.map(link)}
