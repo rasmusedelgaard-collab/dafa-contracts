@@ -142,6 +142,15 @@ declare function _legacyAdminKeys(): Pick<
 const SYNCED_FIELDS = ['name', 'email', 'title', 'isActive'];
 const LANDING: LandingPage[] = ['home', 'contracts', 'renewals', 'approvals', 'overview'];
 
+function browserTheme(): 'light' | 'dark' | 'system' {
+  try {
+    const v = globalThis.localStorage?.getItem('dafa.theme');
+    return v === 'dark' || v === 'system' ? v : 'light';
+  } catch {
+    return 'light';
+  }
+}
+
 export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersChanged: (c: ContractRec, actor: UserRec, change: string) => void } {
   const { db, run } = ctx;
   const byId = <T extends { id: Id }>(list: T[], id: Id | null | undefined): T | undefined => (id ? list.find((x) => x.id === id) : undefined);
@@ -179,7 +188,9 @@ export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersCh
       defaultEntityId: stored?.defaultEntityId ?? null,
       landingPage: stored?.landingPage ?? null,
       autoWatch: stored?.autoWatch ?? false,
-      theme: stored?.theme ?? 'light',
+      // The demo mock keeps data in memory only; without a saved choice it reports the theme this
+      // browser last used, so a reload of the demo site keeps the user's theme (the API persists it).
+      theme: stored?.theme ?? browserTheme(),
     };
   }
 

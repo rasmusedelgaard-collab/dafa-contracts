@@ -173,3 +173,13 @@
 - FE: Saved views store the register URL query and columns; a personal default view is applied when the register opens without its own filters; shared views can be created by contract owners and admins.
 - FE: Settings are grouped Organization / Data / Rules / System; departments and contract types are deactivated through `PUT` with `isActive` (delete stays for unused rows).
 - FE: Mock: one seeded user (Louise Winther) is marked as an Entra ID account to demo read-only synced fields in Dev mode; the data-room zip is built in the browser (stored entries) and is ready at once.
+
+## Frontend release 4 (2026-11-22)
+- FE: The entity scope is only the URL (`?entity=`, repeatable). It is carried to another page, never re-added on the same page; removal by any path sticks. The last scope per user is remembered on the device.
+- FE: Pickers filter the lookups locally (all users are already loaded); free text is dropped on blur. A counterparty must be a master record (validation and API).
+- FE: Number fields keep canonical text ("1250000.5") and display it in the General settings format; separators while typing with the caret kept after the same digit.
+- FE: Header filters use URL names equal to the API names (`annualValueMin`, `endFrom`, `title`, …); `cf.<key>` is repeatable and supports `.min/.max`.
+- FE: A failed lazy chunk reloads the page once per minute at most; the second failure shows "A new version is available".
+- FE: Theme is a per-user preference (default light) applied before paint from localStorage by a plain script (CSP-friendly, not inline). Filled buttons use `--primary-fill` (white text in both themes); links use `--primary` (light blue in dark). The demo mock answers the browser's last theme when the user has not saved one, because its data is in memory.
+- FE: The SVG logo is only ever used in `<img>`; a dark-theme logo is optional.
+- FE: The mock enforces the release 4 rules (counterparty required, signing rights, storage reports) so the demo behaves like the API.

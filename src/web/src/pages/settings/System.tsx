@@ -450,7 +450,7 @@ function LogoAdmin() {
               {url ? <img className="brand__logo" src={url} alt="" /> : <span className="caption">Default mark</span>}
             </div>
             <div className="logo-preview__box logo-preview__box--dark" aria-label={`${label} on the dark menu`} role="img">
-              {url || (variant === 'dark' && urlOf('full')) ? <img className="brand__logo" src={url ?? urlOf('full') ?? ''} alt="" /> : <span className="caption" style={{ color: 'var(--logo-preview-dark-text)' }}>Default mark</span>}
+              {url || (variant === 'dark' && urlOf('full')) ? <img className="brand__logo" src={url ?? urlOf('full') ?? ''} alt="" /> : <span className="caption">Default mark</span>}
             </div>
             <label className="btn btn--secondary btn--sm">
               {url ? 'Replace' : 'Upload'}

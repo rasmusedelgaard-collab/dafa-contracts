@@ -516,3 +516,45 @@ Owner's report: "If I add an entity to the overview, I cannot remove it from the
 | `npm run e2e:demo` | exit 0 at 390 and 1440 px, motion on; new: entity added with the filter bar and with a chart drill-down, removed with the breadcrumb and with Clear all, totals back to 44 contracts / DKK 60.7m |
 
 Note: filter-bar selects replace the history entry (as before); browser back undoes chart/tile drill-downs, which push.
+
+## Frontend release 4 (2026-11-22)
+
+Scope: `src/web`, `docs/CONTRACT_V4.md` (new, written first for the backend), this section and the frontend section of `docs/DECISIONS.md`. `src/api` not touched.
+
+### Items
+| Item | State | What was built |
+|---|---|---|
+| A1 Overview entity filter cannot be removed | Done | Root cause in `ScopeProvider` (see "Frontend fix" above): the URL is now the only state. |
+| A2 Search entity back to "All" | Done | Same root cause; Search sends `entityId` repeatable and its Entity select can always be set to All. |
+| A3 Top-bar scope | Done | One model: `?entity=` (repeatable) = scope, sent as `entityId` by Home, Contracts, Renewals, Approvals (page; nav badges stay unscoped), Overview, Search page and the Ctrl+K palette (client parameter names checked against `client.ts`). Removable "Showing <entity>" chip on Home, Renewals and Approvals (Overview/register/search show it in their own filters). Persisted per user on the device (`dafa.scope.<userId>`), else the server default (`defaultEntityId`). Renewals no longer filters only in the browser. |
+| A4 Settings sometimes blank | Done (frontend) | Lazy pages reload once after a failed chunk import (deploy removed old hashed files; loop guard 60 s), then a "A new version is available – Reload" screen; a route error boundary keeps the shell; every Settings section shows an error with Retry instead of an endless skeleton (General, Currencies, Tags, Jobs, import history/fields, sync runs). Deployment request in CONTRACT_V4 §9: keep previous `assets/*` one release or serve `index.html` no-cache. |
+| B Register header filters | Done | Filter button in every column header (text contains; counterparty contains or pick; entity/department/type/status/owner/delegate/responsible/tags multi-select with search from `GET contracts/distinct`; values min/max DKK; dates from/to; custom fields by type; renewal/change of control yes/no). Active = filled icon + removable chip; in the URL, saved views and export. |
+| C Person and counterparty pickers | Done | `Combobox` (ARIA combobox/listbox, keyboard, clear button, no free text), `PersonPicker` (name/e-mail/initials, shows department · entity, inactive hidden) and `CounterpartyPicker` (master data, "Create new counterparty" dialog when `canCreateCounterparty`; a duplicate picks the existing one). Used in New contract, Edit details, obligations (2), delegate (2), bulk reassign, users reassign/effective access, holiday cover, approval rules, Person custom fields, e-signature, Overview owner/counterparty filters, Search person filter. A suggested name is matched to the master on extract. |
+| D Number formats | Done | `NumberInput` with thousand separators while typing (caret kept), canonical text in state, numbers to the API; amounts, custom Number/Money, header filters, approval rule bands, rule tester, due-diligence threshold, e-sign expiry. General settings date and number formats now apply to every formatted date and number. |
+| E Template categories | Done | Settings > Template categories (add, edit, order up/down, active, delete when empty); template dialog: category, contract types (several), language, active; New contract: category chips, search, description, category · language · types, field preview. |
+| F Logo | Done | Settings > General: logo, dark-theme logo, compact icon (PNG/SVG/JPG/WebP, 1 MB), previews on light and dark, Replace/Remove. Shown as `<img>` (never inlined), transparent, max 40 px high, in the sidebar and on the sign-in screen. The compact icon is stored and offered but not yet placed in the phone header. |
+| G Entity/SharePoint/Entra link | Done | Legal entities: site URL, resolved site id (read-only), management group, link state with last check and "Test link"; Departments: library and group with "Test link"; Settings > Access mapping matrix with warnings. Marked "Used in SharePoint mode" in test mode. |
+| H E-signature | Done (Simulated) | User right "Can send for signature" (+ per entity) in Users and access; Settings > E-signature (provider, message, order, reminders, expiry, require approved, authorised signatories per entity). Record: "Send for signature" (documents, DAFA/external signatories, order, message, preview), Signature card (status per signatory, resend, cancel, "Simulate signing"/decline in Simulated mode); completion stores the signed document and activates the contract. Others see "Ask a colleague with signing rights". "Mark as signed" is now "Record manual signature" for owner, delegate and admins. DocuSign/Penneo are only settings on the frontend. |
+| I Light/dark theme | Done | My settings > Appearance: Light, Dark, System; saved via `me/preferences` (`theme`), copied to localStorage and applied before first paint by `public/theme-init.js` (sign-in included). Every color is a token; a test checks both token sets have the same keys and that no other stylesheet has a hard-coded color. |
+| Storage | Done | `storage-unavailable` → "SharePoint is busy. Try again in a moment." with Retry; `file-missing` sentence; `storage-not-configured` shows the server text, admins get "Open Access mapping"; on document upload/download, extract, template download, data room, signature send. Settings > Storage health (state, last success/failure, failures 24 h) and the latest reconciliation report with "Run check now". "Open in SharePoint" only for admins. |
+
+### Contrast (WCAG ratios, computed)
+Dark: text 13.96 on surface / 15.43 on page; secondary 7.41 / 8.19; label 5.48; links/primary #5aa9d6 6.32 on surface, 5.01 on tint; white on primary fill #2a72a3 5.21 (hover 6.84); white on hero #0d3a5a 11.86; pills red 7.91, amber 8.13, green 7.94, blue 7.33, gray 8.34; placeholder 6.13; chart marks high 5.68, medium 8.56, low 6.32, decided 3.74, bar 4.18 (all ≥ 3:1). Light (changed so every text passes): label #66717d 4.97 (was 3.08), amber dot and "31–90 days" segment #a87300 4.10 (was 2.75), "decided" segment #8593a2 3.14 (was 2.10), soft bar #5f8fb2 3.47 (was 2.50).
+
+### Results of the last run here (src/web)
+| Command | Result |
+|---|---|
+| `npm run lint` | exit 0, no warnings |
+| `npm test` | exit 0, 17 files, 312 tests (new: `pages/filters.test.tsx` 42, `pages/r4.test.tsx` 9, `lib/r4.test.ts` 8) |
+| `npm run build` / `VITE_API_MODE=real npm run build` | exit 0; no `mockApi` chunk and no sample-data strings in the real build |
+| `npm run build:demo` | exit 0 |
+| `npm run e2e:demo` | exit 0 at 390 and 1440 px, motion on; new release 4 journey: Search entity back to All, top-bar scope chip removal (1440), register header filter with separators and chip removal (1440), counterparty/owner pickers need a click, template category, e-signature denied for Henrik and simulated end-to-end for Rasmus, SVG logo in the sidebar (1440, transparent, 32 px), dark theme switch (page rgb(15,22,32)). |
+
+Screens looked at: dark at 1440 (Home, Contracts, Overview, Renewals, Approvals, Search, New contract, My settings, Settings General/E-signature/Access mapping/Storage/Entities/Template categories), dark at 390 (Home, Contracts, record, approval), light at 1920 (Contracts with header filters, Overview, New contract, Settings). Fixed after looking: select chevrons invisible in dark (now a token), logo preview captions, chevrons on category chips.
+
+### Not done / known gaps
+- Nothing ran against the real API; CONTRACT_V4 is the shape the backend engineer implements.
+- Person pickers search the users already in lookups (instant, no request); `GET people` is in the contract for later.
+- Compact logo not yet used in the phone header; theme screenshots of every Settings section at 390 not taken.
+- Header filters are not offered in the phone card list (filters there: the chips and selects above).
+- The dataviz CVD validator was not re-run for the changed light amber/gray chart colors (contrast was computed).

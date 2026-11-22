@@ -84,7 +84,7 @@ describe('themes (owner item I)', () => {
     expect([...dark].filter((k) => !light.has(k))).toEqual([]);
     for (const f of readdirSync(dir).filter((x) => x.endsWith('.css') && x !== 'tokens.css')) {
       const text = readFileSync(join(dir, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-      expect(text.match(/#[0-9a-fA-F]{3,8}\b|rgba?\(/g) ?? [], f).toEqual([]);
+      expect(text.match(/#[0-9a-fA-F]{3,8}\b|rgba?\(|%23[0-9a-fA-F]{3,6}/g) ?? [], f).toEqual([]);
     }
   });
 

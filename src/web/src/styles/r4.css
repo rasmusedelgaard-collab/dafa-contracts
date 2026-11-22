@@ -401,3 +401,16 @@
     grid-template-columns: 1fr;
   }
 }
+.combo--compact .combo__input::placeholder {
+  color: var(--text);
+}
+.logo-preview__box--light .caption {
+  color: var(--logo-preview-light-text);
+}
+.logo-preview__box--dark .caption {
+  color: var(--logo-preview-dark-text);
+}
+.chip-row .chip {
+  background-image: none;
+  padding-right: 14px;
+}
