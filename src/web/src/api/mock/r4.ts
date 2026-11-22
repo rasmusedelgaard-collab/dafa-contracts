@@ -6,12 +6,15 @@ import type { Api } from '../api';
 import type {
   AccessMapping,
   AdminUser,
+  AppSettings,
+  ContractView,
   Branding,
   ContractDetail,
   ContractFilter,
   Counterparty,
   CounterpartyCreation,
   DepartmentAdmin,
+  DepartmentInputV4,
   DistinctColumn,
   DistinctValue,
   ESignSettings,
@@ -33,8 +36,8 @@ import type {
 } from '../types';
 import { statusLabel } from '../../lib/format';
 import { newId, seedId, type ContractRec, type DocumentRec, type UserRec } from './db';
-import { conflict, forbidden, invalid, notFound, problem } from './problems';
-import { matchesFilter } from './query';
+import { conflict, forbidden, invalid, invalidFields, notFound, problem } from './problems';
+import { matchesFilter, matchesView } from './query';
 import type { MockCtx } from './r3';
 import { DEP, ENT, TYP, USER, departmentId, entityId, typeId } from './seed';
 
@@ -200,7 +203,6 @@ export function createR4(ctx: MockCtx) {
     if (!extra.canSendForSignature) return { ok: false, reason: 'You do not have the right to send contracts for signature.' };
     if (extra.signatureEntityIds.length && !extra.signatureEntityIds.includes(c.entityId)) return { ok: false, reason: `Your signing right does not cover ${ctx.nameOf(db.entities, c.entityId)}.` };
     if (!statusOk(c)) return { ok: false, reason: s.requireApproved ? `The contract must be approved first (it is ${statusLabel(c.status)}).` : 'Ended contracts cannot be sent for signature.' };
-    if (open(c.id)) return { ok: false, reason: 'A signature request is already open.' };
     return { ok: true, reason: null };
   }
   const open = (contractId: Id) => state().requests.find((r) => r.contractId === contractId && r.status === 'Sent');
@@ -217,9 +219,10 @@ export function createR4(ctx: MockCtx) {
     const r = state().requests.find((x) => x.id === id);
     if (!r) throw notFound('Signature request');
     const c = ctx.contractFor(r.contractId, u);
-    const isSender = r.createdBy === u.name;
+    const isSender = r.createdById ? r.createdById === u.id : r.createdBy === u.name;
     const e = userExtra(u.id);
-    if (!isSender && !e.canSendForSignature && !u.roles.includes('Admin')) throw problem(403, 'Forbidden', 'Only the sender, colleagues with signing rights or an administrator can do this.', undefined, 'urn:dafa:problem:not-permitted');
+    const hasRight = e.canSendForSignature && (e.signatureEntityIds.length === 0 || e.signatureEntityIds.includes(c.entityId));
+    if (!isSender && !hasRight && !u.roles.includes('Admin')) throw problem(403, 'Forbidden', 'Only the sender, colleagues with signing rights or an administrator can do this.', undefined, 'urn:dafa:problem:not-permitted');
     return { r, c };
   };
   function complete(r: SignatureRequest, c: ContractRec, u: UserRec) {
@@ -278,7 +281,12 @@ export function createR4(ctx: MockCtx) {
       delete cf[key];
       f.cf = cf;
     } else delete (f as Record<string, unknown>)[COLUMN_PARAM[column] as string];
-    const rows = ctx.visible(u).map((c) => ({ c, row: ctx.toRow(c, u) })).filter(({ row }) => matchesFilter(row, f, { userId: u.id, today: ctx.today(), includeEndedDefault: true, customFields: db.customFields }));
+    // As the API: the register's tab (`view`) narrows the counts; its free-text search does not.
+    const view = (filter as { view?: ContractView }).view;
+    const rows = ctx
+      .visible(u)
+      .map((c) => ({ c, row: ctx.toRow(c, u) }))
+      .filter(({ row }) => matchesView(row, view, u.id) && matchesFilter(row, { ...f, q: undefined }, { userId: u.id, today: ctx.today(), includeEndedDefault: true, customFields: db.customFields }));
     const counts = new Map<string, DistinctValue>();
     const add = (value: string | null | undefined, label: string) => {
       if (!value) return;
@@ -439,23 +447,25 @@ export function createR4(ctx: MockCtx) {
         if (!p.ok) throw problem(403, 'Forbidden', p.reason ?? 'Not permitted.', undefined, 'urn:dafa:problem:not-permitted');
         const errors: Record<string, string[]> = {};
         const docs = (input.documentIds ?? []).filter((id) => db.documents.some((d) => d.id === id && d.contractId === c.id));
-        if (docs.length === 0 || docs.length !== (input.documentIds ?? []).length) errors.documentIds = ['Choose at least one document of this contract'];
+        if ((input.documentIds ?? []).length === 0) errors.documentIds = ['Choose at least one document to sign.'];
+        else if (docs.length !== (input.documentIds ?? []).length) errors.documentIds = ['A chosen document does not belong to this contract.'];
+        else if (docs.some((id) => db.documents.find((d) => d.id === id)?.kind === 'ApprovalLog')) errors.documentIds = ['The approval log cannot be sent for signature.'];
         if (!input.signers?.length) errors.signers = ['Add at least one signatory'];
         const signers = (input.signers ?? []).map((x, i) => {
           if (x.kind === 'Internal') {
             const person = ctx.userOf(x.userId ?? '');
-            if (!person || !person.isActive) errors[`signers.${i}.userId`] = ['Choose an active user'];
+            if (!person || !person.isActive) errors[`signers[${i}].userId`] = ['Choose an active colleague.'];
             return { id: newId(), kind: 'Internal' as const, userId: person?.id ?? null, name: person?.name ?? '', email: person?.email ?? '', order: x.order, status: 'Waiting' as const, at: null, declineReason: null };
           }
-          if (!x.name?.trim()) errors[`signers.${i}.name`] = ['Enter the name'];
-          if (!EMAIL.test(x.email?.trim() ?? '')) errors[`signers.${i}.email`] = ['Enter a valid e-mail'];
+          if (!x.name?.trim()) errors[`signers[${i}].name`] = ['Enter the name of the signer.'];
+          if (!EMAIL.test(x.email?.trim() ?? '')) errors[`signers[${i}].email`] = ['Enter a valid e-mail address.'];
           return { id: newId(), kind: 'External' as const, userId: null, name: x.name?.trim() ?? '', email: x.email?.trim() ?? '', order: x.order, status: 'Waiting' as const, at: null, declineReason: null };
         });
         if (s.restrictToAuthorised) {
           const allowed = s.authorisedSignatories.find((a) => a.entityId === c.entityId)?.userIds ?? [];
           if (!signers.some((x) => x.userId && allowed.includes(x.userId))) errors.signers = [`Add an authorised signatory of ${ctx.nameOf(db.entities, c.entityId)}`];
         }
-        if (Object.keys(errors).length) throw invalid('Check the signature request.', errors);
+        if (Object.keys(errors).length) throw invalidFields(errors);
         const order = input.order ?? s.defaultOrder;
         const r: SignatureRequest = {
           id: newId(),
@@ -466,6 +476,7 @@ export function createR4(ctx: MockCtx) {
           message: input.message?.trim() || s.defaultMessage,
           documentIds: docs,
           createdBy: u.name,
+          createdById: u.id,
           createdAt: ctx.now(),
           sentAt: ctx.now(),
           completedAt: null,
@@ -525,6 +536,28 @@ export function createR4(ctx: MockCtx) {
       }),
   };
 
+  /**
+   * `PUT admin/departments/{id}` as the API does it: the document library and the Entra group are
+   * set as given, and a field that is left out is cleared (which resets the link to "Not linked").
+   */
+  function saveDepartment(id: Id, input: DepartmentInputV4): DepartmentAdmin {
+    const u = ctx.admin();
+    const d = byId(db.departments, id);
+    if (!d) throw notFound('Department');
+    const name = input.name?.trim() ?? '';
+    if (!name) throw invalid('Enter a name.', { name: ['Required'] });
+    if (db.departments.some((x) => x.id !== id && x.name.toLowerCase() === name.toLowerCase())) throw conflict('A department with that name already exists.', 'duplicate');
+    const groupId = input.groupId?.trim() || null;
+    if (groupId && !GUID.test(groupId)) throw invalid('The Entra group id is a GUID.', { groupId: ['Not a GUID'] });
+    const before = deptLink(id);
+    Object.assign(d, { name, isActive: input.isActive ?? d.isActive });
+    const library = input.documentLibrary?.trim() || null;
+    const changed = library !== before.documentLibrary || groupId !== before.groupId;
+    state().deptLinks[id] = { documentLibrary: library, groupId, groupName: changed ? null : before.groupName, link: changed ? NOT_LINKED : before.link };
+    ctx.audit('settings.departments', null, `Department ${name} changed`, u.id);
+    return toDept(d);
+  }
+
   const admin: Pick<
     Api['admin'],
     | 'getTemplateCategories'
@@ -536,6 +569,9 @@ export function createR4(ctx: MockCtx) {
     | 'deleteLogo'
     | 'getDepartmentsV4'
     | 'updateDepartmentV4'
+    | 'getDepartments'
+    | 'updateDepartment'
+    | 'updateDepartmentV3'
     | 'testEntityLink'
     | 'testDepartmentLink'
     | 'getAccessMapping'
@@ -614,23 +650,11 @@ export function createR4(ctx: MockCtx) {
       }),
 
     getDepartmentsV4: () => run(() => (ctx.admin(), db.departments.map(toDept))),
-    updateDepartmentV4: (id, input) =>
-      run(() => {
-        const u = ctx.admin();
-        const d = byId(db.departments, id);
-        if (!d) throw notFound('Department');
-        const name = input.name?.trim() ?? '';
-        if (!name) throw invalid('Enter a name.', { name: ['Required'] });
-        const groupId = input.groupId?.trim() || null;
-        if (groupId && !GUID.test(groupId)) throw invalid('The Entra group id is a GUID.', { groupId: ['Not a GUID'] });
-        const before = deptLink(id);
-        Object.assign(d, { name, isActive: input.isActive ?? d.isActive });
-        const library = input.documentLibrary?.trim() || null;
-        const changed = library !== before.documentLibrary || groupId !== before.groupId;
-        state().deptLinks[id] = { documentLibrary: library, groupId, groupName: changed ? null : before.groupName, link: changed ? NOT_LINKED : before.link };
-        ctx.audit('settings.departments', null, `Department ${name} changed`, u.id);
-        return toDept(d);
-      }),
+    updateDepartmentV4: (id, input) => run(() => saveDepartment(id, input)),
+    // The API has one `GET` and one `PUT admin/departments/{id}`: every client method ends there.
+    getDepartments: () => run(() => (ctx.admin(), db.departments.map(toDept))),
+    updateDepartment: (id, input) => run(() => saveDepartment(id, input)),
+    updateDepartmentV3: (id, input) => run(() => saveDepartment(id, input)),
     testEntityLink: (id) =>
       run((): LinkTestResult => {
         const u = ctx.admin();
@@ -717,7 +741,7 @@ export function createR4(ctx: MockCtx) {
           if (!byId(db.entities, a.entityId)) errors[`authorisedSignatories.${i}.entityId`] = ['Unknown legal entity'];
           if (a.userIds.some((id) => !ctx.userOf(id))) errors[`authorisedSignatories.${i}.userIds`] = ['Unknown user'];
         }
-        if (Object.keys(errors).length) throw invalid('Check the e-signature settings.', errors);
+        if (Object.keys(errors).length) throw invalidFields(errors);
         state().esign = { ...structuredClone(input), defaultMessage: input.defaultMessage?.trim() ?? '', reminderDays: [...new Set(input.reminderDays ?? [])].sort((a, b) => a - b) };
         db.appSettings.features.eSign = input.provider !== 'None';
         ctx.audit('settings.esign', null, `E-signature settings changed (${input.provider})`, u.id);
@@ -737,12 +761,18 @@ export function createR4(ctx: MockCtx) {
       if (input.entityId && !db.entities.some((e) => e.id === input.entityId && e.isActive)) throw invalid('Choose an active legal entity.', { entityId: ['Unknown or inactive legal entity'] });
       const prev = userExtra(id);
       state().users[id] = {
-        entityId: input.entityId === undefined ? prev.entityId : input.entityId,
+        // Omitted = unchanged; null or an empty string = cleared (as the API).
+        entityId: input.entityId === undefined ? prev.entityId : input.entityId || null,
         canSendForSignature: input.canSendForSignature ?? prev.canSendForSignature,
         signatureEntityIds: input.signatureEntityIds ?? prev.signatureEntityIds,
       };
     };
     const a = api.admin;
+    const derivedESign = (s: AppSettings): AppSettings => {
+      const eSign = state().esign.provider !== 'None';
+      db.appSettings.features.eSign = eSign;
+      return { ...s, features: { ...s.features, eSign } };
+    };
     const supplierRequired = (input: { supplierId: Id | null }) => {
       if (!input.supplierId || !db.suppliers.some((s) => s.id === input.supplierId && s.isActive)) throw invalid('Choose a counterparty from the list.', { supplierId: ['Choose a counterparty from the list'] });
       return db.suppliers.find((s) => s.id === input.supplierId)?.name ?? '';
@@ -753,7 +783,7 @@ export function createR4(ctx: MockCtx) {
         const id = input[k];
         if (id && ctx.userOf(id) && !ctx.userOf(id)?.isActive) errors[k] = ['This person is no longer active'];
       }
-      if (Object.keys(errors).length) throw invalid('Choose active people.', errors);
+      if (Object.keys(errors).length) throw invalidFields(errors);
     };
     return {
       ...api,
@@ -770,7 +800,7 @@ export function createR4(ctx: MockCtx) {
           ...cfg,
           branding: branding(),
           storageMode: 'Local' as const,
-          eSign: { provider: state().esign.provider, enabled: state().esign.provider !== 'None' },
+          eSign: { provider: state().esign.provider, enabled: state().esign.provider !== 'None', requireApproved: state().esign.requireApproved },
           canCreateCounterparty: u.roles.includes('Admin') || rule === 'AllUsers' || (rule === 'ContractOwners' && u.roles.includes('ContractOwner')),
         };
       },
@@ -864,12 +894,13 @@ export function createR4(ctx: MockCtx) {
           state().entityLinks[id] = changed ? { sharePointSiteUrl: url, sharePointSiteId: null, managementGroupId: group, managementGroupName: null, link: NOT_LINKED } : prev;
           return withEntityLink(e);
         },
-        getAppSettings: async () => ({ ...(await a.getAppSettings()), counterpartyCreation: state().counterpartyCreation }),
+        // As the API: `features.eSign` is derived from the e-signature provider on every read; a saved value is ignored.
+        getAppSettings: async () => ({ ...derivedESign(await a.getAppSettings()), counterpartyCreation: state().counterpartyCreation }),
         updateAppSettings: async (input) => {
           if (input.counterpartyCreation && !['AdminOnly', 'ContractOwners', 'AllUsers'].includes(input.counterpartyCreation)) throw invalid('Choose who may create counterparties.', { counterpartyCreation: ['Unknown value'] });
           const saved = await a.updateAppSettings(input);
           if (input.counterpartyCreation) state().counterpartyCreation = input.counterpartyCreation;
-          return { ...saved, counterpartyCreation: state().counterpartyCreation };
+          return { ...derivedESign(saved), counterpartyCreation: state().counterpartyCreation };
         },
       },
     };

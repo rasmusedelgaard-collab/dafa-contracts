@@ -35,6 +35,11 @@ export interface ContractFormProps {
   applyTypeDefaults?: boolean;
   /** Show the tag picker (New contract and Edit details when the user may tag). */
   showTags?: boolean;
+  /**
+   * Edit details on an older or imported contract that has no master counterparty: the name the
+   * contract keeps until a counterparty is picked from the list.
+   */
+  storedCounterparty?: string | null;
 }
 
 const YES_NO = [
@@ -44,7 +49,7 @@ const YES_NO = [
 const toYesNo = (v: boolean | null) => (v === null ? null : v ? 'yes' : 'no');
 
 /** The contract details form, shared by New contract (step 2) and Edit details. */
-export function ContractForm({ draft, errors, onPatch, suggestions, flat, lockedFields, applyTypeDefaults, showTags }: ContractFormProps) {
+export function ContractForm({ draft, errors, onPatch, suggestions, flat, lockedFields, applyTypeDefaults, showTags, storedCounterparty }: ContractFormProps) {
   const onChange = <K extends DraftField>(field: K, value: ContractDraft[K]) => onPatch({ [field]: value } as Partial<ContractDraft>);
   const locked = (field: string) => lockedFields?.includes(field) ?? false;
   const reminderSettings = useReminderSettings();
@@ -177,7 +182,17 @@ export function ContractForm({ draft, errors, onPatch, suggestions, flat, locked
         error={errors.counterpartyName ?? errors.supplierId}
         tag={cp.tag}
         after={cp.after}
-        hint={locked('counterpartyName') ? undefined : !draft.supplierId && draft.counterpartyName ? `“${draft.counterpartyName}” is not chosen yet: pick it from the list${config.canCreateCounterparty ? ' or create it' : ''}.` : 'Type part of the name and pick the counterparty from the list.'}
+        hint={
+          !draft.supplierId && storedCounterparty
+            ? locked('counterpartyName')
+              ? `“${storedCounterparty}” is kept as it is. It is not linked to the counterparty list; an administrator can link it.`
+              : `“${storedCounterparty}” is not linked to the counterparty list. Pick it from the list${config.canCreateCounterparty ? ' or create it' : ''}, or leave this as it is to keep the name.`
+            : locked('counterpartyName')
+              ? undefined
+              : !draft.supplierId && draft.counterpartyName
+                ? `“${draft.counterpartyName}” is not chosen yet: pick it from the list${config.canCreateCounterparty ? ' or create it' : ''}.`
+                : 'Type part of the name and pick the counterparty from the list.'
+        }
       >
         {(p) => (
           <CounterpartyPicker

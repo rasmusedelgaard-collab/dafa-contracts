@@ -114,7 +114,23 @@ public class Release4ApiTests : IClassFixture<ApiFactory>
         var reverted = await user.GetFromJsonAsync<JsonElement>("/api/me");
         Assert.False(reverted.GetProperty("canSendForSignature").GetBoolean());
         Assert.Equal(entity, reverted.GetProperty("entityId").GetGuid());       // omitted = unchanged
+
+        // "No home legal entity": the web client sends an empty string; JSON null clears it as well.
+        var emptied = await admin.PutAsync("/api/admin/users/" + ninaId, Json(new { roles = rolesBefore, entityId = "" }));
+        Assert.Equal(HttpStatusCode.OK, emptied.StatusCode);
+        Assert.False(HasHomeEntity(await user.GetFromJsonAsync<JsonElement>("/api/me")));
+        var restored = await admin.PutAsync("/api/admin/users/" + ninaId, Json(new { roles = rolesBefore, entityId = entity }));
+        Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
+        Assert.True(HasHomeEntity(await user.GetFromJsonAsync<JsonElement>("/api/me")));
+        var nulled = await admin.PutAsync("/api/admin/users/" + ninaId, Json(new { roles = rolesBefore, entityId = (string?)null }));
+        Assert.Equal(HttpStatusCode.OK, nulled.StatusCode);
+        Assert.False(HasHomeEntity(await user.GetFromJsonAsync<JsonElement>("/api/me")));
+        // Leave the user as the first part of this test did.
+        Assert.Equal(HttpStatusCode.OK, (await admin.PutAsync("/api/admin/users/" + ninaId, Json(new { roles = rolesBefore, entityId = entity }))).StatusCode);
     }
+
+    private static bool HasHomeEntity(JsonElement me) =>
+        me.TryGetProperty("entityId", out var value) && value.ValueKind == JsonValueKind.String;
 
     // ---------- item 1: filters ----------
 
@@ -308,6 +324,8 @@ public class Release4ApiTests : IClassFixture<ApiFactory>
         var config = await cfo.GetFromJsonAsync<JsonElement>("/api/app-config");
         Assert.Equal("Simulated", config.GetProperty("eSign").GetProperty("provider").GetString());
         Assert.True(config.GetProperty("eSign").GetProperty("enabled").GetBoolean());
+        // The web client reads this to offer "Send for signature" on drafts and active contracts when it is false.
+        Assert.True(config.GetProperty("eSign").GetProperty("requireApproved").GetBoolean());
 
         var contractId = await ApprovedContractAsync("lars", "DAFA A/S");
         // From approval on, only an administrator adds a Main document.

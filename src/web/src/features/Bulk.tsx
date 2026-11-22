@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useApi, useAppConfig, useInvalidateContracts, useLookups } from '../app/context';
 import type { BulkInput, BulkResult, ContractRole } from '../api/types';
 import { Button, Field, Modal, Select, Textarea, useToast } from '../components';
+import { exportSelected } from '../lib/exportSelected';
 import { plural, saveBlob } from '../lib/format';
 import { PersonPicker } from './Pickers';
 
@@ -24,7 +25,8 @@ export function BulkBar({ ids, onClear }: { ids: string[]; onClear: () => void }
   const [error, setError] = useState<string>();
 
   const exportSel = useMutation({
-    mutationFn: () => api.exportContracts({ id: ids, columns: ['contract', 'contractNo', 'counterparty', 'entity', 'department', 'owner', 'notice', 'end', 'annualValue', 'totalValue', 'status', 'tags'] } as never),
+    // Many ids do not fit in one URL: `exportSelected` sends them in parts and joins the answers.
+    mutationFn: () => exportSelected(api, ids, ['contract', 'contractNo', 'counterparty', 'entity', 'department', 'owner', 'notice', 'end', 'annualValue', 'totalValue', 'status', 'tags']),
     onSuccess: (f) => {
       saveBlob(f.blob, f.fileName);
       toast.show(`${plural(ids.length, 'contract')} exported`);

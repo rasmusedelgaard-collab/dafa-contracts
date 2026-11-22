@@ -77,7 +77,7 @@ public class PersonalService
     private async Task<ESignConfigDto> LoadESignConfigAsync(CancellationToken cancellationToken)
     {
         var eSign = await ESignSettingsStore.LoadAsync(_db, cancellationToken);
-        return new ESignConfigDto { Provider = eSign.Provider, Enabled = eSign.Provider != SignatureProviderNames.None };
+        return new ESignConfigDto { Provider = eSign.Provider, Enabled = eSign.Provider != SignatureProviderNames.None, RequireApproved = eSign.RequireApproved };
     }
 
     /// <summary>Release 4: light (default), dark or system.</summary>

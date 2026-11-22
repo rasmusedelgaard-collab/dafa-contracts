@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError } from '../../api/api';
+import { errorMessage, fieldErrors } from '../../lib/errors';
 import { permissions, qk, useApi, useAppConfig, useInvalidateContracts, useLookups, useMe, useReminderSettings, useScope } from '../../app/context';
 import type { ContractDetail, ExtractResult, LinkKind, ObligationInput, Template } from '../../api/types';
 import { Button, ButtonLink, Card, CardTitle, EmptyState, Field, Icon, Pill, Select, Skeleton, TextInput, useToast } from '../../components';
 import { Deviations, RoutePreview } from '../../features/Approval';
 import { ContractForm } from '../../features/ContractForm';
-import { UPLOAD_ACCEPT, uploadError } from '../../lib/uploads';
+import { INTAKE_ACCEPT, intakeUploadError } from '../../lib/uploads';
 import { formatDate, formatDayMonth, noticeDeadline, reminderSchedule } from '../../lib/dates';
 import { fileExtension, formatFileSize, formatMoney, plural } from '../../lib/format';
 import { applySuggestions } from '../../lib/suggestions';
@@ -88,7 +89,7 @@ function StartStep({ onFile, reading, onTemplate, onManual, preferTemplate }: { 
           </span>
         ) : (
           <>
-            <span style={{ fontWeight: 600 }}>Drop a PDF or Word file here</span>
+            <span style={{ fontWeight: 600 }}>Drop a PDF or Word (.docx) file here</span>
             <span className="caption">AI reads the file and suggests the details. You check each suggestion.</span>
           </>
         )}
@@ -98,7 +99,7 @@ function StartStep({ onFile, reading, onTemplate, onManual, preferTemplate }: { 
           className="sr-only"
           tabIndex={-1}
           aria-hidden="true"
-          accept={UPLOAD_ACCEPT}
+          accept={INTAKE_ACCEPT}
           onChange={(e) => {
             const file = e.target.files?.[0];
             e.target.value = '';
@@ -340,7 +341,7 @@ export function NewContract() {
   });
   /** Checks type and size before the file is sent for reading. */
   const readFile = (file: File) => {
-    const problem = uploadError(file);
+    const problem = intakeUploadError(file);
     if (problem) toast.error(null, `${file.name}: ${problem}.`);
     else extract.mutate(file);
   };
@@ -437,7 +438,7 @@ export function NewContract() {
         try {
           await fn();
         } catch (e) {
-          warnings.push(`${what}: ${e instanceof ApiError ? (e.problem.detail ?? e.problem.title) : 'failed'}`);
+          warnings.push(`${what}: ${e instanceof ApiError ? errorMessage(e).replace(/\.$/, '') : 'failed'}`);
         }
       };
       for (const l of links) await attempt(`Link to ${l.title}`, () => api.createLink(contract.id, { toContractId: l.toContractId, kind: l.kind }));
@@ -458,7 +459,7 @@ export function NewContract() {
     },
     onError: (e) => {
       if (e instanceof ApiError && e.problem.errors) {
-        setErrors(Object.fromEntries(Object.entries(e.problem.errors).map(([k, v]) => [k, v[0] ?? 'Not valid'])) as DraftErrors);
+        setErrors(fieldErrors(e) as DraftErrors);
         setTried(true);
         goTo(1);
       }
@@ -606,7 +607,7 @@ export function NewContract() {
                     className="sr-only"
                     tabIndex={-1}
                     aria-hidden="true"
-                    accept={UPLOAD_ACCEPT}
+                    accept={INTAKE_ACCEPT}
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       e.target.value = '';

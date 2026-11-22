@@ -15,6 +15,7 @@ import { AdditionalDetails, CommentsTab, CompareDialog, TagsCard, WatchButton } 
 import { PersonLink } from '../../features/columns';
 import { useFileError } from '../../features/fileErrors';
 import { SendForSignatureDialog, SignatureAction, SignatureCard } from '../../features/Signature';
+import { canRecordManualSignature } from '../../lib/signature';
 
 type Tab = 'overview' | 'obligations' | 'approvals' | 'comments' | 'activity';
 const TABS: { value: Tab; label: string }[] = [
@@ -97,11 +98,6 @@ function Ring({ days, window: span }: { days: number; window: number }) {
       </text>
     </svg>
   );
-}
-
-/** Owner item H: the manual "Record manual signature" stays for the owner, the delegate and administrators. */
-function canRecordManualSignature(c: ContractDetail, me: { id: string; roles: string[] }): boolean {
-  return c.ownerId === me.id || c.delegateId === me.id || me.roles.includes('Admin');
 }
 
 function StatusCard({ c, open, setTab }: { c: ContractDetail; open: (d: Dialog) => void; setTab: (t: Tab) => void }) {

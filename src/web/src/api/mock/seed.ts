@@ -214,7 +214,9 @@ const SPECS: Spec[] = [
     sum: 'Framework for polyethylene foam with exclusivity in the Nordics. Renews for 24 months. Either party may terminate on a change of control.' },
   { t: 'Packaging supply', cp: 23, ty: TYP.indirect, en: ENT.sverige, de: DEP.purchasing, own: 'cam', ni: -5, np: 30, ar: 12, av: 640_000, cur: 'SEK', term: 12, law: 'Swedish law' },
   { t: 'Film and foil supply', cp: 22, ty: TYP.direct, en: ENT.polska, de: DEP.purchasing, own: 'jon', ni: 260, np: 90, ar: 12, av: 1_150_000, cur: 'PLN', term: 24, law: 'Polish law' },
-  { t: 'Temporary staff – production', cp: 14, ty: TYP.indirect, en: ENT.dafa, de: DEP.production, own: 'hen', ni: 12, np: 30, av: 900_000, term: 12, law: 'Danish law' },
+  // No master counterparty (a name only), like contracts from before release 4 and some imports:
+  // Edit details must still save on it (review finding H2).
+  { t: 'Temporary staff – production', cp: 'Jobteam Vikar ApS', ty: TYP.indirect, en: ENT.dafa, de: DEP.production, own: 'hen', ni: 12, np: 30, av: 900_000, term: 12, law: 'Danish law' },
   // Logistics
   { t: 'Freight framework – Nordics', cp: 1, ty: TYP.logistics, en: ENT.dafa, de: DEP.logistics, own: 'tho', del: 'ras', ni: 59, np: 90, ar: 12, av: 4_200_000, term: 24, pay: '30 days net', law: 'Danish law', price: 'Annual, fuel index',
     sum: 'Road freight for Denmark, Sweden and Norway at fixed lane prices with a fuel surcharge. Renews for 12 months.' },

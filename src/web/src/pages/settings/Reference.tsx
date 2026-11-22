@@ -6,6 +6,7 @@ import type { Currency, LegalEntity, LegalEntityInput, LinkStatus, LinkTestResul
 import { Button, Card, EmptyState, ErrorState, Field, Modal, Pill, Select, SkeletonRows, Table, TextInput, useToast } from '../../components';
 import { plural } from '../../lib/format';
 import { formatDateTime } from '../../lib/dates';
+import { fieldErrors } from '../../lib/errors';
 import { ConfirmDelete, SectionHead } from './common';
 
 /** Refreshes lookups and app config after a reference-data change. */
@@ -16,8 +17,7 @@ export function useRefreshReference() {
 
 /** Field errors from a 400 problem. */
 export function problemErrors(e: unknown): Record<string, string> {
-  const errors = (e as { problem?: { errors?: Record<string, string[]> } })?.problem?.errors ?? {};
-  return Object.fromEntries(Object.entries(errors).map(([k, v]) => [k, v[0] ?? 'Not valid']));
+  return fieldErrors(e);
 }
 
 function EntityDialog({ item, currencies, onClose }: { item: LegalEntity | null; currencies: Currency[]; onClose: () => void }) {

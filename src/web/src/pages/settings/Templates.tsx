@@ -34,7 +34,7 @@ function TemplateDialog({ template, existing, onClose }: { template: Template | 
   const [tried, setTried] = useState(false);
   const categories = useQuery({ queryKey: qk.admin('template-categories'), queryFn: () => api.admin.getTemplateCategories() });
 
-  const fileError = template ? undefined : !file ? 'Choose a Word file' : !/\.(docx|dotx)$/i.test(file.name) ? 'Templates must be Word files (.docx or .dotx)' : file.size > MAX_TEMPLATE_BYTES ? 'The file is larger than 10 MB' : undefined;
+  const fileError = template ? undefined : !file ? 'Choose a Word file' : !/\.docx$/i.test(file.name) ? 'Templates must be Word files (.docx). Save a .dotx or .doc file as .docx first' : file.size > MAX_TEMPLATE_BYTES ? 'The file is larger than 10 MB' : undefined;
   const nameError = validateName(name, existing, template?.id);
 
   const save = useMutation({
@@ -73,13 +73,13 @@ function TemplateDialog({ template, existing, onClose }: { template: Template | 
       }
     >
       {template ? null : (
-        <Field label="Word file" error={tried ? fileError : undefined} hint={file ? `${file.name} · ${formatFileSize(file.size)}` : '.docx or .dotx, up to 10 MB.'}>
+        <Field label="Word file" error={tried ? fileError : undefined} hint={file ? `${file.name} · ${formatFileSize(file.size)}` : 'Word .docx, up to 10 MB.'}>
           {(p) => (
             <input
               {...p}
               type="file"
               className="file-input"
-              accept=".docx,.dotx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               data-autofocus=""
               onChange={(e) => {
                 const f = e.target.files?.[0] ?? null;

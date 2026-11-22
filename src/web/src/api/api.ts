@@ -133,13 +133,22 @@ import type {
   UserPreferences,
 } from './types';
 
+function firstFieldMessage(problem: ProblemDetails): string | undefined {
+  for (const v of Object.values(problem.errors ?? {})) {
+    const m = (Array.isArray(v) ? v : [v]).find((x) => typeof x === 'string' && x.trim() !== '');
+    if (m) return m;
+  }
+  return undefined;
+}
+
 /** Error thrown by both API implementations; carries the RFC 7807 problem. */
 export class ApiError extends Error {
   readonly status: number;
   readonly problem: ProblemDetails;
 
   constructor(problem: ProblemDetails) {
-    super(problem.detail ?? problem.title);
+    // A 400 from the API has a generic `detail`; the sentence for the user is the first field error.
+    super((problem.status === 400 ? firstFieldMessage(problem) : undefined) ?? problem.detail ?? problem.title);
     this.name = 'ApiError';
     this.status = problem.status;
     this.problem = problem;

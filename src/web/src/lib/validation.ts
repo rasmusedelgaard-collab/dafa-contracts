@@ -50,6 +50,12 @@ export interface DraftRules {
   customFields: CustomFieldDef[];
   fieldRules: FieldRules;
   enforceRequired: boolean;
+  /**
+   * Edit details on a contract that has no master counterparty (older and imported contracts,
+   * CONTRACT_V4 section 3): the API keeps its name, so the form does not demand one. A new
+   * contract, and a contract that already has a counterparty, must have one.
+   */
+  counterpartyOptional?: boolean;
 }
 
 export function emptyDraft(defaults: Partial<ContractDraft> = {}): ContractDraft {
@@ -116,7 +122,7 @@ export function validateDraft(d: ContractDraft, pendingSuggestions: Iterable<str
 
   req('title', 'Enter a title');
   // Release 4: the counterparty must be picked from the master data (no free text).
-  if (!d.supplierId) e.counterpartyName = d.counterpartyName.trim() ? 'Pick the counterparty from the list' : 'Choose the counterparty';
+  if (!d.supplierId && !rules?.counterpartyOptional) e.counterpartyName = d.counterpartyName.trim() ? 'Pick the counterparty from the list' : 'Choose the counterparty';
   req('typeId', 'Choose a contract type');
   req('entityId', 'Choose a legal entity');
   req('departmentId', 'Choose a department');

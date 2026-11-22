@@ -678,3 +678,40 @@ Screens looked at: dark at 1440 (Home, Contracts, Overview, Renewals, Approvals,
 - Compact logo not yet used in the phone header; theme screenshots of every Settings section at 390 not taken.
 - Header filters are not offered in the phone card list (filters there: the chips and selects above).
 - The dataviz CVD validator was not re-run for the changed light amber/gray chart colors (contrast was computed).
+
+## Release 4 alignment fixes (2026-11-22)
+
+Fixes for `docs/REVIEW_ALIGNMENT_R4.md` (frontend client against the real API). Frontend only, except one read-only field on the API. The mock now answers as the API does in each of these places, so the tests exercise the real behaviour.
+
+| Finding | Status | What changed |
+|---|---|---|
+| H1 department link wiped on rename/deactivate | Fixed | Settings > Departments sends the department's existing `documentLibrary` and `groupId` with every update. The other settings forms were checked (legal entities, contract types, template categories, templates, tags, currencies, counterparties, users, custom fields, sync sources, general, notification and e-signature settings): each sends the whole item. |
+| H2 Edit details without a master counterparty | Fixed | The counterparty is required on create and when the contract already has one; a contract without one keeps its name and can be saved (the field says so). |
+| M1 generic "One or more fields are invalid." | Fixed | `lib/errors.ts`: a 400 shows the first message of each field in `errors` (`errorMessage`, `fieldErrors`, `fieldError`); forms map the keys to their fields. |
+| M2 signer row errors | Fixed | `signers[0].userId`, `$.signers[0].userId` and `Signers[0].UserId` are read as `signers.0.userId`; a refused field brings the dialog back from the preview. |
+| M3 New contract upload | Fixed | Only `.pdf` and `.docx` with a clear message; Documents keeps the wide list. |
+| M4 Record manual signature | Fixed | Offered only when the user can edit the contract. |
+| M5 `requireApproved` off | Fixed | "Send for signature" is offered on Draft and Active too. `app-config.eSign.requireApproved` added on the API (one field, `ESignConfigDto`); the frontend also works without it through `canSendForSignature`. |
+| M6 403 on `me` (Entra) | Fixed | "Your account does not have access to DAFA Contracts. Contact an administrator." |
+| M7 session ended | Fixed | A 401 on any query or mutation asks `me` again once; its 401 shows sign-in (Dev: access code/user picker; Entra: redirect with the current path, with the existing loop guard). The page stays the same after signing in again. |
+| L1 Resend/Cancel/Simulate | Fixed | Shown to the sender, colleagues with the signing right for the entity and administrators. |
+| L2 e-signature toggle in General | Fixed | Read-only line, derived from the provider, with a link to Settings > E-signature. |
+| L3 template upload | Fixed | `.docx` only. |
+| L4 column-filter counts | Fixed | The active tab (`view`) is sent; the API cannot count within the free-text search, so the list says so when a search text is active. |
+| L5 counterparty picker | Fixed | VAT number and external id matches are shown; a duplicate found by VAT number is chosen under its master name. |
+| L6 approval log | Fixed | Not offered as a document to sign. |
+
+Needs a live check, made safe from the client:
+- **User without a home legal entity:** the client sends `entityId: ""` (never JSON null); the API clears on both. `Release4ApiTests.Me_ReflectsARoleChange_OnTheVeryNextRequest` now checks `""` and `null` over HTTP.
+- **Export selected:** the API has only `GET contracts/export`, so the ids are sent in several requests that each keep the URL under 2000 characters, and the CSV answers are joined into one file (`lib/exportSelected.ts`).
+- **Template upload:** the client uses one path, the multipart `POST admin/templates` (no `Content-Type` of its own, so the browser adds the boundary); the JSON action is not used by the frontend. A test pins the request shape.
+- **Still open:** the first request after sign-in on the hosted site (cookie `Secure` behind the HTTPS front end), and one real upload of a template and a 45+ row "Export selected" on the test site.
+
+Backend files touched: `Dtos/DtosRelease4.cs` and `Services/PersonalService.cs` (`eSign.requireApproved` in `app-config`), `tests/.../Release4ApiTests.cs` (two blocks of assertions). Not compiled here (no .NET SDK); GitHub Actions compiles and runs them.
+
+| Command (src/web) | Result |
+|---|---|
+| `npm run lint` | exit 0, no warnings |
+| `npm test` | exit 0, 19 files, 353 tests (new: `lib/r4align.test.ts` 20, `pages/r4align.test.tsx` 21) |
+| `npm run build` / `VITE_API_MODE=real npm run build` / `npm run build:demo` | exit 0 |
+| `npm run e2e:demo` | exit 0 at 390 and 1440 px; new step: the owner edits an active contract without a master counterparty and saves |

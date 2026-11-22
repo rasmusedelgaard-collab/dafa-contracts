@@ -1825,6 +1825,8 @@ export interface SignatureRequest {
   message: string;
   documentIds: Id[];
   createdBy: string;
+  /** The sender's user id (the real API sends it; older answers may not). */
+  createdById?: Id;
   createdAt: string;
   sentAt: string | null;
   completedAt: string | null;
@@ -1869,7 +1871,8 @@ export interface AppSettingsV4 {
 export interface AppConfigV4 {
   branding?: Branding;
   storageMode?: 'Local' | 'SharePoint';
-  eSign?: { provider: ESignProvider; enabled: boolean };
+  /** `requireApproved` false: drafts and active contracts can be sent for signature too. Absent on older APIs. */
+  eSign?: { provider: ESignProvider; enabled: boolean; requireApproved?: boolean };
   canCreateCounterparty?: boolean;
 }
 /** Fields release 4 adds to `ContractDetail`. */

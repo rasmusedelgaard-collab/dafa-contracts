@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { permissions, qk, useApi, useAppConfig, useInvalidateContracts, useMe } from '../../app/context';
-import { ApiError } from '../../api/api';
+import { fieldError, fieldErrors } from '../../lib/errors';
 import type { ContractDetail, DocumentKind, LinkKind, Obligation } from '../../api/types';
 import { Button, Field, Modal, Select, Skeleton, TextInput, useToast } from '../../components';
 import { ContractForm } from '../../features/ContractForm';
@@ -20,8 +20,7 @@ interface DialogProps {
 
 /** Maps RFC 7807 `errors` from the API back onto form fields. */
 function serverErrors(e: unknown): DraftErrors {
-  if (!(e instanceof ApiError) || !e.problem.errors) return {};
-  return Object.fromEntries(Object.entries(e.problem.errors).map(([k, v]) => [k, v[0] ?? 'Not valid'])) as DraftErrors;
+  return fieldErrors(e) as DraftErrors;
 }
 
 export function EditDetailsDialog({ contract, onClose }: DialogProps) {
@@ -29,7 +28,8 @@ export function EditDetailsDialog({ contract, onClose }: DialogProps) {
   const toast = useToast();
   const invalidate = useInvalidateContracts();
   const config = useAppConfig();
-  const rules = { customFields: config.customFields, fieldRules: config.fieldRules, enforceRequired: contract.status === 'Draft' };
+  // Review finding H2: a contract without a master counterparty can still be edited and saved.
+  const rules = { customFields: config.customFields, fieldRules: config.fieldRules, enforceRequired: contract.status === 'Draft', counterpartyOptional: !contract.supplierId };
   const [draft, setDraft] = useState<ContractDraft>(() => fieldsToDraft(contract));
   const [errors, setErrors] = useState<DraftErrors>({});
   const [tried, setTried] = useState(false);
@@ -83,7 +83,7 @@ export function EditDetailsDialog({ contract, onClose }: DialogProps) {
       }
     >
       {contract.lockedFields.length > 0 ? <p className="banner tone-amber">{LOCKED_MESSAGE}</p> : null}
-      <ContractForm flat showTags={contract.canTag ?? contract.canEdit} draft={draft} errors={errors} onPatch={onPatch} lockedFields={contract.lockedFields} />
+      <ContractForm flat showTags={contract.canTag ?? contract.canEdit} draft={draft} errors={errors} onPatch={onPatch} lockedFields={contract.lockedFields} storedCounterparty={contract.supplierId ? null : contract.counterparty} />
     </Modal>
   );
 }
@@ -142,7 +142,8 @@ export function SignDialog({ contract, onClose }: DialogProps) {
     },
     onError: (e) => {
       // A date the server refuses is shown at the field, like the client-side checks.
-      if (e instanceof ApiError && e.problem.errors?.signedDate) setError((e.problem.detail ?? 'Check the signing date').replace(/\.$/, ''));
+      const atDate = fieldError(e, 'signedDate');
+      if (atDate) setError(atDate.replace(/\.$/, ''));
       else toast.error(e);
     },
   });

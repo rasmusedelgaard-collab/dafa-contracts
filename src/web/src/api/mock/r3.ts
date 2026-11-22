@@ -52,7 +52,7 @@ import { computeAnalytics } from './analytics';
 import { canEdit, isAdmin, isCurrentApprover } from './access';
 import { newId, type ContractRec, type Db, type DocumentRec, type NotificationRec, type UserRec, type ViewRec } from './db';
 import { importFields, normName, parseCsv, planImport, readXlsx, splitTable, suggestMapping, type ImportRefs, type RowPlan } from './importer';
-import { conflict, forbidden, invalid, notFound } from './problems';
+import { conflict, forbidden, invalid, invalidFields, notFound } from './problems';
 import { filterRows, matchesFilter, pageRows, sortRows, toCsv, type RegisterRow } from './query';
 import { EVENT_DEFS } from './seedR3';
 import { makeZip } from './zip';
@@ -526,7 +526,7 @@ export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersCh
     if (!s || !['Off', 'Hourly', 'Daily', 'Weekly'].includes(s.frequency)) errors['schedule.frequency'] = ['Required'];
     else if ((s.frequency === 'Daily' || s.frequency === 'Weekly') && !/^([01]\d|2[0-3]):[0-5]\d$/.test(s.time ?? '')) errors['schedule.time'] = ['Use HH:mm'];
     else if (s.frequency === 'Weekly' && !(s.dayOfWeek && s.dayOfWeek >= 1 && s.dayOfWeek <= 7)) errors['schedule.dayOfWeek'] = ['Choose a day'];
-    if (Object.keys(errors).length) throw invalid('Check the sync source.', errors);
+    if (Object.keys(errors).length) throw invalidFields(errors);
   }
 
   function nextRun(schedule: SyncSource['schedule'], active = true): string | null {
@@ -608,7 +608,7 @@ export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersCh
     if (choice && (opts.length === 0 || opts.some((o) => !o || o.length > 80) || new Set(opts.map((o) => o.toLowerCase())).size !== opts.length)) errors.options = ['Add at least one option; options must be unique'];
     if (!choice && opts.length > 0) errors.options = ['Only choice fields have options'];
     for (const t of input.contractTypeIds ?? []) if (!byId(db.contractTypes, t)) errors.contractTypeIds = ['Unknown contract type'];
-    if (Object.keys(errors).length) throw invalid('Check the field.', errors);
+    if (Object.keys(errors).length) throw invalidFields(errors);
   }
   const valuesOf = (key: string) => db.contracts.map((c) => c.customFields[key]).filter((v) => !isEmptyValue(v));
 
@@ -1443,7 +1443,7 @@ export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersCh
           if (d.noticePeriodDays !== null && !(d.noticePeriodDays >= 0 && d.noticePeriodDays <= 3650)) errors[`types.${i}.defaults.noticePeriodDays`] = ['0–3650 days'];
           if (d.renewalMonths !== null && !(d.renewalMonths >= 1 && d.renewalMonths <= 120)) errors[`types.${i}.defaults.renewalMonths`] = ['1–120 months'];
         });
-        if (Object.keys(errors).length) throw invalid('Check the field rules.', errors);
+        if (Object.keys(errors).length) throw invalidFields(errors);
         db.fieldRules = structuredClone({ types: input.types.filter((t) => t.required.length > 0 || Object.values(t.defaults).some((v) => v !== null)) });
         ctx.audit('settings.field-rules', null, 'Field rules changed', u.id);
         return structuredClone(db.fieldRules);
@@ -1466,7 +1466,7 @@ export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersCh
         if (new Set(codes).size !== codes.length) errors.code = ['Each code only once'];
         const dkk = input.find((c) => c.code === 'DKK');
         if (!dkk || !dkk.isActive || dkk.rateToDkk !== 1) errors.DKK = ['DKK must stay active with rate 1'];
-        if (Object.keys(errors).length) throw invalid('Check the currencies.', errors);
+        if (Object.keys(errors).length) throw invalidFields(errors);
         const removed = db.currencyTable.filter((c) => !codes.includes(c.code)).map((c) => c.code);
         const used = removed.filter((code) => db.contracts.some((c) => c.currency === code) || db.entities.some((e) => e.currency === code));
         if (used.length) throw conflict(`${used.join(', ')} is used by contracts or legal entities. Make it inactive instead.`, 'in-use');
@@ -1606,7 +1606,7 @@ export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersCh
           if (!(r.escalationDays >= 0)) errors[`reminderSchedules.${i}.escalationDays`] = ['0 or more'];
         });
         if (!['Off', 'Daily', 'Weekly'].includes(input.digestDefault)) errors.digestDefault = ['Required'];
-        if (Object.keys(errors).length) throw invalid('Check the notification settings.', errors);
+        if (Object.keys(errors).length) throw invalidFields(errors);
         db.notificationSettings = {
           digestDefault: input.digestDefault,
           events: EVENT_DEFS.map((d) => {
@@ -1701,7 +1701,7 @@ export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersCh
         const cfKeys = new Set(db.customFields.filter((d) => d.isActive).map((d) => `cf.${d.key}`));
         if (input.dataQualityFields.some((f) => !(DATA_QUALITY_FIELDS as readonly string[]).includes(f) && !cfKeys.has(f))) errors.dataQualityFields = ['Unknown field'];
         for (const r of ['Admin', 'Approver', 'ContractOwner', 'Reader'] as Role[]) if (!LANDING.includes(input.landingPageByRole?.[r])) errors[`landingPageByRole.${r}`] = ['Required'];
-        if (Object.keys(errors).length) throw invalid('Check the general settings.', errors);
+        if (Object.keys(errors).length) throw invalidFields(errors);
         db.appSettings = { ...structuredClone(input), appName: input.appName.trim() } as AppSettings;
         ctx.audit('settings.general', null, 'General settings changed', u.id);
         return structuredClone(db.appSettings);
@@ -1719,7 +1719,7 @@ export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersCh
     if (!input.roles?.length || input.roles.some((r) => !['Reader', 'ContractOwner', 'Approver', 'Admin'].includes(r))) errors.roles = ['Choose at least one role'];
     if (input.departmentIds?.some((d) => !byId(db.departments, d))) errors.departmentIds = ['Unknown department'];
     if (input.managedEntityIds?.some((e) => !byId(db.entities, e))) errors.managedEntityIds = ['Unknown legal entity'];
-    if (Object.keys(errors).length) throw invalid('Check the user.', errors);
+    if (Object.keys(errors).length) throw invalidFields(errors);
   }
 
   function saveCounterparty(input: CounterpartyInput, id?: Id): Counterparty {
@@ -1729,7 +1729,7 @@ export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersCh
     if (!name || name.length > 300) errors.name = ['Required, at most 300 characters'];
     if (input.country && !/^[A-Z]{2}$/.test(input.country.trim().toUpperCase())) errors.country = ['Two-letter code'];
     if (input.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.email)) errors.email = ['Enter a valid e-mail address'];
-    if (Object.keys(errors).length) throw invalid('Check the counterparty.', errors);
+    if (Object.keys(errors).length) throw invalidFields(errors);
     const clash = db.suppliers.find((s) => s.id !== id && s.isActive && ((input.vatNo && s.vatNo?.toLowerCase() === input.vatNo.trim().toLowerCase()) || (input.externalId && s.externalId?.toLowerCase() === input.externalId.trim().toLowerCase())));
     if (clash) throw conflict(`${clash.name} already has this VAT number or external id.`, 'duplicate');
     const values = { name, country: input.country?.trim().toUpperCase() || null, vatNo: input.vatNo?.trim() || null, kind: input.kind ?? 'Supplier', externalId: input.externalId?.trim() || null, city: input.city?.trim() || null, email: input.email?.trim() || null, phone: input.phone?.trim() || null, isActive: input.isActive ?? true };
@@ -1756,7 +1756,7 @@ export function createR3(ctx: MockCtx): { top: R3Top; admin: R3Admin; watchersCh
     else if (db.entities.some((e) => e.id !== id && e.name.toLowerCase() === name.toLowerCase())) errors.name = ['Another legal entity has this name'];
     if (!/^[A-Z]{2}$/.test(input.country?.trim().toUpperCase() ?? '')) errors.country = ['Two-letter code, e.g. DK'];
     if (!db.currencyTable.some((c) => c.code === input.currency && c.isActive)) errors.currency = ['Choose an active currency'];
-    if (Object.keys(errors).length) throw invalid('Check the legal entity.', errors);
+    if (Object.keys(errors).length) throw invalidFields(errors);
     const values = { name, country: input.country.trim().toUpperCase(), currency: input.currency, isActive: !!input.isActive };
     let rec = id ? byId(db.entities, id) : undefined;
     if (id && !rec) throw notFound('Legal entity');

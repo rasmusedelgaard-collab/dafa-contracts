@@ -5,11 +5,11 @@
 // the values in the current selection (`GET contracts/distinct`); values: min/max in DKK; dates:
 // from/to; custom fields by their type. The filters live in the URL like every other filter, so
 // they work with saved views, the breadcrumb chips and export.
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useApi } from '../app/context';
-import type { ContractFilter, CustomFieldDef, DistinctColumn } from '../api/types';
+import type { ContractFilter, ContractView, CustomFieldDef, DistinctColumn } from '../api/types';
 import { Button, Icon, NumberInput, TextInput } from '../components';
 
 type Key = keyof ContractFilter;
@@ -101,15 +101,29 @@ export function isFilterActive(spec: FilterSpec, filter: ContractFilter): boolea
   }
 }
 
+/**
+ * What the register shows besides the filter: its tab and whether a search text is active. The
+ * value lists are counted within the tab (`view`); the API cannot count within the free-text
+ * search (`q` is the search inside the value list there), so the list says so (review finding L4).
+ */
+export interface DistinctScope {
+  view?: ContractView;
+  searchActive?: boolean;
+}
+const DistinctScopeContext = createContext<DistinctScope>({});
+
 interface HeaderFilterProps {
   label: string;
   spec: FilterSpec;
   filter: ContractFilter;
   onApply: (patch: Partial<ContractFilter>) => void;
+  scope?: DistinctScope;
 }
 
+const NO_SCOPE: DistinctScope = {};
+
 /** The filter button in a column header and its popover. */
-export function HeaderFilter({ label, spec, filter, onApply }: HeaderFilterProps) {
+export function HeaderFilter({ label, spec, filter, onApply, scope }: HeaderFilterProps) {
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   const active = isFilterActive(spec, filter);
@@ -131,15 +145,17 @@ export function HeaderFilter({ label, spec, filter, onApply }: HeaderFilterProps
       </button>
       {open ? (
         <Popover anchor={button.current} label={`Filter ${label}`} onClose={() => setOpen(false)}>
-          <FilterForm
-            spec={spec}
-            filter={filter}
-            onApply={(patch) => {
-              onApply(patch);
-              setOpen(false);
-              button.current?.focus();
-            }}
-          />
+          <DistinctScopeContext.Provider value={scope ?? NO_SCOPE}>
+            <FilterForm
+              spec={spec}
+              filter={filter}
+              onApply={(patch) => {
+                onApply(patch);
+                setOpen(false);
+                button.current?.focus();
+              }}
+            />
+          </DistinctScopeContext.Provider>
         </Popover>
       ) : null}
     </>
@@ -258,7 +274,10 @@ function MultiFilter({ column, param, filter, onApply, embedded }: { column: Dis
   const [q, setQ] = useState('');
   const [chosen, setChosen] = useState<string[]>(readParam(filter, param));
   const id = useId();
-  const values = useQuery({ queryKey: ['contracts', 'distinct', column, filter, q], queryFn: () => api.getDistinct(column, filter, q, 100), placeholderData: keepPreviousData, staleTime: 15_000 });
+  const scope = useContext(DistinctScopeContext);
+  const view = scope.view && scope.view !== 'all' ? scope.view : undefined;
+  const scoped: ContractFilter & { view?: ContractView } = view ? { ...filter, view } : filter;
+  const values = useQuery({ queryKey: ['contracts', 'distinct', column, scoped, q], queryFn: () => api.getDistinct(column, scoped, q, 100), placeholderData: keepPreviousData, staleTime: 15_000 });
   const toggle = (v: string, on: boolean) => setChosen((c) => (on ? [...c, v] : c.filter((x) => x !== v)));
   const body = (
     <>
@@ -278,6 +297,7 @@ function MultiFilter({ column, param, filter, onApply, embedded }: { column: Dis
           </label>
         ))}
         {values.data?.truncated ? <span className="caption">More values: search to narrow the list.</span> : null}
+        {scope.searchActive && (values.data?.values ?? []).length > 0 ? <span className="caption">The counts do not take the search text of the list into account.</span> : null}
       </div>
     </>
   );

@@ -274,10 +274,12 @@ export function CounterpartyPicker({ value, onChange, allowCreate = true, ...res
   const options = useMemo(
     () => (query: string) =>
       (list.data ?? [])
-        .filter((c) => c.isActive && (!query.trim() || match(c.name, query)))
+        // The server has already searched name, VAT number and external id for `term`; the list is
+        // only narrowed here while newer text is on its way, over the same three fields.
+        .filter((c) => c.isActive && (!query.trim() || query.trim() === term || match([c.name, c.vatNo, c.externalId].filter(Boolean).join(' '), query)))
         .slice(0, 20)
         .map((c) => ({ id: c.id, label: c.name, sub: [c.country, c.vatNo, c.city].filter(Boolean).join(' · ') })),
-    [list.data],
+    [list.data, term],
   );
   const canCreate = allowCreate && !!config.canCreateCounterparty;
   return (
@@ -325,8 +327,15 @@ function CreateCounterpartyDialog({ initialName, onClose, onCreated }: { initial
       // A duplicate answers with the existing record: pick that one instead.
       const existing = e instanceof ApiError ? ((e.problem as unknown as Record<string, unknown>).existingId as string | undefined) : undefined;
       if (existing) {
-        toast.show('That counterparty already exists. It has been chosen.');
-        onCreated({ id: existing, name: d.name.trim() });
+        // The existing record may have another name (a match on the VAT number): show the master name.
+        void api
+          .getCounterparty(existing)
+          .then((page) => page.counterparty.name)
+          .catch(() => d.name.trim())
+          .then((name) => {
+            toast.show(`${name} already exists. It has been chosen.`);
+            onCreated({ id: existing, name });
+          });
         return;
       }
       setErrors(problemErrors(e));

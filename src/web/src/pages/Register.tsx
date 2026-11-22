@@ -240,7 +240,7 @@ export function Register() {
     cols.map((c) => {
       const spec = filterSpecFor(c.key, config.customFields);
       const label = typeof c.header === 'string' ? c.header : c.key;
-      return spec ? { ...c, filter: <HeaderFilter label={label} spec={spec} filter={parsed} onApply={applyHeaderFilter} /> } : c;
+      return spec ? { ...c, filter: <HeaderFilter label={label} spec={spec} filter={parsed} onApply={applyHeaderFilter} scope={{ view, searchActive: !!q.trim() }} /> } : c;
     });
   const configured = withFilters(contractColumns(columnKeys, { title: titleCell, customFields: config.customFields, lookups }));
   // Tablet (720–1000px): no room for five columns. Contract, Notice and Status stay; the entity and

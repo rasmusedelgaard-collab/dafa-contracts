@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { qk, useApi, useAppConfig, useLookups } from '../../app/context';
 import { DATA_QUALITY_FIELDS, type AppSettings, type JobInfo, type LogoVariant, type NotificationChannel, type NotificationEventSetting, type NotificationSettings, type RecipientRule, type Role, type Schedule, type TemplatePreview } from '../../api/types';
 import { Button, Card, ErrorState, Field, Modal, Pill, Select, SkeletonRows, Table, Textarea, TextInput, useToast } from '../../components';
@@ -371,10 +372,11 @@ export function GeneralAdmin() {
             <input type="checkbox" checked={s.features.templates} onChange={(e) => setS({ ...s, features: { ...s.features, templates: e.target.checked } })} />
             Start new contracts from Word templates
           </label>
-          <label className="check">
-            <input type="checkbox" checked={s.features.eSign} onChange={(e) => setS({ ...s, features: { ...s.features, eSign: e.target.checked } })} />
-            E-signature (placeholder; no provider is connected yet)
-          </label>
+          {/* Review finding L2: the API derives this from the e-signature provider; it cannot be set here. */}
+          <p className="secondary" style={{ fontSize: 13 }} aria-label="E-signature">
+            E-signature is <strong>{(config.eSign?.enabled ?? s.features.eSign) ? 'on' : 'off'}</strong>
+            {config.eSign?.enabled ? ` (${config.eSign.provider === 'Simulated' ? 'simulated signing' : config.eSign.provider})` : ''}. It follows the signing service chosen under <Link to="/settings/esign">Settings &gt; E-signature</Link>.
+          </p>
           <Field label="Due diligence threshold, DKK" hint="Overview lists contracts at or above this value." error={errors.ddThresholdDkk}>
             {(p) => <TextInput {...p} inputMode="numeric" value={String(s.ddThresholdDkk)} onChange={(e) => setS({ ...s, ddThresholdDkk: Number(e.target.value.replace(/\D/g, '')) || 0 })} />}
           </Field>

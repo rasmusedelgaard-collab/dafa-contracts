@@ -20,7 +20,8 @@
 //
 // Release 4 adds `journeyR4`: removing filters (Search, top-bar scope), a register header filter,
 // template categories, e-signature (simulated) for a permitted and a non-permitted user, the logo
-// upload and the dark theme.
+// upload and the dark theme. The alignment fixes add: the owner edits a non-draft contract that has
+// no master counterparty and saves (review finding H2).
 //
 // Chrome: `CHROME_PATH`, else an installed Chrome/Chromium found in the usual places.
 // Screenshots: set `E2E_SHOTS=<folder>` to save one per step.
@@ -591,6 +592,27 @@ async function journeyR4(browser, baseUrl, width, height) {
     await ask.getByRole('list', { name: 'People with signing rights' }).getByText('Rasmus Holm').waitFor();
     await ask.getByRole('button', { name: 'Close' }).first().click();
     log('Henrik Madsen (no signing right) is shown who can send it');
+
+    // 5a. Review finding H2: the owner edits a non-draft contract that has no master counterparty
+    // (a name only, as on older and imported contracts) and saves.
+    await go('/contracts?q=Temporary%20staff');
+    const temp = page.getByRole('button', { name: /(Open|Preview) Temporary staff – production/ }).first();
+    if (phone) await temp.click();
+    else await temp.dblclick();
+    await page.getByRole('heading', { level: 1, name: 'Temporary staff – production' }).waitFor();
+    await visible(page.getByRole('button', { name: 'Edit details' })).click();
+    const edit = page.getByRole('dialog', { name: 'Edit details' });
+    const counterparty = edit.getByRole('combobox', { name: /Counterparty/ });
+    await counterparty.waitFor();
+    check(await counterparty.isDisabled(), 'The counterparty of an active contract is not locked for its owner.');
+    await edit.getByText(/is kept as it is/).waitFor();
+    await edit.getByLabel(/Payment terms/).fill('45 days net, end of month');
+    await edit.getByRole('button', { name: 'Save changes' }).click();
+    await page.getByText('Details saved').first().waitFor();
+    await edit.waitFor({ state: 'detached' });
+    check((await page.getByText('Pick the counterparty from the list').count()) === 0, 'Edit details still asks for a counterparty from the list.');
+    await page.getByText('45 days net, end of month').first().waitFor();
+    log('Henrik Madsen (owner) edited an active contract without a master counterparty and saved');
     await switchTo('Rasmus Holm');
     await go(recordUrl);
     await page.getByRole('heading', { level: 1, name: 'Fire protection service agreement' }).waitFor();

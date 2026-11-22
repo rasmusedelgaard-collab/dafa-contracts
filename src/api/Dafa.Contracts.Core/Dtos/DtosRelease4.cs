@@ -156,6 +156,8 @@ public class ESignConfigDto
 {
     public string Provider { get; set; } = "None";
     public bool Enabled { get; set; }
+    /// <summary>False: drafts and active contracts can be sent for signature too (the setting in Settings > E-signature).</summary>
+    public bool RequireApproved { get; set; } = true;
 }
 
 public class SignerDto

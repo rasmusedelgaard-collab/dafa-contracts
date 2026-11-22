@@ -5,7 +5,7 @@ import { ApiError } from './api/api';
 import type { DevConfig } from './api/types';
 import { qk, ScopeProvider, SessionProvider, useApi, useLookupsQuery, useMeQuery, useSessionActions } from './app/context';
 import { browser, currentPath, entraLoginUrl, isSignedOut, markSignedOut, readAccessCode, redirectedRecently, storeAccessCode } from './app/signin';
-import { isThrottled, THROTTLED_MESSAGE } from './lib/errors';
+import { isThrottled, NO_ACCESS_MESSAGE, THROTTLED_MESSAGE } from './lib/errors';
 import { lazyPage } from './lib/lazyPage';
 import { Avatar, Button, Card, ErrorState, Field, Icon, RouteErrorBoundary, Skeleton, SkeletonRows, TextInput, useToast } from './components';
 import { Home } from './pages/Home';
@@ -222,6 +222,20 @@ function DevSignIn({ config }: { config: DevConfig }) {
   );
 }
 
+/** Entra mode: the person is signed in with a DAFA account that has no (active) user in the app. */
+function NoAccess({ onRetry }: { onRetry: () => void }) {
+  return (
+    <SignInCard title="No access">
+      <p className="secondary" role="alert">
+        {NO_ACCESS_MESSAGE}
+      </p>
+      <Button variant="secondary" block onClick={onRetry}>
+        Try again
+      </Button>
+    </SignInCard>
+  );
+}
+
 function StartError({ text, onRetry }: { text: string; onRetry: () => void }) {
   return (
     <div className="center-page">
@@ -246,6 +260,13 @@ export function App() {
       // An API without `dev/config` behaves as before: offer the demo-user picker.
       const mode: DevConfig = config.data ?? { authMode: 'Dev', accessCodeRequired: false };
       return mode.authMode === 'Entra' ? <EntraSignIn /> : <DevSignIn config={mode} />;
+    }
+    // Review finding M6: signed in, but the account is unknown to the app or deactivated.
+    if (me.error instanceof ApiError && me.error.status === 403) {
+      if (config.isLoading) return <Splash />;
+      // Dev mode: the demo user was deactivated; another one can be chosen.
+      if (config.data?.authMode !== 'Entra') return <DevSignIn config={config.data ?? { authMode: 'Dev', accessCodeRequired: false }} />;
+      return <NoAccess onRetry={() => void me.refetch()} />;
     }
     return <StartError text="The server did not answer. Check your connection and try again." onRetry={() => void me.refetch()} />;
   }

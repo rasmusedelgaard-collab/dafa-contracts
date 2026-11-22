@@ -120,6 +120,17 @@ function crud<T, TInput>(path: string) {
   };
 }
 
+/**
+ * `admin/users`: "no home legal entity" is sent as an empty string, never as JSON null. The API
+ * reads `entityId` as a raw JSON value (omitted = unchanged, "" or null = cleared, a string = the
+ * id); the empty string is the form that cannot be refused by the JSON binding of that field.
+ */
+export function userBody(input: unknown): unknown {
+  if (!input || typeof input !== 'object' || !('entityId' in input)) return input;
+  const entityId = (input as { entityId?: unknown }).entityId;
+  return entityId === null ? { ...input, entityId: '' } : input;
+}
+
 export function createHttpApi(): Api {
   const rules = crud('admin/approval-rules');
   const retention = crud('admin/retention-rules');
@@ -303,8 +314,8 @@ export function createHttpApi(): Api {
       deleteTag: (id: Id) => del(`admin/tags/${id}`),
 
       getUsers: (query?: object) => get(`admin/users${qs(query)}`),
-      createUser: (input: unknown) => post('admin/users', input),
-      updateUser: (id: Id, input: unknown) => put(`admin/users/${id}`, input),
+      createUser: (input: unknown) => post('admin/users', userBody(input)),
+      updateUser: (id: Id, input: unknown) => put(`admin/users/${id}`, userBody(input)),
       getEffectiveAccess: (userId: Id, query?: object) => get(`admin/users/${userId}/effective-access${qs(query)}`),
       previewReassign: (input: unknown) => post('admin/reassign/preview', input),
       reassign: (input: unknown) => post('admin/reassign', input),

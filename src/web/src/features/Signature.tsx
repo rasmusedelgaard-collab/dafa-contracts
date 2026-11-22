@@ -2,11 +2,12 @@
 // status per signatory, resend/cancel, and in Simulated mode a "Simulate signing" control.
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { qk, useApi, useAppConfig, useInvalidateContracts, useLookups } from '../app/context';
+import { qk, useApi, useAppConfig, useInvalidateContracts, useLookups, useMe } from '../app/context';
 import type { ContractDetail, SignatureRequest, SignerInput, SignerStatus, SigningOrder } from '../api/types';
 import { Avatar, Button, Card, ErrorState, Field, Modal, Pill, Segmented, Skeleton, Textarea, TextInput, useToast } from '../components';
 import { formatDateTime } from '../lib/dates';
 import { problemErrors } from '../pages/settings/Reference';
+import { canManageSignatureRequest, sendableDocuments, sendForSignatureOffer } from '../lib/signature';
 import { useFileError } from './fileErrors';
 import { PersonPicker } from './Pickers';
 
@@ -17,10 +18,12 @@ const REQUEST_LABEL: Record<SignatureRequest['status'], string> = { Draft: 'Draf
 export function SignatureAction({ c, onOpen }: { c: ContractDetail; onOpen: () => void }) {
   const config = useAppConfig();
   const [asking, setAsking] = useState(false);
-  if (!config.eSign?.enabled || c.status !== 'Approved' || c.signature?.status === 'Sent') return null;
-  if (c.canSendForSignature) {
+  // Review finding M5: with "Only approved contracts can be sent" off, drafts and active contracts are offered too.
+  const offer = sendForSignatureOffer(c, config.eSign);
+  if (!offer) return null;
+  if (offer === 'send') {
     return (
-      <Button icon="send" onClick={onOpen}>
+      <Button icon="send" variant={c.status === 'Approved' ? 'primary' : 'secondary'} onClick={onOpen}>
         Send for signature
       </Button>
     );
@@ -81,7 +84,9 @@ export function SendForSignatureDialog({ c, onClose }: { c: ContractDetail; onCl
   const fileError = useFileError();
   const invalidate = useInvalidateContracts();
   const lookups = useLookups();
-  const [docs, setDocs] = useState<string[]>(c.documents.filter((d) => d.kind === 'Main').slice(-1).map((d) => d.id));
+  // The approval log is the system's own record and cannot be sent (review finding L6).
+  const sendable = sendableDocuments(c.documents);
+  const [docs, setDocs] = useState<string[]>(sendable.filter((d) => d.kind === 'Main').slice(-1).map((d) => d.id));
   const [signers, setSigners] = useState<SignerDraft[]>([{ kind: 'Internal', userId: null, name: '', email: '' }, { kind: 'External', userId: null, name: '', email: '' }]);
   const [order, setOrder] = useState<SigningOrder>('Sequential');
   const [message, setMessage] = useState('');
@@ -96,7 +101,11 @@ export function SendForSignatureDialog({ c, onClose }: { c: ContractDetail; onCl
       onClose();
     },
     onError: (e) => {
-      setErrors(problemErrors(e));
+      // The API names a signer's field `signers[0].userId`; the rows use `signers.0.userId` (review finding M2).
+      const found = problemErrors(e);
+      setErrors(found);
+      // A refused field is on the form, not on the preview.
+      if (Object.keys(found).length > 0) setPreview(false);
       fileError(e, 'The contract could not be sent for signature.', () => send.mutate());
     },
   });
@@ -148,7 +157,7 @@ export function SendForSignatureDialog({ c, onClose }: { c: ContractDetail; onCl
           <p className="secondary">Check before sending. Signatories get an e-mail from the signing service.</p>
           <dl className="kv-list">
             <dt>Documents</dt>
-            <dd>{c.documents.filter((d) => docs.includes(d.id)).map((d) => d.name).join(', ')}</dd>
+            <dd>{sendable.filter((d) => docs.includes(d.id)).map((d) => d.name).join(', ')}</dd>
             <dt>Order</dt>
             <dd>{order === 'Sequential' ? 'One after the other, in this order' : 'Everyone at the same time'}</dd>
             <dt>Signatories</dt>
@@ -167,9 +176,9 @@ export function SendForSignatureDialog({ c, onClose }: { c: ContractDetail; onCl
         <div className="stack" style={{ gap: 16 }}>
           <fieldset className="fieldset">
             <legend className="field__label">Documents to sign</legend>
-            {c.documents.length === 0 ? <p className="caption">Upload the contract document first.</p> : null}
+            {sendable.length === 0 ? <p className="caption">Upload the contract document first.</p> : null}
             <div className="stack" style={{ gap: 6, marginTop: 6 }}>
-              {c.documents.map((d) => (
+              {sendable.map((d) => (
                 <label key={d.id} className="check">
                   <input type="checkbox" checked={docs.includes(d.id)} onChange={(e) => setDocs(e.target.checked ? [...docs, d.id] : docs.filter((x) => x !== d.id))} />
                   {d.name} <span className="caption">· {d.kind}</span>
@@ -240,6 +249,7 @@ export function SignatureCard({ c }: { c: ContractDetail }) {
   const api = useApi();
   const config = useAppConfig();
   const toast = useToast();
+  const me = useMe();
   const invalidate = useInvalidateContracts();
   const r = c.signature;
   const act = useMutation({
@@ -256,7 +266,9 @@ export function SignatureCard({ c }: { c: ContractDetail }) {
     onError: (e) => toast.error(e),
   });
   if (!r) return null;
-  const simulated = config.eSign?.provider === 'Simulated' && r.status === 'Sent';
+  // Review finding L1: others can see the request but cannot resend, cancel or simulate it.
+  const manage = canManageSignatureRequest(r, c, me);
+  const simulated = manage && config.eSign?.provider === 'Simulated' && r.status === 'Sent';
   return (
     <Card clip aria-labelledby="signature-heading">
       <div className="card-list-head">
@@ -265,7 +277,7 @@ export function SignatureCard({ c }: { c: ContractDetail }) {
         </h2>
         <Pill tone={r.status === 'Completed' ? 'green' : r.status === 'Sent' ? 'blue' : r.status === 'Declined' ? 'red' : 'gray'}>{REQUEST_LABEL[r.status]}</Pill>
         <div className="spacer" />
-        {r.status === 'Sent' ? (
+        {r.status === 'Sent' && manage ? (
           <span className="row-flex" style={{ gap: 6 }}>
             <Button variant="ghost" size="sm" loading={act.isPending && act.variables?.kind === 'resend'} onClick={() => act.mutate({ kind: 'resend' })}>
               Resend
