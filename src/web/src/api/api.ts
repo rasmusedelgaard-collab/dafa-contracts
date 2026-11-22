@@ -10,12 +10,14 @@ import type {
   ContractInput,
   ContractListItem,
   ContractQuery,
+  DevConfig,
   DevUser,
   DocumentKind,
   ExtractResult,
   FileDownload,
   FromTemplateInput,
   FromTemplateResult,
+  GetContractOptions,
   HolidayCover,
   HolidayCoverInput,
   HomeData,
@@ -70,11 +72,14 @@ export interface Api {
   getSuppliers(q?: string): Promise<Supplier[]>;
   getHome(): Promise<HomeData>;
   search(q: string): Promise<SearchResult[]>;
+  /** Read-only reminder settings for every signed-in user (`GET reminder-settings`). */
+  getReminderSettings(): Promise<ReminderSettings>;
 
   // Contracts
   getContracts(query?: ContractQuery): Promise<Paged<ContractListItem>>;
   exportContracts(query?: ContractQuery): Promise<FileDownload>;
-  getContract(id: Id): Promise<ContractDetail>;
+  /** `peek` reads the contract without recording it as recently opened. */
+  getContract(id: Id, options?: GetContractOptions): Promise<ContractDetail>;
   createContract(input: ContractInput): Promise<ContractDetail>;
   updateContract(id: Id, input: ContractInput): Promise<ContractDetail>;
   submitContract(id: Id): Promise<ContractDetail>;
@@ -134,7 +139,9 @@ export interface Api {
     deleteContractType(id: Id): Promise<void>;
 
     getTemplates(): Promise<Template[]>;
-    createTemplate(input: TemplateInput): Promise<Template>;
+    /** Multipart: the Word file plus the name, description and type. */
+    createTemplate(input: TemplateInput, file: File): Promise<Template>;
+    getTemplateContent(id: Id): Promise<FileDownload>;
     updateTemplate(id: Id, input: TemplateInput): Promise<Template>;
     deleteTemplate(id: Id): Promise<void>;
 
@@ -151,7 +158,11 @@ export interface Api {
   };
 
   // Dev mode sign-in
-  getDevUsers(): Promise<DevUser[]>;
-  devLogin(userId: Id): Promise<Me>;
+  /** Anonymous. Tells the app whether to show the demo-user picker or redirect to Entra sign-in. */
+  getDevConfig(): Promise<DevConfig>;
+  /** The access code (when the site requires one) is sent as header `X-Dev-Access-Code`. */
+  getDevUsers(accessCode?: string): Promise<DevUser[]>;
+  /** The access code is sent as `accessCode` in the body. */
+  devLogin(userId: Id, accessCode?: string): Promise<Me>;
   logout(): Promise<void>;
 }

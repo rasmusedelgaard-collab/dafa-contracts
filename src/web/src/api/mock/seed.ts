@@ -458,7 +458,7 @@ export function createSeed(today: string): Db {
     {
       id: seedId(G.approval, 1), contractId: erp, status: 'Pending', currentStage: 2, startedAt: d(-5),
       stages: [
-        { order: 1, steps: [step(1, 'sor', 'Department head', 'Approved', d(-2), addDays(today, -5), 'Fits the IT roadmap and budget.')] },
+        { order: 1, steps: [step(1, 'pet', 'Department head (substitute: Søren Dahl is the owner or submitter)', 'Approved', d(-2), addDays(today, -5), 'Fits the IT roadmap and budget.')] },
         { order: 2, steps: [step(2, 'lou', 'Legal', 'Pending', null, addDays(today, -2)), step(3, 'ras', 'Group CFO', 'Pending', null, addDays(today, -2))] },
         { order: 3, steps: [step(4, 'kar', 'Group CEO', 'Waiting', null, null)] },
       ],

@@ -8,3 +8,13 @@ export function errorMessage(error: unknown, fallback = 'Something went wrong. T
   }
   return fallback;
 }
+
+/**
+ * For a 409 on approve or submit: someone else acted first. The server's own explanation, when
+ * it gives one, follows the standard sentence.
+ */
+export function staleMessage(error: unknown): string {
+  const base = 'This was just updated by someone else.';
+  const detail = error instanceof ApiError ? error.problem.detail : undefined;
+  return detail && detail !== base ? `${base} ${detail}` : base;
+}

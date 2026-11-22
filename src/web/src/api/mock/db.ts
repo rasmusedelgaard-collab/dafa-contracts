@@ -30,7 +30,11 @@ export interface UserRec {
   isGroupManagement: boolean;
 }
 
-export interface ContractRec extends ContractFields {
+export interface ContractRec extends Omit<ContractFields, 'changeOfControl'> {
+  /** null only on imported contracts where it was never filled in. */
+  changeOfControl: boolean | null;
+  /** Who submitted the contract for approval (set on submit). */
+  submittedBy?: Id | null;
   id: Id;
   contractNo: string;
   status: ContractStatus;
@@ -145,6 +149,8 @@ export interface TemplateRec {
   placeholders: string[];
   /** Body text with `{{placeholders}}`. */
   body: string;
+  /** Bytes of a template uploaded in Settings; seeded templates have none. */
+  blob?: Blob;
 }
 
 export interface RetentionRec {

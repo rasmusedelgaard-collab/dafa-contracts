@@ -15,13 +15,13 @@ import './styles/base.css';
 import './styles/components.css';
 import './styles/shell.css';
 import './styles/pages.css';
-import { createApi } from './api';
+import './styles/screens.css';
+import { loadApi } from './api';
 import { ApiError } from './api/api';
 import { App } from './App';
 import { ApiProvider } from './app/context';
 import { ToastProvider } from './components';
 
-const api = createApi();
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -35,6 +35,9 @@ const queryClient = new QueryClient({
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Root element missing');
+
+// The API is created first: in mock mode this loads the mock chunk, in real mode it is immediate.
+const api = await loadApi();
 
 createRoot(root).render(
   <StrictMode>

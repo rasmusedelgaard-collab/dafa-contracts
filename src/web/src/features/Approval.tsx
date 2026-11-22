@@ -1,8 +1,11 @@
+/* eslint-disable react-refresh/only-export-components */
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { qk, useApi, useInvalidateContracts, useLookups, useMe } from '../app/context';
-import type { ApprovalInstance, ApprovalPreview, ApprovalStepStatus, ContractDetail, Deviation } from '../api/types';
+import { ApiError } from '../api/api';
+import type { ApprovalInstance, ApprovalPreview, ApprovalStepStatus, ContractDetail, Deviation, LookupUser } from '../api/types';
+import { staleMessage } from '../lib/errors';
 import { Avatar, Button, EmptyState, ErrorState, Field, Modal, Pill, Select, Skeleton, Textarea, useToast } from '../components';
 import { formatDate } from '../lib/dates';
 import { formatMoneyCompact, type Tone } from '../lib/format';
@@ -73,16 +76,16 @@ export function RoutePreview({ preview, loading }: { preview: ApprovalPreview | 
 
 const SEVERITY_TONE: Record<Deviation['severity'], Tone> = { High: 'red', Medium: 'amber', Low: 'blue', None: 'green' };
 
-export function Deviations({ items }: { items: Deviation[] }) {
+export function Deviations({ items, wide }: { items: Deviation[]; wide?: boolean }) {
   if (items.length === 0) return <EmptyState compact title="No deviations found" text="Nothing in the uploaded file differs from the DAFA standard terms." />;
   return (
     <div>
       {items.map((d, i) => (
-        <div key={i} className="deviation" style={i === 0 ? { borderTop: 0, paddingTop: 0 } : undefined}>
+        <div key={i} className={`deviation${wide ? ' deviation--wide' : ''}`} style={i === 0 && !wide ? { borderTop: 0, paddingTop: 0 } : undefined}>
           <Pill tone={SEVERITY_TONE[d.severity]}>{d.severity === 'None' ? 'OK' : d.severity}</Pill>
           <span className="kv">
             <span className="kv__v">{d.text}</span>
-            <span className="kv__k">Standard: {d.standard}</span>
+            {d.standard ? <span className="kv__k">Standard: {d.standard}</span> : null}
           </span>
         </div>
       ))}
@@ -93,17 +96,18 @@ export function Deviations({ items }: { items: Deviation[] }) {
   );
 }
 
-export function KeyTerms({ contract: c }: { contract: ContractDetail }) {
+/** The terms an approver looks at first. `tiles` renders one tinted tile per term (Approvals screen). */
+export function KeyTerms({ contract: c, tiles }: { contract: ContractDetail; tiles?: boolean }) {
   const value = c.totalValue ?? c.annualValue;
   const terms: [string, string][] = [
     [c.totalValue !== null ? 'Total value' : 'Annual value', formatMoneyCompact(value, c.currency)],
     ['Term', c.endDate ? `${formatDate(c.startDate)} – ${formatDate(c.endDate)}` : `From ${formatDate(c.startDate)}, open-ended`],
     ['Notice period', c.noticePeriodDays === null ? 'Missing' : `${c.noticePeriodDays} days`],
     ['Renewal', c.autoRenew && c.renewalMonths ? `Automatic, ${c.renewalMonths} months` : 'Fixed term'],
-    ['Change of control', c.changeOfControl ? 'Yes' : 'No clause'],
+    ['Change of control', c.changeOfControl === null ? 'Not set' : c.changeOfControl ? 'Yes' : 'No clause'],
   ];
   return (
-    <dl className="terms-grid">
+    <dl className={tiles ? 'term-tiles' : 'terms-grid'}>
       {terms.map(([k, v]) => (
         <div key={k} className="kv">
           <dt className="kv__k">{k}</dt>
@@ -114,14 +118,29 @@ export function KeyTerms({ contract: c }: { contract: ContractDetail }) {
   );
 }
 
-/** Comment + Approve / Reject / Delegate for one pending step of the signed-in user. */
-export function DecisionForm({ stepId, onDone }: { stepId: string; onDone?: () => void }) {
+/**
+ * State and actions behind every decision control: the comment, Approve, Reject (comment
+ * required) and Delegate for one pending step of the signed-in user.
+ */
+export interface DecisionContract {
+  ownerId: string;
+  submittedById?: string | null;
+}
+
+/** Who a step may be delegated to: an Approver or Admin who is not you, the owner or the submitter. */
+export function delegateCandidates(users: LookupUser[], meId: string, contract?: DecisionContract): LookupUser[] {
+  const blocked = new Set([meId, contract?.ownerId, contract?.submittedById].filter((x): x is string => !!x));
+  // An API that does not send roles on lookup users leaves the role check to the server.
+  return users.filter((u) => !blocked.has(u.id) && (!u.roles || u.roles.includes('Approver') || u.roles.includes('Admin')));
+}
+
+export function useApprovalDecision(stepId: string, onDone?: () => void, contract?: DecisionContract) {
   const api = useApi();
   const me = useMe();
   const lookups = useLookups();
   const toast = useToast();
   const invalidate = useInvalidateContracts();
-  const [comment, setComment] = useState('');
+  const [comment, setCommentText] = useState('');
   const [error, setError] = useState<string>();
   const [delegating, setDelegating] = useState(false);
   const [delegateTo, setDelegateTo] = useState('');
@@ -131,64 +150,84 @@ export function DecisionForm({ stepId, onDone }: { stepId: string; onDone?: () =
     toast.show(text);
     onDone?.();
   };
+  /** A 409 means someone else acted first: refetch so the screen shows what is true now. */
+  const failed = async (e: unknown) => {
+    if (e instanceof ApiError && e.status === 409) {
+      await invalidate();
+      toast.error(null, staleMessage(e));
+    } else toast.error(e);
+  };
   const decide = useMutation({
     mutationFn: (decision: 'Approve' | 'Reject') => api.decideApprovalStep(stepId, { decision, comment: comment.trim() }),
     onSuccess: (_d, decision) => done(decision === 'Approve' ? 'Approved' : 'Rejected. The contract is back with the owner as a draft'),
-    onError: (e) => toast.error(e),
+    onError: (e) => failed(e),
   });
   const delegate = useMutation({
     mutationFn: () => api.delegateApprovalStep(stepId, delegateTo),
     onSuccess: () => done('Approval step delegated'),
-    onError: (e) => toast.error(e),
+    onError: (e) => failed(e),
   });
-  const busy = decide.isPending || delegate.isPending;
 
-  const reject = () => {
-    if (!comment.trim()) {
-      setError('Add a comment that explains why you reject the contract');
-      return;
-    }
-    setError(undefined);
-    decide.mutate('Reject');
+  return {
+    comment,
+    setComment: (text: string) => {
+      setCommentText(text);
+      if (error) setError(undefined);
+    },
+    error,
+    busy: decide.isPending || delegate.isPending,
+    approving: decide.isPending && decide.variables === 'Approve',
+    rejecting: decide.isPending && decide.variables === 'Reject',
+    delegatingNow: delegate.isPending,
+    approve: () => decide.mutate('Approve'),
+    /** Returns false (and sets the error) when the required comment is missing. */
+    reject: (): boolean => {
+      if (!comment.trim()) {
+        setError('Add a comment that explains why you reject the contract');
+        return false;
+      }
+      setError(undefined);
+      decide.mutate('Reject');
+      return true;
+    },
+    delegating,
+    setDelegating,
+    delegateTo,
+    setDelegateTo,
+    delegate: () => delegate.mutate(),
+    delegateOptions: delegateCandidates(lookups.users, me.id, contract).map((u) => ({ value: u.id, label: u.name })),
   };
+}
 
+/** Comment + Approve / Reject / Delegate for one pending step of the signed-in user. */
+export function DecisionForm({ stepId, onDone, contract }: { stepId: string; onDone?: () => void; contract?: DecisionContract }) {
+  const d = useApprovalDecision(stepId, onDone, contract);
   return (
     <div className="stack" style={{ gap: 12 }}>
-      <Field label="Comment" error={error} hint="Required if you reject.">
-        {(p) => (
-          <Textarea
-            {...p}
-            rows={2}
-            value={comment}
-            placeholder="Add a comment"
-            onChange={(e) => {
-              setComment(e.target.value);
-              if (error) setError(undefined);
-            }}
-          />
-        )}
+      <Field label="Comment" error={d.error} hint="Required if you reject.">
+        {(p) => <Textarea {...p} rows={2} value={d.comment} placeholder="Add a comment" onChange={(e) => d.setComment(e.target.value)} />}
       </Field>
-      {delegating ? (
+      {d.delegating ? (
         <div className="row-flex" style={{ alignItems: 'flex-end' }}>
           <Field label="Delegate to" className="spacer">
-            {(p) => <Select {...p} value={delegateTo} onChange={(e) => setDelegateTo(e.target.value)} placeholder="Choose a person" options={lookups.users.filter((u) => u.id !== me.id).map((u) => ({ value: u.id, label: u.name }))} />}
+            {(p) => <Select {...p} value={d.delegateTo} onChange={(e) => d.setDelegateTo(e.target.value)} placeholder="Choose a person" options={d.delegateOptions} />}
           </Field>
-          <Button variant="secondary" onClick={() => setDelegating(false)} disabled={busy}>
+          <Button variant="secondary" onClick={() => d.setDelegating(false)} disabled={d.busy}>
             Cancel
           </Button>
-          <Button onClick={() => delegate.mutate()} disabled={!delegateTo || busy} loading={delegate.isPending}>
+          <Button onClick={d.delegate} disabled={!d.delegateTo || d.busy} loading={d.delegatingNow}>
             Delegate
           </Button>
         </div>
       ) : (
         <div className="row-flex" style={{ justifyContent: 'flex-end' }}>
-          <Button variant="ghost" onClick={() => setDelegating(true)} disabled={busy}>
+          <Button variant="ghost" onClick={() => d.setDelegating(true)} disabled={d.busy}>
             Delegate
           </Button>
-          <Button variant="danger" onClick={reject} disabled={busy} loading={decide.isPending && decide.variables === 'Reject'}>
+          <Button variant="danger" onClick={d.reject} disabled={d.busy} loading={d.rejecting}>
             Reject
           </Button>
-          <Button icon="check" onClick={() => decide.mutate('Approve')} disabled={busy} loading={decide.isPending && decide.variables === 'Approve'}>
+          <Button icon="check" onClick={d.approve} disabled={d.busy} loading={d.approving}>
             Approve
           </Button>
         </div>
@@ -238,7 +277,7 @@ export function ApprovalDialog({ stepId, onClose }: { stepId: string; onClose: (
           <Link to={`/contracts/${item.contract.id}`} onClick={onClose} style={{ fontWeight: 600, fontSize: 13, alignSelf: 'flex-start' }}>
             Open the contract and its {item.contract.documents.length} {item.contract.documents.length === 1 ? 'document' : 'documents'}
           </Link>
-          <DecisionForm stepId={stepId} onDone={onClose} />
+          <DecisionForm stepId={stepId} onDone={onClose} contract={item.contract} />
         </>
       )}
     </Modal>

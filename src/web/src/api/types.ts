@@ -40,6 +40,8 @@ export interface LookupUser {
   name: string;
   initials: string;
   departmentIds: Id[];
+  /** Requested from the backend (phase 2): lets the delegate picker offer only Approver/Admin users. */
+  roles?: Role[];
 }
 
 export interface Lookups {
@@ -194,7 +196,16 @@ export interface ApprovalInstance {
   stages: ApprovalStage[];
 }
 
-export interface ContractDetail extends ContractListItem, ContractFields {
+export interface ContractDetail extends ContractListItem, Omit<ContractFields, 'changeOfControl'> {
+  /** null when it was never filled in (then "Change of control" is in `missingData`). */
+  changeOfControl: boolean | null;
+  /**
+   * camelCase names of the fields the signed-in user may not change: after approval the
+   * approved terms are locked for owners. Changing one returns 409.
+   */
+  lockedFields: string[];
+  /** Requested from the backend (phase 2): who submitted the contract for approval, when known. */
+  submittedById?: Id | null;
   status: ContractStatus;
   signedDate: string | null;
   signingMethod: string | null;
@@ -293,6 +304,8 @@ export interface SignInput {
 export interface RenewalDecisionInput {
   decision: RenewalDecision;
   comment: string;
+  /** Required for `Renew` on a contract that does not renew automatically. */
+  newEndDate?: string | null;
 }
 
 export interface ObligationInput {
@@ -366,6 +379,9 @@ export interface ApprovalPreviewQuery {
 
 export interface ApprovalPreview {
   stages: { order: number; approvers: string[] }[];
+  /** The rule that matched (phase 2 addition; optional so an older API still works). */
+  ruleId?: Id | null;
+  ruleName?: string | null;
 }
 
 export interface RenewalItem {
@@ -375,6 +391,7 @@ export interface RenewalItem {
   entityName: string;
   departmentName: string;
   noticeDeadline: string;
+  /** Negative when the deadline has passed without a decision. */
   daysToNotice: number;
   autoRenew: boolean;
   annualValue: number | null;
@@ -491,6 +508,18 @@ export interface HolidayCover {
   to: string;
 }
 export type HolidayCoverInput = Pick<HolidayCover, 'userId' | 'deputyId' | 'from' | 'to'>;
+
+/** `GET dev/config` (anonymous): how this site signs users in. */
+export interface DevConfig {
+  authMode: 'Dev' | 'Entra';
+  /** Dev mode only: a shared access code must be entered before the demo-user picker. */
+  accessCodeRequired: boolean;
+}
+
+export interface GetContractOptions {
+  /** `?peek=true`: read without recording the contract as "recently opened" (quick look, dialogs). */
+  peek?: boolean;
+}
 
 export interface DevUser {
   id: Id;

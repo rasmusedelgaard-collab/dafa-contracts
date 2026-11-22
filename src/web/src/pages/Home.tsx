@@ -184,7 +184,7 @@ export function Home() {
               ]}
             />
           </div>
-          <Card clip>
+          <Card clip className="task-card">
             {home.isLoading ? (
               <SkeletonRows rows={5} label="Loading your tasks" />
             ) : home.isError ? (
@@ -207,6 +207,10 @@ export function Home() {
                         <Icon name={TASK_ICON[t.kind]} stroke={2} />
                       </span>
                       <div className="task__text">
+                        {/* Phone layout: the pill text moves above the title (Phone.dc.html). */}
+                        <span className={`task__label fg-${tone}`}>
+                          {t.pill}
+                        </span>
                         {t.contractId ? (
                           <Link to={`/contracts/${t.contractId}`} className="task__title">
                             {t.title}

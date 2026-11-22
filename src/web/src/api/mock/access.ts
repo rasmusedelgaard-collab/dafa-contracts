@@ -56,7 +56,8 @@ export function canEdit(user: UserRec, c: ContractRec): boolean {
 
 /** The people on the contract (and Admin) record the renewal decision on an active contract with a deadline. */
 export function canDecideRenewal(user: UserRec, c: ContractRec): boolean {
-  if (c.status !== 'Active' || !c.endDate) return false;
+  // Open-ended contracts can record GiveNotice at any time.
+  if (c.status !== 'Active') return false;
   return isAdmin(user) || isOnContract(user, c);
 }
 

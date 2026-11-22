@@ -8,6 +8,7 @@ import type { ContractDetail, ContractReminder, Obligation, RenewalDecision } fr
 import { Avatar, Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Icon, Pill, Segmented, Skeleton, StatusPill, useToast } from '../../components';
 import { ApprovalRoute, DecisionForm, Deviations } from '../../features/Approval';
 import { RenewalDialog } from '../../features/RenewalDialog';
+import { staleMessage } from '../../lib/errors';
 import { addDays, daysBetween, formatDate, formatDateLong, formatDayMonth, todayIso } from '../../lib/dates';
 import { fileExtension, formatFileSize, formatMoney, saveBlob } from '../../lib/format';
 import { EditDetailsDialog, LinkDialog, ObligationDialog, SignDialog, UploadDialog } from './dialogs';
@@ -220,7 +221,7 @@ function Facts({ c }: { c: ContractDetail }) {
     ['Signed', c.signedDate ? `${formatDate(c.signedDate)}${c.signingMethod ? `, ${c.signingMethod.charAt(0).toLowerCase()}${c.signingMethod.slice(1)}` : ''}` : 'Not signed'],
     ['Payment terms', c.paymentTerms ?? '–'],
     ['Governing law', c.governingLaw ?? '–'],
-    ['Change of control', c.changeOfControl ? 'Yes, has a clause' : 'No clause'],
+    ['Change of control', c.changeOfControl === null ? 'Not set' : c.changeOfControl ? 'Yes, has a clause' : 'No clause'],
     ['Liability cap', c.liabilityCap ?? '–'],
     ['Contract type', c.typeName],
     ...(c.nextReminderDate ? ([['Next reminder', formatDate(c.nextReminderDate)]] as [string, string][]) : []),
@@ -420,7 +421,7 @@ function ApprovalsTab({ c, onSubmit, submitting }: { c: ContractDetail; onSubmit
         {myStep ? (
           <Card className="tab-card" style={{ gap: 12 }} aria-label="Your decision">
             <h2 className="card-title">Your decision as {myStep.roleLabel}</h2>
-            <DecisionForm stepId={myStep.id} />
+            <DecisionForm stepId={myStep.id} contract={c} />
           </Card>
         ) : null}
       </div>
@@ -675,7 +676,13 @@ export function Record() {
       toast.show('Submitted for approval');
       setTab('approvals');
     },
-    onError: (e) => toast.error(e),
+    onError: async (e) => {
+      // A 409 means the contract changed under us: show the current state.
+      if (e instanceof ApiError && e.status === 409) {
+        await invalidate();
+        toast.error(null, staleMessage(e));
+      } else toast.error(e);
+    },
   });
 
   if (contract.isLoading) return <RecordSkeleton />;
@@ -738,6 +745,10 @@ export function Record() {
             </Button>
           ) : c.status === 'Approved' && c.canEdit ? (
             <Button onClick={() => setDialog({ kind: 'sign' })}>Mark as signed</Button>
+          ) : c.canDecideRenewal && c.endDate === null && c.renewalDecision === null ? (
+            <Button variant="secondary" onClick={() => setDialog({ kind: 'renewal', initial: 'GiveNotice' })}>
+              Give notice
+            </Button>
           ) : canRenew ? (
             <Button variant={dueSoon ? 'primary' : 'secondary'} onClick={() => setDialog({ kind: 'renewal' })}>
               Decide on renewal

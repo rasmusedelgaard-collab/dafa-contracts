@@ -61,6 +61,12 @@ export interface MockOptions {
   userId?: Id;
   /** Remember the selected demo user in localStorage. */
   rememberUser?: boolean;
+  /**
+   * Shared access code for the test site. When set, `dev/config` reports
+   * `accessCodeRequired`, `dev/users` and `dev/login` need the code, and the mock starts
+   * signed out (unless `userId` is given).
+   */
+  accessCode?: string;
 }
 
 export type MockApi = Api & {
@@ -76,6 +82,10 @@ const ROLE_LABEL: Record<ApproverRole, string> = {
   GroupCEO: 'Group CEO',
   Legal: 'Legal',
 };
+// Same list as the backend's ApprovedTerms.LockedFields (which also reports `openEnded`, the form's checkbox for endDate = null).
+const LOCKABLE = ['title', 'typeId', 'supplierId', 'counterpartyName', 'entityId', 'departmentId', 'startDate', 'endDate', 'noticePeriodDays', 'autoRenew', 'renewalMonths', 'annualValue', 'totalValue', 'currency', 'liabilityCap', 'exclusivity', 'changeOfControl', 'governingLaw', 'priceAdjustment', 'priceAdjustmentDate'] as const;
+const LOCKED_MESSAGE = 'Approved terms are locked. Register an amendment as a linked contract, or ask an administrator.';
+const UPLOAD_TYPES = /\.(pdf|docx|doc|xlsx|xls|pptx|msg|eml|txt|png|jpg|jpeg)$/i;
 const DECISION_TEXT = { Renew: 'Renew', Renegotiate: 'Renegotiate', GiveNotice: 'Give notice', LetExpire: 'Let it expire' } as const;
 
 function problem(status: number, title: string, detail?: string, errors?: Record<string, string[]>): ApiError {
@@ -109,7 +119,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
   const db = createSeed(today());
 
   let currentUserId: Id | null =
-    options.userId ?? (options.rememberUser ? remembered() : null) ?? db.users[0]?.id ?? null;
+    options.userId ?? (options.accessCode ? null : ((options.rememberUser ? remembered() : null) ?? db.users[0]?.id ?? null));
   if (currentUserId && !db.users.some((u) => u.id === currentUserId)) currentUserId = db.users[0]?.id ?? null;
 
   // ----- lookups -----
@@ -128,6 +138,10 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     const u = me();
     if (!isAdmin(u)) throw forbidden('Only administrators can open Settings.');
     return u;
+  }
+
+  function checkAccessCode(code: string | undefined): void {
+    if (options.accessCode && code !== options.accessCode) throw problem(401, 'Access code required', code ? 'The access code is not correct.' : 'Enter the access code for this test site.');
   }
 
   function audit(action: string, contractId: Id | null, text: string, userId: Id | null = currentUserId, at = now()): void {
@@ -169,7 +183,14 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     if (c.noticePeriodDays === null) missing.push('Notice period');
     if (c.annualValue === null && c.totalValue === null) missing.push('Contract value');
     if (isLive(c) && !c.signedDate) missing.push('Signed date');
+    if (c.changeOfControl === null) missing.push('Change of control');
     return missing;
+  }
+
+  /** Once a contract has left Draft, the approved terms are locked for everyone but administrators. */
+  function lockedFieldsOf(c: ContractRec, u: UserRec): (typeof LOCKABLE)[number][] {
+    if (isAdmin(u) || c.status === 'Draft') return [];
+    return [...LOCKABLE];
   }
 
   function recipientOf(c: ContractRec): Id {
@@ -357,6 +378,8 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         .map((a) => ({ at: a.at, who: userName(a.userId), text: a.text })),
       access: accessOf(c),
       deviations: deviations.map((d) => ({ ...d })),
+      lockedFields: lockedFieldsOf(c, u).flatMap((f) => (f === 'endDate' ? ['endDate', 'openEnded'] : [f])),
+      submittedById: c.submittedBy ?? null,
       canEdit: canEdit(u, c),
       canDecideRenewal: canDecideRenewal(u, c),
       storeUrl: null,
@@ -427,11 +450,35 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     }
   }
 
-  function startApproval(c: ContractRec): ApprovalRec {
+  /** The owner or submitter never approves their own contract: another approver takes the step. */
+  function substituteFor(taken: Set<Id>, blocked: Set<Id>): Id | null {
+    const candidates = [db.roleHolders.GroupCFO, db.roleHolders.GroupCEO, ...db.users.filter(isAdmin).map((x) => x.id), ...db.users.filter((x) => x.roles.includes('Approver')).map((x) => x.id)];
+    return candidates.find((id) => !blocked.has(id) && !taken.has(id)) ?? null;
+  }
+
+  function startApproval(c: ContractRec, submitterId: Id): ApprovalRec {
     const rule = matchRule(c.entityId, c.typeId, c.departmentId, valueDkk(c));
     if (!rule) throw conflict('No approval rule matches this contract. Ask an administrator to add one in Settings.');
-    const stages = resolveStages(rule, c.entityId, c.departmentId);
+    const blocked = new Set<Id>([c.ownerId, submitterId]);
+    const stages = resolveStages(rule, c.entityId, c.departmentId)
+      .map((s) => {
+        const taken = new Set(s.approvers.filter((a) => !blocked.has(a.userId)).map((a) => a.userId));
+        const approvers: { userId: Id; label: string }[] = [];
+        for (const a of s.approvers) {
+          if (!blocked.has(a.userId)) {
+            approvers.push(a);
+            continue;
+          }
+          const substitute = substituteFor(taken, blocked);
+          if (!substitute) continue;
+          taken.add(substitute);
+          approvers.push({ userId: substitute, label: `${a.label} (substitute: ${userName(a.userId)} is the owner or submitter)` });
+        }
+        return { order: s.order, approvers };
+      })
+      .filter((s) => s.approvers.length > 0);
     if (stages.length === 0) throw conflict('The matching approval rule has no approvers.');
+    c.submittedBy = submitterId;
     const a: ApprovalRec = {
       id: newId(),
       contractId: c.id,
@@ -837,6 +884,8 @@ export function createMockApi(options: MockOptions = {}): MockApi {
 
     getMe: () => run(() => toMe(me())),
 
+    getReminderSettings: () => run(() => (me(), structuredClone(db.reminderSettings))),
+
     getLookups: () =>
       run(() => {
         me();
@@ -844,7 +893,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           entities: db.entities.map((x) => ({ ...x })),
           departments: db.departments.map((x) => ({ ...x })),
           contractTypes: db.contractTypes.map((x) => ({ ...x })),
-          users: db.users.map((u) => ({ id: u.id, name: u.name, initials: u.initials, departmentIds: [...u.departmentIds] })),
+          users: db.users.map((u) => ({ id: u.id, name: u.name, initials: u.initials, departmentIds: [...u.departmentIds], roles: [...u.roles] })),
           currencies: [...db.currencies],
         };
       }),
@@ -918,10 +967,11 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         return { blob: new Blob([csv], { type: 'text/csv;charset=utf-8' }), fileName: `dafa-contracts-${today()}.csv` };
       }),
 
-    getContract: (id) =>
+    getContract: (id, opts) =>
       run(() => {
         const u = me();
         const c = contractFor(id, u);
+        if (opts?.peek) return toDetail(c, u);
         db.recent[u.id] = [c.id, ...(db.recent[u.id] ?? []).filter((x) => x !== c.id)].slice(0, 5);
         return toDetail(c, u);
       }),
@@ -969,6 +1019,8 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         const c = editable(id, u);
         if (c.status === 'InApproval') throw conflict('The contract is in approval and cannot be changed until the approval is finished.');
         checkRefs(input);
+        const changed = lockedFieldsOf(c, u).filter((f) => (input[f] ?? null) !== (c[f] ?? null));
+        if (changed.length > 0) throw conflict(LOCKED_MESSAGE);
         applyInput(c, input);
         audit('ContractUpdated', c.id, 'Details updated');
         return toDetail(c, u);
@@ -981,7 +1033,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         if (c.status !== 'Draft') throw conflict('Only a draft can be submitted for approval.');
         const missing = missingData(c);
         if (missing.length) throw invalid(`Complete the contract before you submit it: ${missing.join(', ').toLowerCase()}.`);
-        startApproval(c);
+        startApproval(c, u.id);
         c.status = 'InApproval';
         audit('ApprovalStarted', c.id, 'Submitted for approval');
         return toDetail(c, u);
@@ -1011,9 +1063,24 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         if ((input.decision === 'GiveNotice' || input.decision === 'LetExpire') && !input.comment?.trim()) {
           throw invalid('Add a comment that explains why the contract ends.', { comment: ['Required for this decision'] });
         }
+        if (!c.endDate && input.decision !== 'GiveNotice') throw invalid('An open-ended contract can only be ended by giving notice.', { decision: ['Not available for an open-ended contract'] });
+        if (input.decision === 'LetExpire' && c.autoRenew) throw invalid('A contract that renews automatically cannot be left to expire. Give notice instead.', { decision: ['Not available for an auto-renew contract'] });
+        const extend = input.decision === 'Renew' && !c.autoRenew && !!c.endDate;
+        if (extend) {
+          if (!input.newEndDate || !/^\d{4}-\d{2}-\d{2}$/.test(input.newEndDate)) throw invalid('Enter the new end date.', { newEndDate: ['Required when the contract does not renew automatically'] });
+          if (input.newEndDate <= (c.endDate ?? '')) throw invalid('The new end date must be after the current end date.', { newEndDate: ['Must be after the current end date'] });
+        }
         const comment = input.comment?.trim() || null;
         audit('RenewalDecision', c.id, `Renewal decision: ${DECISION_TEXT[input.decision]}${comment ? ` – ${comment}` : ''}`);
-        if (input.decision === 'Renew' && c.autoRenew && c.renewalMonths && c.endDate) {
+        if (extend && input.newEndDate) {
+          // Renew on a fixed-term contract moves the end date to the one given and clears the decision.
+          c.endDate = input.newEndDate;
+          c.renewalDecision = null;
+          c.renewalDecidedBy = null;
+          c.renewalDecidedAt = null;
+          c.renewalComment = null;
+          audit('ContractRenewed', c.id, `Renewed, new end date ${formatDate(c.endDate)}`);
+        } else if (input.decision === 'Renew' && c.autoRenew && c.renewalMonths && c.endDate) {
           // Renew on an auto-renew contract rolls the end date forward and clears the decision.
           c.endDate = addMonths(c.endDate, c.renewalMonths);
           c.renewalDecision = null;
@@ -1038,6 +1105,10 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         const c = editable(contractId, u);
         if (!file || file.size === 0) throw invalid('Choose a file to upload.', { file: ['Required'] });
         if (file.size > 25 * 1024 * 1024) throw invalid('The file is larger than 25 MB.', { file: ['File too large'] });
+        if (!UPLOAD_TYPES.test(file.name)) throw invalid('This file type cannot be uploaded.', { file: ['File type not allowed'] });
+        if (kind === 'Main' && !isAdmin(u) && c.status !== 'Draft' && c.status !== 'InApproval' && db.documents.some((d) => d.contractId === c.id && d.kind === 'Main')) {
+          throw forbidden('Only an administrator can replace the main document after approval. Upload it as an amendment instead.');
+        }
         const doc = addDocument(c, file.name, kind, file, u.id);
         audit('DocumentUploaded', c.id, `${doc.name} uploaded${doc.version > 1 ? ` (version ${doc.version})` : ''}`);
         return toDetail(c, u);
@@ -1139,6 +1210,8 @@ export function createMockApi(options: MockOptions = {}): MockApi {
       run(() => {
         const u = me();
         if (!canCreate(u)) throw forbidden('Your role does not allow creating contracts.');
+        if (file.size > 25 * 1024 * 1024) throw invalid('The file is larger than 25 MB.', { file: ['File too large'] });
+        if (!UPLOAD_TYPES.test(file.name)) throw invalid('This file type cannot be uploaded.', { file: ['File type not allowed'] });
         return buildExtract(file, u);
       }),
 
@@ -1222,6 +1295,8 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         if (a.status !== 'Pending' || step.status !== 'Pending') throw conflict('This approval step is no longer open.');
         if (!to) throw invalid('Choose who to delegate to.', { userId: ['Unknown user'] });
         if (to.id === u.id) throw invalid('You cannot delegate to yourself.', { userId: ['Same user'] });
+        if (to.id === c.ownerId || to.id === c.submittedBy) throw invalid('The owner or submitter of the contract cannot approve it.', { userId: ['Owner or submitter'] });
+        if (!to.roles.includes('Approver') && !isAdmin(to)) throw invalid(`${to.name} does not have the Approver role.`, { userId: ['Not an approver'] });
         if (stage.steps.some((s) => s.approverId === to.id && s.status === 'Pending')) throw conflict(`${to.name} is already approving this stage.`);
         step.status = 'Delegated';
         step.decidedAt = now();
@@ -1236,8 +1311,10 @@ export function createMockApi(options: MockOptions = {}): MockApi {
       run((): ApprovalPreview => {
         me();
         const rule = matchRule(query.entityId, query.typeId, query.departmentId, query.value ?? 0);
-        if (!rule) return { stages: [] };
+        if (!rule) return { stages: [], ruleId: null, ruleName: null };
         return {
+          ruleId: rule.id,
+          ruleName: rule.name,
           stages: resolveStages(rule, query.entityId, query.departmentId).map((s) => ({
             order: s.order,
             approvers: s.approvers.map((a) => `${a.label} · ${userName(a.userId)}`),
@@ -1253,7 +1330,8 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         return visible(u)
           .filter((c) => c.status === 'Active')
           .map((c) => ({ c, deadline: deadlineOf(c) }))
-          .filter((x): x is { c: ContractRec; deadline: string } => !!x.deadline && x.deadline >= t && x.deadline <= until)
+          // Also the deadlines that passed without a decision while the contract is still running.
+          .filter((x): x is { c: ContractRec; deadline: string } => !!x.deadline && x.deadline <= until && (x.deadline >= t || (x.c.renewalDecision === null && (x.c.endDate ?? '') >= t)))
           .sort((a, b) => a.deadline.localeCompare(b.deadline))
           .map(({ c, deadline }) => ({
             id: c.id,
@@ -1376,11 +1454,14 @@ export function createMockApi(options: MockOptions = {}): MockApi {
       deleteContractType: (id) => run(() => (admin(), typesCrud.remove(id))),
 
       getTemplates: () => run(() => (admin(), db.templates.map(toTemplate))),
-      createTemplate: (input) =>
+      createTemplate: (input, file) =>
         run(() => {
           admin();
           if (!input.name?.trim()) throw invalid('Enter a name for the template.', { name: ['Required'] });
-          const t = { id: newId(), name: input.name.trim(), description: input.description?.trim() ?? '', typeId: input.typeId, fileName: `${input.name.trim()}.docx`, placeholders: ['title', 'entity', 'counterparty', 'startDate', 'endDate'], body: `${input.name.trim().toUpperCase()}\n\nbetween {{entity}} and {{counterparty}}\n\n{{title}}\n\nTerm: {{startDate}} to {{endDate}}.` };
+          if (!file) throw invalid('Choose the Word file for the template.', { file: ['Required'] });
+          if (!/\.(docx|dotx)$/i.test(file.name)) throw invalid('Templates must be Word files (.docx or .dotx).', { file: ['Must be a Word file'] });
+          if (db.templates.some((x) => x.name.toLowerCase() === input.name.trim().toLowerCase())) throw conflict('A template with that name already exists.');
+          const t = { id: newId(), name: input.name.trim(), description: input.description?.trim() ?? '', typeId: input.typeId, fileName: file.name, blob: file as Blob, placeholders: ['title', 'entity', 'counterparty', 'startDate', 'endDate'], body: `${input.name.trim().toUpperCase()}\n\nbetween {{entity}} and {{counterparty}}\n\n{{title}}\n\nTerm: {{startDate}} to {{endDate}}.` };
           db.templates.push(t);
           audit('SettingsChanged', null, `Template "${t.name}" added`);
           return toTemplate(t);
@@ -1394,6 +1475,15 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           Object.assign(t, { name: input.name.trim(), description: input.description?.trim() ?? '', typeId: input.typeId });
           audit('SettingsChanged', null, `Template "${t.name}" changed`);
           return toTemplate(t);
+        }),
+      getTemplateContent: (id) =>
+        run(() => {
+          admin();
+          const t = byId(db.templates, id);
+          if (!t) throw notFound('Template');
+          // Uploaded templates keep their bytes; the seeded ones are generated as .rtf in the mock.
+          if (t.blob) return { blob: t.blob, fileName: t.fileName };
+          return { blob: makeRtf(t.body), fileName: t.fileName.replace(/\.[a-z]+$/i, '.rtf') };
         }),
       deleteTemplate: (id) =>
         run(() => {
@@ -1464,10 +1554,17 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         }),
     },
 
-    getDevUsers: () => run(() => db.users.map((u) => ({ id: u.id, name: u.name, initials: u.initials, title: u.title }))),
+    getDevConfig: () => run(() => ({ authMode: 'Dev' as const, accessCodeRequired: !!options.accessCode })),
 
-    devLogin: (userId) =>
+    getDevUsers: (accessCode) =>
       run(() => {
+        checkAccessCode(accessCode);
+        return db.users.map((u) => ({ id: u.id, name: u.name, initials: u.initials, title: u.title }));
+      }),
+
+    devLogin: (userId, accessCode) =>
+      run(() => {
+        checkAccessCode(accessCode);
         const u = userOf(userId);
         if (!u) throw notFound('User');
         currentUserId = u.id;

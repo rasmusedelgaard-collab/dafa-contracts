@@ -42,11 +42,6 @@ describe('app shell', () => {
     expect(screen.queryByRole('link', { name: 'New contract' })).not.toBeInTheDocument();
   });
 
-  it('routes the placeholder pages and marks them as coming next', async () => {
-    renderApp('/renewals');
-    expect(await screen.findByRole('heading', { level: 1, name: 'Renewals' })).toBeInTheDocument();
-    expect(screen.getByText('Coming next')).toBeInTheDocument();
-  });
 });
 
 describe('Home', () => {

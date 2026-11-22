@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { apiMode } from '../api';
 import { accessLabel, permissions, qk, useApi, useLookups, useMe, useScope } from '../app/context';
-import { Avatar, ButtonLink, Icon, Select, type IconName } from '../components';
+import { Avatar, ButtonLink, Icon, Select, Skeleton, type IconName } from '../components';
 import { GlobalSearch } from './GlobalSearch';
 import { UserSwitcher } from './UserSwitcher';
 
@@ -151,7 +151,16 @@ export function AppShell() {
       <div className="main">
         <TopBar onUser={() => setSwitching(true)} />
         <main ref={mainRef} tabIndex={-1} style={{ outline: 'none' }}>
-          <Outlet />
+          <Suspense
+            fallback={
+              <div className="page" style={{ paddingTop: 10 }} role="status" aria-label="Loading page">
+                <Skeleton width={220} height={30} />
+                <Skeleton height={180} radius={18} />
+              </div>
+            }
+          >
+            <Outlet />
+          </Suspense>
         </main>
       </div>
       <TabBar items={work} />

@@ -189,7 +189,7 @@ export function draftToInput(d: ContractDraft): ContractInput {
 const str = (n: number | null): string => (n === null ? '' : String(n));
 
 /** Loads an existing contract into the form (edit details). */
-export function fieldsToDraft(c: ContractFields): ContractDraft {
+export function fieldsToDraft(c: Omit<ContractFields, 'changeOfControl'> & { changeOfControl: boolean | null }): ContractDraft {
   return {
     title: c.title,
     counterpartyName: c.counterpartyName,

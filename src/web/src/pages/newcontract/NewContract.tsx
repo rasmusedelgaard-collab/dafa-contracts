@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ApiError } from '../../api/api';
-import { permissions, qk, useApi, useInvalidateContracts, useLookups, useMe, useScope } from '../../app/context';
+import { permissions, qk, useApi, useInvalidateContracts, useLookups, useMe, useReminderSettings, useScope } from '../../app/context';
 import type { ContractDetail, ExtractResult, LinkKind, ObligationInput, Template } from '../../api/types';
 import { Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Field, Icon, Pill, Select, Skeleton, TextInput, useToast } from '../../components';
 import { Deviations, RoutePreview } from '../../features/Approval';
 import { ContractForm } from '../../features/ContractForm';
+import { UPLOAD_ACCEPT, uploadError } from '../../lib/uploads';
 import { formatDate, formatDayMonth, noticeDeadline, reminderSchedule } from '../../lib/dates';
 import { fileExtension, formatFileSize, formatMoney, plural, toDkk } from '../../lib/format';
 import { applySuggestions } from '../../lib/suggestions';
@@ -14,7 +15,6 @@ import { draftToInput, emptyDraft, hasErrors, parseAmount, parseWhole, validateD
 import { LINK_KINDS } from '../record/dialogs';
 
 const STEPS = ['Upload', 'Details', 'Links and obligations', 'Approval'] as const;
-const DEFAULT_REMINDER_DAYS = [120, 60, 30];
 
 type Source = { kind: 'upload'; result: ExtractResult } | { kind: 'template'; template: Template } | { kind: 'manual' };
 interface PendingLink {
@@ -82,7 +82,7 @@ function StartStep({ onFile, reading, onTemplate, onManual, preferTemplate }: { 
           className="sr-only"
           tabIndex={-1}
           aria-hidden="true"
-          accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          accept={UPLOAD_ACCEPT}
           onChange={(e) => {
             const file = e.target.files?.[0];
             e.target.value = '';
@@ -329,6 +329,12 @@ export function NewContract() {
     },
     onError: (e) => toast.error(e, 'The file could not be read. Try again.'),
   });
+  /** Checks type and size before the file is sent for reading. */
+  const readFile = (file: File) => {
+    const problem = uploadError(file);
+    if (problem) toast.error(null, `${file.name}: ${problem}.`);
+    else extract.mutate(file);
+  };
 
   const change = <K extends DraftField>(field: K, value: ContractDraft[K]) => {
     const next = { ...draft, [field]: value };
@@ -375,9 +381,10 @@ export function NewContract() {
   };
 
   // ----- calculated side panel -----
+  const reminderSettings = useReminderSettings();
   const notice = parseWhole(draft.noticePeriodDays);
   const deadline = draft.openEnded || !draft.endDate ? null : noticeDeadline(draft.endDate, notice !== null && !Number.isNaN(notice) ? notice : null);
-  const reminders = reminderSchedule(deadline, DEFAULT_REMINDER_DAYS, 14).filter((r) => r.kind !== 'Escalation');
+  const reminders = reminderSchedule(deadline, reminderSettings.noticeDays, reminderSettings.escalationDays).filter((r) => r.kind !== 'Escalation');
   const entityName = lookups.entities.find((e) => e.id === draft.entityId)?.name;
   const departmentName = lookups.departments.find((d) => d.id === draft.departmentId)?.name;
   const typeName = lookups.contractTypes.find((t) => t.id === draft.typeId)?.name;
@@ -554,7 +561,7 @@ export function NewContract() {
           Step {step + 1} of 4: {STEPS[step]}
         </div>
 
-        {step === 0 ? <StartStep onFile={(f) => extract.mutate(f)} reading={extract.isPending} onTemplate={pickTemplate} onManual={next} preferTemplate={params.get('start') === 'template'} /> : null}
+        {step === 0 ? <StartStep onFile={readFile} reading={extract.isPending} onTemplate={pickTemplate} onManual={next} preferTemplate={params.get('start') === 'template'} /> : null}
 
         {step === 1 ? (
           <>
@@ -585,11 +592,11 @@ export function NewContract() {
                     className="sr-only"
                     tabIndex={-1}
                     aria-hidden="true"
-                    accept=".pdf,.doc,.docx"
+                    accept={UPLOAD_ACCEPT}
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       e.target.value = '';
-                      if (file) extract.mutate(file);
+                      if (file) readFile(file);
                     }}
                   />
                   <Button variant="secondary" size="md" loading={extract.isPending} onClick={() => replaceRef.current?.click()}>

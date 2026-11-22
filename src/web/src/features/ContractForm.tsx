@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { qk, useApi, useLookups } from '../app/context';
+import { listDays, qk, useApi, useLookups, useReminderSettings } from '../app/context';
 import { Button, Field, Pill, Segmented, Select, Textarea, TextInput } from '../components';
 import type { ContractDraft, DraftErrors, DraftField } from '../lib/validation';
 
@@ -18,6 +18,8 @@ export interface ContractFormProps {
   suggestions?: SuggestionState;
   /** Renders the form without card padding (inside a dialog). */
   flat?: boolean;
+  /** Field names from `ContractDetail.lockedFields`: shown, but disabled and marked "Locked". */
+  lockedFields?: string[];
 }
 
 const YES_NO = [
@@ -36,8 +38,10 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 /** The contract details form, shared by New contract (step 2) and Edit details. */
-export function ContractForm({ draft, errors, onChange, suggestions, flat }: ContractFormProps) {
+export function ContractForm({ draft, errors, onChange, suggestions, flat, lockedFields }: ContractFormProps) {
+  const locked = (field: string) => lockedFields?.includes(field) ?? false;
   const api = useApi();
+  const reminderSettings = useReminderSettings();
   const lookups = useLookups();
   const listId = useId();
   const groupId = useId();
@@ -50,6 +54,16 @@ export function ContractForm({ draft, errors, onChange, suggestions, flat }: Con
 
   /** Label tag and accept button for a field that carries an AI suggestion. */
   const ai = (field: DraftField, label: string): { tag?: ReactNode; after?: ReactNode; suggested: boolean } => {
+    if (locked(field)) {
+      return {
+        suggested: false,
+        tag: (
+          <Pill tone="gray" small>
+            Locked
+          </Pill>
+        ),
+      };
+    }
     if (!suggestions) return { suggested: false };
     if (suggestions.pending.has(field)) {
       return {
@@ -79,7 +93,7 @@ export function ContractForm({ draft, errors, onChange, suggestions, flat }: Con
     const s = ai(field, label);
     return (
       <Field label={label} optional={opts.optional} error={errors[field]} hint={opts.hint} tag={s.tag} after={s.after} className={opts.full ? 'form-grid__full' : undefined}>
-        {(p) => <TextInput {...p} suggested={s.suggested} inputMode={opts.numeric ? 'decimal' : undefined} placeholder={opts.placeholder} value={draft[field]} onChange={(e) => onChange(field, e.target.value)} />}
+        {(p) => <TextInput {...p} suggested={s.suggested} disabled={locked(field)} inputMode={opts.numeric ? 'decimal' : undefined} placeholder={opts.placeholder} value={draft[field]} onChange={(e) => onChange(field, e.target.value)} />}
       </Field>
     );
   };
@@ -88,16 +102,19 @@ export function ContractForm({ draft, errors, onChange, suggestions, flat }: Con
     const s = ai(field, label);
     return (
       <Field label={label} optional={opts.optional} error={errors[field]} tag={s.tag} after={s.after}>
-        {(p) => <Select {...p} suggested={s.suggested} value={draft[field]} onChange={(e) => onChange(field, e.target.value)} options={options} placeholder={opts.placeholder ?? (opts.optional ? 'None' : 'Choose')} />}
+        {(p) => <Select {...p} suggested={s.suggested} disabled={locked(field)} value={draft[field]} onChange={(e) => onChange(field, e.target.value)} options={options} placeholder={opts.placeholder ?? (opts.optional ? 'None' : 'Choose')} />}
       </Field>
     );
   };
 
-  const date = (field: 'startDate' | 'endDate' | 'priceAdjustmentDate', label: string, opts: { optional?: boolean; disabled?: boolean; hint?: string } = {}) => {
+  const date = (field: 'startDate' | 'endDate' | 'priceAdjustmentDate', label: string, given: { optional?: boolean; disabled?: boolean; hint?: string } = {}) => {
     const s = ai(field, label);
+    // A locked date keeps showing its value; an open-ended end date is disabled and empty.
+    const isLocked = locked(field);
+    const opts = given;
     return (
       <Field label={label} optional={opts.optional} error={errors[field]} hint={opts.hint} tag={s.tag} after={opts.disabled ? undefined : s.after}>
-        {(p) => <TextInput {...p} type="date" suggested={s.suggested && !opts.disabled} disabled={opts.disabled} value={opts.disabled ? '' : draft[field]} onChange={(e) => onChange(field, e.target.value)} />}
+        {(p) => <TextInput {...p} type="date" suggested={s.suggested && !opts.disabled} disabled={opts.disabled || isLocked} value={opts.disabled ? '' : draft[field]} onChange={(e) => onChange(field, e.target.value)} />}
       </Field>
     );
   };
@@ -113,10 +130,10 @@ export function ContractForm({ draft, errors, onChange, suggestions, flat }: Con
           </span>
           {s.tag}
         </div>
-        <div className="field__row">
+        <fieldset className="field__row" disabled={locked(field)} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           <Segmented mode="radio" block ariaLabel={label} options={YES_NO} value={toYesNo(draft[field])} invalid={!!errors[field]} describedBy={errors[field] ? errorId : undefined} onChange={(v) => onChange(field, v === 'yes')} />
           {s.after}
-        </div>
+        </fieldset>
         {errors[field] ? (
           <span className="field__error" id={errorId} role="alert">
             {errors[field]}
@@ -138,6 +155,7 @@ export function ContractForm({ draft, errors, onChange, suggestions, flat }: Con
           <TextInput
             {...p}
             suggested={cp.suggested}
+            disabled={locked('counterpartyName')}
             list={listId}
             autoComplete="off"
             value={draft.counterpartyName}
@@ -163,7 +181,7 @@ export function ContractForm({ draft, errors, onChange, suggestions, flat }: Con
       {select('ownerId', 'Owner', users)}
       {select('delegateId', 'Delegate', users, { optional: true })}
       {select('responsibleId', 'Responsible', users, { optional: true })}
-      <Field label="Reminders go to" error={errors.reminderRecipient} hint="120, 60 and 30 days before the notice deadline.">
+      <Field label="Reminders go to" error={errors.reminderRecipient} hint={`${listDays(reminderSettings.noticeDays)} days before the notice deadline.`}>
         {(p) => (
           <Select
             {...p}
@@ -183,7 +201,7 @@ export function ContractForm({ draft, errors, onChange, suggestions, flat }: Con
       <div className="stack" style={{ gap: 8 }}>
         {date('endDate', 'End date', { disabled: draft.openEnded })}
         <label className="check">
-          <input type="checkbox" checked={draft.openEnded} onChange={(e) => onChange('openEnded', e.target.checked)} />
+          <input type="checkbox" checked={draft.openEnded} disabled={locked('openEnded') || locked('endDate')} onChange={(e) => onChange('openEnded', e.target.checked)} />
           Open-ended (no end date)
         </label>
       </div>

@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:real": "VITE_API_MODE=real vite",
+    "dev:real": "vite --mode real",
     "build": "tsc -b && vite build",
+    "build:demo": "tsc -b && vite build --mode demo",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -1,6 +1,8 @@
 import { ApiError, type Api } from './api';
 import type {
   ContractQuery,
+  GetContractOptions,
+  TemplateInput,
   DocumentKind,
   FileDownload,
   HolidayCoverInput,
@@ -40,7 +42,8 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
     res = await fetch(`${BASE}/${path}`, {
       credentials: 'include',
       ...init,
-      headers: { Accept: 'application/json', ...init?.headers },
+      // The API rejects state-changing requests without this header (CSRF protection).
+      headers: { Accept: 'application/json', 'X-Requested-With': 'dafa-contracts', ...init?.headers },
     });
   } catch {
     throw new ApiError({ title: 'Network error', status: 0, detail: 'The server could not be reached.' });
@@ -119,10 +122,11 @@ export function createHttpApi(): Api {
     getSuppliers: (q?: string) => get(`suppliers${qs({ q })}`),
     getHome: () => get('home'),
     search: (q: string) => get(`search${qs({ q })}`),
+    getReminderSettings: () => get('reminder-settings'),
 
     getContracts: (query?: ContractQuery) => get(`contracts${qs(query)}`),
     exportContracts: (query?: ContractQuery) => download(`contracts/export${qs(query)}`, 'contracts.csv'),
-    getContract: (id: Id) => get(`contracts/${id}`),
+    getContract: (id: Id, options?: GetContractOptions) => get(`contracts/${id}${qs({ peek: options?.peek ? true : undefined })}`),
     createContract: (input: unknown) => post('contracts', input),
     updateContract: (id: Id, input: unknown) => put(`contracts/${id}`, input),
     submitContract: (id: Id) => post(`contracts/${id}/submit`),
@@ -172,7 +176,9 @@ export function createHttpApi(): Api {
       updateContractType: types.update,
       deleteContractType: types.remove,
       getTemplates: templates.list,
-      createTemplate: templates.create,
+      createTemplate: (input: TemplateInput, file: File) =>
+        multipart('admin/templates', file, { name: input.name, description: input.description, ...(input.typeId ? { typeId: input.typeId } : {}) }),
+      getTemplateContent: (id: Id) => download(`admin/templates/${id}/content`, 'template.docx'),
       updateTemplate: templates.update,
       deleteTemplate: templates.remove,
       getReminderSettings: () => get('admin/reminder-settings'),
@@ -184,8 +190,9 @@ export function createHttpApi(): Api {
       updateHolidayCover: (input: HolidayCoverInput[]) => put('admin/holiday-cover', input),
     },
 
-    getDevUsers: () => get('dev/users'),
-    devLogin: (userId: Id) => post('dev/login', { userId }),
+    getDevConfig: () => get('dev/config'),
+    getDevUsers: (accessCode?: string) => json('dev/users', accessCode ? { headers: { 'X-Dev-Access-Code': accessCode } } : undefined),
+    devLogin: (userId: Id, accessCode?: string) => post('dev/login', accessCode ? { userId, accessCode } : { userId }),
     logout: () => post('auth/logout'),
   };
   return api as Api;

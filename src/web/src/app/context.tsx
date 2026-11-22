@@ -2,7 +2,7 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Api } from '../api/api';
-import type { Lookups, Me } from '../api/types';
+import type { Lookups, Me, ReminderSettings } from '../api/types';
 
 // ----- API -----
 const ApiContext = createContext<Api | null>(null);
@@ -20,12 +20,16 @@ export function useApi(): Api {
 // ----- Query keys (one place, so invalidation stays consistent) -----
 export const qk = {
   me: ['me'] as const,
+  devConfig: ['dev-config'] as const,
   devUsers: ['dev-users'] as const,
+  reminderSettings: ['reminder-settings'] as const,
   lookups: ['lookups'] as const,
   home: ['home'] as const,
   contracts: ['contracts'] as const,
   contractList: (query: object) => ['contracts', 'list', query] as const,
   contract: (id: string) => ['contracts', 'detail', id] as const,
+  /** `?peek=true` reads (quick look, dialogs); kept apart so opening the record still counts as opened. */
+  contractPeek: (id: string) => ['contracts', 'peek', id] as const,
   search: (q: string) => ['search', q] as const,
   suppliers: (q: string) => ['suppliers', q] as const,
   templates: ['templates'] as const,
@@ -33,6 +37,7 @@ export const qk = {
   approvalPreview: (query: object) => ['approvals', 'preview', query] as const,
   renewals: (months: number) => ['renewals', months] as const,
   overview: ['overview'] as const,
+  admin: (resource: string, ...rest: unknown[]) => ['admin', resource, ...rest] as const,
 };
 
 /** Refreshes everything a contract change can touch: lists, the record, Home, approvals. */
@@ -78,6 +83,25 @@ export function useMeQuery() {
 export function useLookupsQuery(enabled: boolean) {
   const api = useApi();
   return useQuery({ queryKey: qk.lookups, queryFn: () => api.getLookups(), enabled, staleTime: 5 * 60_000 });
+}
+
+export const DEFAULT_REMINDER_SETTINGS: ReminderSettings = { noticeDays: [120, 60, 30], escalationDays: 14, obligationDays: 14 };
+
+/**
+ * The reminder settings every signed-in user may read (`GET reminder-settings`). Falls back to
+ * the brief's defaults while loading or when the endpoint is not there.
+ */
+export function useReminderSettings(): ReminderSettings {
+  const api = useApi();
+  const q = useQuery({ queryKey: qk.reminderSettings, queryFn: () => api.getReminderSettings(), staleTime: 5 * 60_000, retry: false });
+  return q.data ?? DEFAULT_REMINDER_SETTINGS;
+}
+
+/** "120, 60 and 30" */
+export function listDays(days: number[]): string {
+  const sorted = [...days].sort((a, b) => b - a).map(String);
+  if (sorted.length <= 1) return sorted.join('');
+  return `${sorted.slice(0, -1).join(', ')} and ${sorted[sorted.length - 1]}`;
 }
 
 /** What the signed-in user may do, derived from `me`. The API enforces the same rules. */

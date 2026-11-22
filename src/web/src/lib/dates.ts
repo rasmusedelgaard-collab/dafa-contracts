@@ -146,3 +146,12 @@ export function monthShort(yearMonth: string): string {
 export function monthKey(iso: string): string {
   return iso.slice(0, 7);
 }
+
+/** "22 Nov 2026, 14:05" in the browser's time zone, for audit and outbox timestamps. */
+export function formatDateTime(isoDateTime: string | null | undefined, fallback = '–'): string {
+  if (!isoDateTime) return fallback;
+  const d = new Date(isoDateTime);
+  if (Number.isNaN(d.getTime())) return fallback;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}

@@ -16,12 +16,20 @@ const VIEWS: { value: ContractView; label: string }[] = [
   { value: 'missing', label: 'Missing data' },
 ];
 const PAGE_SIZE = 15;
+/** Phone layout: the table headers (and their sort buttons) are hidden, so sorting is a select. */
+const SORTS: { value: ContractSort; label: string }[] = [
+  { value: 'notice', label: 'Notice deadline' },
+  { value: 'title', label: 'Title' },
+  { value: '-value', label: 'Highest value' },
+  { value: 'status', label: 'Status' },
+  { value: 'entity', label: 'Legal entity' },
+];
 
 const isView = (v: string | null): v is ContractView => VIEWS.some((x) => x.value === v);
 
 function QuickLook({ item }: { item: ContractListItem }) {
   const api = useApi();
-  const detail = useQuery({ queryKey: qk.contract(item.id), queryFn: () => api.getContract(item.id) });
+  const detail = useQuery({ queryKey: qk.contractPeek(item.id), queryFn: () => api.getContract(item.id, { peek: true }) });
   const d = detail.data;
   const tone = noticeTone(item.daysToNotice);
   const pending = <Skeleton width={90} height={16} />;
@@ -229,11 +237,18 @@ export function Register() {
         <ChipSelect label="Entity" options={refs(lookups.entities)} value={scope.entityId} onChange={(v) => { scope.setEntityId(v); update({ sel: null }); }} />
         <ChipSelect label="Department" options={refs(lookups.departments)} value={departmentId} onChange={(v) => update({ department: v, sel: null })} />
         <ChipSelect label="Type" options={refs(lookups.contractTypes)} value={typeId} onChange={(v) => update({ type: v, sel: null })} />
+        <select className={`chip only-phone${sort !== 'notice' ? ' chip--on' : ''}`} aria-label="Sort by" value={sort} onChange={(e) => update({ sort: e.target.value === 'notice' ? null : e.target.value })}>
+          {SORTS.map((s) => (
+            <option key={s.value} value={s.value}>
+              Sort: {s.label}
+            </option>
+          ))}
+        </select>
         <ChipSelect label="Status" options={ALL_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))} value={status} onChange={(v) => update({ status: v, sel: null })} />
       </div>
 
       <div className="split">
-        <Card clip className="split__main split__main--wide" style={{ gap: 0 }}>
+        <Card clip className="split__main split__main--wide register-card" style={{ gap: 0 }}>
           {list.isLoading ? (
             <SkeletonRows rows={8} label="Loading contracts" />
           ) : list.isError ? (

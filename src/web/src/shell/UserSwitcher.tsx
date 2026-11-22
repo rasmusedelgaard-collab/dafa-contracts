@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { permissions, qk, useApi, useMe } from '../app/context';
+import { readAccessCode } from '../app/signin';
 import { Avatar, Button, ErrorState, Modal, SkeletonRows, useToast } from '../components';
 
 /**
@@ -16,7 +17,7 @@ export function UserSwitcher({ onClose }: { onClose: () => void }) {
   const isDev = me.authMode === 'Dev';
   const perms = permissions(me);
 
-  const users = useQuery({ queryKey: qk.devUsers, queryFn: () => api.getDevUsers(), enabled: isDev });
+  const users = useQuery({ queryKey: qk.devUsers, queryFn: () => api.getDevUsers(readAccessCode()), enabled: isDev });
 
   const reset = async () => {
     onClose();
@@ -26,7 +27,7 @@ export function UserSwitcher({ onClose }: { onClose: () => void }) {
   };
 
   const login = useMutation({
-    mutationFn: (userId: string) => api.devLogin(userId),
+    mutationFn: (userId: string) => api.devLogin(userId, readAccessCode()),
     onSuccess: async (user) => {
       await reset();
       toast.show(`You are now ${user.name}`);

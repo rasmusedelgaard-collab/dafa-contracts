@@ -1,12 +1,13 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { qk, useApi, useInvalidateContracts, useLookups } from '../../app/context';
+import { permissions, qk, useApi, useInvalidateContracts, useLookups, useMe } from '../../app/context';
 import { ApiError } from '../../api/api';
 import type { ContractDetail, DocumentKind, LinkKind, Obligation } from '../../api/types';
 import { Button, Field, Modal, Select, Skeleton, TextInput, useToast } from '../../components';
 import { ContractForm } from '../../features/ContractForm';
 import { isIsoDate, todayIso } from '../../lib/dates';
 import { formatFileSize } from '../../lib/format';
+import { LOCKED_MESSAGE, UPLOAD_ACCEPT, UPLOAD_HINT, uploadError } from '../../lib/uploads';
 import { draftToInput, fieldsToDraft, hasErrors, parseWhole, validateDraft, type ContractDraft, type DraftErrors, type DraftField } from '../../lib/validation';
 
 interface DialogProps {
@@ -76,7 +77,8 @@ export function EditDetailsDialog({ contract, onClose }: DialogProps) {
         </>
       }
     >
-      <ContractForm flat draft={draft} errors={errors} onChange={onChange} />
+      {contract.lockedFields.length > 0 ? <p className="banner tone-amber">{LOCKED_MESSAGE}</p> : null}
+      <ContractForm flat draft={draft} errors={errors} onChange={onChange} lockedFields={contract.lockedFields} />
     </Modal>
   );
 }
@@ -146,7 +148,12 @@ export function UploadDialog({ contract, onClose }: DialogProps) {
   const invalidate = useInvalidateContracts();
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [kind, setKind] = useState<DocumentKind>(contract.documents.some((d) => d.kind === 'Main') ? 'Appendix' : 'Main');
+  const me = useMe();
+  const hasMain = contract.documents.some((d) => d.kind === 'Main');
+  // After approval only an administrator may replace the main document; others add an amendment.
+  const mainLocked = hasMain && !permissions(me).isAdmin && contract.status !== 'Draft' && contract.status !== 'InApproval';
+  const kinds = mainLocked ? DOC_KINDS.filter((k) => k.value !== 'Main') : DOC_KINDS;
+  const [kind, setKind] = useState<DocumentKind>(hasMain ? (mainLocked ? 'Amendment' : 'Appendix') : 'Main');
   const [error, setError] = useState<string>();
 
   const save = useMutation({
@@ -160,8 +167,8 @@ export function UploadDialog({ contract, onClose }: DialogProps) {
   });
 
   const submit = () => {
-    if (!file) return setError('Choose a file');
-    if (file.size > 25 * 1024 * 1024) return setError('The file is larger than 25 MB');
+    const found = uploadError(file);
+    if (found || !file) return setError(found ?? 'Choose a file');
     setError(undefined);
     save.mutate(file);
   };
@@ -183,7 +190,7 @@ export function UploadDialog({ contract, onClose }: DialogProps) {
         </>
       }
     >
-      <Field label="File" error={error} hint={file ? `${file.name} · ${formatFileSize(file.size)}` : 'PDF or Word, up to 25 MB. A file with the same name becomes a new version.'}>
+      <Field label="File" error={error} hint={file ? `${file.name} · ${formatFileSize(file.size)}` : `${UPLOAD_HINT} A file with the same name becomes a new version.`}>
         {(p) => (
           <input
             {...p}
@@ -191,14 +198,19 @@ export function UploadDialog({ contract, onClose }: DialogProps) {
             type="file"
             className="input"
             style={{ padding: '9px 14px', height: 'auto' }}
+            accept={UPLOAD_ACCEPT}
             onChange={(e) => {
-              setFile(e.target.files?.[0] ?? null);
-              setError(undefined);
+              const picked = e.target.files?.[0] ?? null;
+              setFile(picked);
+              // Say what is wrong as soon as the file is chosen, not only on Upload.
+              setError(picked ? uploadError(picked) : undefined);
             }}
           />
         )}
       </Field>
-      <Field label="Document type">{(p) => <Select {...p} value={kind} onChange={(e) => setKind(e.target.value as DocumentKind)} options={DOC_KINDS} />}</Field>
+      <Field label="Document type" hint={mainLocked ? 'The main contract is approved. Only an administrator can replace it; upload changes as an amendment.' : undefined}>
+        {(p) => <Select {...p} value={kind} onChange={(e) => setKind(e.target.value as DocumentKind)} options={kinds} />}
+      </Field>
     </Modal>
   );
 }
