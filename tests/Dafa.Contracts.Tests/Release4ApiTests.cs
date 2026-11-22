@@ -378,7 +378,7 @@ public class Release4ApiTests : IClassFixture<ApiFactory>
         Assert.Equal("Active", detail.GetProperty("status").GetString());
         Assert.Equal("Completed", detail.GetProperty("signature").GetProperty("status").GetString());
         Assert.Contains(detail.GetProperty("documents").EnumerateArray(), d => d.GetProperty("id").GetGuid() == signedDocumentId && d.GetProperty("kind").GetString() == "Main");
-        var signedFile = await cfo.GetAsync("/api/contracts/documents/" + signedDocumentId + "/content");
+        var signedFile = await cfo.GetAsync("/api/documents/" + signedDocumentId + "/content");
         Assert.Equal(HttpStatusCode.OK, signedFile.StatusCode);
         Assert.StartsWith("%PDF-", Encoding.ASCII.GetString(await signedFile.Content.ReadAsByteArrayAsync(), 0, 5));
 

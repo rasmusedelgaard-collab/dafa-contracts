@@ -208,7 +208,6 @@ public sealed class SchemaUpgrader
         {
             await EnsureVersionTableAsync(result, cancellationToken);
             var applied = await ReadAppliedVersionsAsync(cancellationToken);
-            var appliedEarlier = new HashSet<int>(applied);
             foreach (var step in Steps.OrderBy(s => s.Version))
             {
                 if (applied.Contains(step.Version))
@@ -232,11 +231,10 @@ public sealed class SchemaUpgrader
                 result.AppliedVersions.Add(step.Version);
                 applied.Add(step.Version);
             }
-            // An index that could not be created when its step ran (duplicates in the data, a column
-            // that a later step adds) is tried again on every start: each one is guarded by an
-            // existence check, and a failure is still only a warning.
-            foreach (var tableName in Steps.Where(s => appliedEarlier.Contains(s.Version))
-                         .SelectMany(s => s.IndexTables).Distinct(StringComparer.Ordinal).ToList())
+            // An index that could not be created when its step ran (duplicates in the data, a table
+            // or column that a later step adds) is tried again here, in this run and on every later
+            // start: each one is guarded by an existence check, and a failure is still only a warning.
+            foreach (var tableName in Steps.SelectMany(s => s.IndexTables).Distinct(StringComparer.Ordinal).ToList())
             {
                 try
                 {
