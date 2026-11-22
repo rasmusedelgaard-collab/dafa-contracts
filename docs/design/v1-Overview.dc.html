@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Overview – DAFA Contracts</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:"Avenir Next","Avenir Next LT Pro",Arial,sans-serif;color:#505152;background:#ffffff}
+a{color:#00456c}a:hover{color:#505152}
+</style>
+</helmet>
+<div style="display: flex; flex-wrap: wrap; min-height: 100vh; font-family: 'Avenir Next', 'Avenir Next LT Pro', Arial, sans-serif; color: #505152; background: #ffffff">
+  <nav aria-label="Main" style="flex: 1 1 240px; max-width: 100%; background: #505152; color: #ffffff; padding: 24px 0; display: flex; flex-direction: column; gap: 4px">
+    <div style="padding: 0 24px 24px; font-size: 17px; font-weight: 700; color: #ffffff">Contracts &amp; Documents</div>
+    <a href="Main.dc.html" style="display: block; padding: 12px 24px; color: #ffffff; text-decoration: none; background: #00456c; font-size: 15px; font-weight: 700">Overview</a>
+    <a href="Contracts.dc.html" style="display: block; padding: 12px 24px; color: #ffffff; text-decoration: none; font-size: 15px">Contracts</a>
+    <a href="#" style="display: block; padding: 12px 24px; color: #ffffff; text-decoration: none; font-size: 15px">Documents</a>
+    <a href="#" style="display: block; padding: 12px 24px; color: #ffffff; text-decoration: none; font-size: 15px">Approvals</a>
+    <a href="#" style="display: block; padding: 12px 24px; color: #ffffff; text-decoration: none; font-size: 15px">Templates</a>
+    <a href="#" style="display: block; padding: 12px 24px; color: #ffffff; text-decoration: none; font-size: 15px">Reports</a>
+    <a href="#" style="display: block; padding: 12px 24px; color: #ffffff; text-decoration: none; font-size: 15px">Administration</a>
+  </nav>
+  <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+    <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 16px 32px; border-bottom: 1px solid #d6d7d7">
+      <label for="q" style="position: absolute; left: -9999px">Search</label>
+      <input id="q" type="search" placeholder="Search contracts, counterparties, documents" style="flex: 1 1 320px; height: 44px; padding: 0 16px; border: 1px solid #7f8181; border-radius: 8px; font: inherit; font-size: 15px; color: #505152">
+      <label for="scope" style="font-size: 14px">Scope</label>
+      <select id="scope" style="height: 44px; padding: 0 12px; border: 1px solid #7f8181; border-radius: 8px; font: inherit; font-size: 15px; color: #505152; background: #ffffff">
+        <option>All entities you can access</option>
+        <option>DAFA A/S</option>
+        <option>DAFA Building Solutions A/S</option>
+        <option>DAFA Sverige AB</option>
+        <option>DAFA Deutschland GmbH</option>
+      </select>
+      <a href="NewContract.dc.html" style="display: inline-flex; align-items: center; height: 44px; padding: 0 20px; background: #00456c; color: #ffffff; text-decoration: none; border-radius: 8px; font-size: 15px; font-weight: 700">New contract</a>
+    </div>
+    <div style="max-width: 1180px; width: 100%; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 32px">
+      <div style="display: flex; flex-direction: column; gap: 4px">
+        <h1 style="margin: 0; font-size: 40px; line-height: 1.1; font-weight: 700">Overview</h1>
+        <p style="margin: 0; font-size: 17px">What needs your attention across the entities you can access.</p>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px">
+        <sc-for list="{{kpis}}" as="k" hint-placeholder-count="4">
+          <div style="background: #d6d7d7; padding: 24px; display: flex; flex-direction: column; gap: 8px">
+            <span style="font-size: 14px">{{k.label}}</span>
+            <span style="font-size: 40px; font-weight: 700; line-height: 1.1">{{k.value}}</span>
+            <span style="font-size: 14px">{{k.sub}}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 32px">
+        <section style="flex: 2 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+          <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px">
+            <h2 style="margin: 0; font-size: 28px; font-weight: 700">Upcoming notice deadlines</h2>
+            <a href="Contracts.dc.html" style="font-size: 15px">View all</a>
+          </div>
+          <div style="overflow-x: auto">
+            <table style="width: 100%; border-collapse: collapse; font-size: 15px; min-width: 560px">
+              <thead>
+                <tr style="text-align: left">
+                  <th style="padding: 12px 8px; border-bottom: 2px solid #505152; font-weight: 700">Contract</th>
+                  <th style="padding: 12px 8px; border-bottom: 2px solid #505152; font-weight: 700">Entity</th>
+                  <th style="padding: 12px 8px; border-bottom: 2px solid #505152; font-weight: 700">Owner</th>
+                  <th style="padding: 12px 8px; border-bottom: 2px solid #505152; font-weight: 700">Notice by</th>
+                  <th style="padding: 12px 8px; border-bottom: 2px solid #505152; font-weight: 700; text-align: right">Days left</th>
+                </tr>
+              </thead>
+              <tbody>
+                <sc-for list="{{deadlines}}" as="d" hint-placeholder-count="5">
+                  <tr>
+                    <td style="padding: 12px 8px; border-bottom: 1px solid #d6d7d7"><a href="ContractDetail.dc.html">{{d.name}}</a></td>
+                    <td style="padding: 12px 8px; border-bottom: 1px solid #d6d7d7">{{d.entity}}</td>
+                    <td style="padding: 12px 8px; border-bottom: 1px solid #d6d7d7">{{d.owner}}</td>
+                    <td style="padding: 12px 8px; border-bottom: 1px solid #d6d7d7">{{d.date}}</td>
+                    <td style="padding: 12px 8px; border-bottom: 1px solid #d6d7d7; text-align: right">
+                      <span style="display: inline-flex; align-items: center; gap: 8px; font-weight: 700"><span aria-hidden="true" style="width: 10px; height: 10px; background: {{d.mark}}"></span>{{d.days}}</span>
+                    </td>
+                  </tr>
+                </sc-for>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section style="flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+          <h2 style="margin: 0; font-size: 28px; font-weight: 700">Your tasks</h2>
+          <sc-for list="{{tasks}}" as="t" hint-placeholder-count="4">
+            <a href="ContractDetail.dc.html" style="display: flex; flex-direction: column; gap: 4px; padding: 16px; border: 1px solid #d6d7d7; text-decoration: none; color: #505152">
+              <span style="font-size: 14px; font-weight: 700; color: #00456c">{{t.kind}}</span>
+              <span style="font-size: 15px">{{t.text}}</span>
+              <span style="font-size: 14px">{{t.meta}}</span>
+            </a>
+          </sc-for>
+        </section>
+      </div>
+      <section style="display: flex; flex-direction: column; gap: 12px">
+        <h2 style="margin: 0; font-size: 28px; font-weight: 700">Annual contract value by legal entity</h2>
+        <sc-for list="{{entities}}" as="e" hint-placeholder-count="5">
+          <div style="display: flex; align-items: center; gap: 16px; font-size: 15px">
+            <span style="flex: 0 0 240px">{{e.name}}</span>
+            <div style="flex: 1 1 auto; background: #d6d7d7; height: 20px"><div style="height: 20px; background: #00456c; width: {{e.pct}}"></div></div>
+            <span style="flex: 0 0 90px; text-align: right; font-weight: 700">{{e.value}}</span>
+          </div>
+        </sc-for>
+        <p style="margin: 8px 0 0; font-size: 12px">Sample data for the concept. Figures come from the contract register's metadata index.</p>
+      </section>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var red = '#8e5550', ochre = '#d2a225', gray = '#abadae';
+    return {
+      kpis: [
+        { label: 'Active contracts', value: '[n]', sub: 'Across [n] legal entities' },
+        { label: 'Notice deadline within 90 days', value: '[n]', sub: '[n] within 30 days' },
+        { label: 'Waiting for your approval', value: '[n]', sub: 'Oldest: [n] days' },
+        { label: 'Annual contract value', value: 'DKK [x]m', sub: 'Customer and supplier' }
+      ],
+      deadlines: [
+        { name: 'Raw material supply – rubber compounds', entity: 'DAFA A/S', owner: 'Purchasing', date: '15 Dec 2026', days: '23', mark: red },
+        { name: 'Freight framework – Nordics', entity: 'DAFA A/S', owner: 'Logistics', date: '20 Jan 2027', days: '59', mark: ochre },
+        { name: 'IT support and hosting', entity: 'DAFA Group A/S', owner: 'CFO', date: '1 Feb 2027', days: '71', mark: ochre },
+        { name: 'Warehouse lease – Jönköping', entity: 'DAFA Sverige AB', owner: 'Country manager', date: '28 Feb 2027', days: '98', mark: gray },
+        { name: 'Distribution agreement – DACH', entity: 'DAFA Deutschland GmbH', owner: 'Sales', date: '31 Mar 2027', days: '129', mark: gray }
+      ],
+      tasks: [
+        { kind: 'Approve', text: 'ERP software subscription – [Supplier H]', meta: 'Step 2 of 3 · Legal and Finance in parallel' },
+        { kind: 'Decide on renewal', text: 'Raw material supply – rubber compounds', meta: 'Notice deadline in 23 days' },
+        { kind: 'Complete metadata', text: '3 migrated contracts are missing a notice period', meta: 'DAFA Building Solutions A/S' },
+        { kind: 'Review obligation', text: 'Annual price adjustment due – freight framework', meta: 'Due 1 Jan 2027' }
+      ],
+      entities: [
+        { name: 'DAFA A/S', pct: '100%', value: '[x]m' },
+        { name: 'DAFA Building Solutions A/S', pct: '62%', value: '[x]m' },
+        { name: 'DAFA Deutschland GmbH', pct: '41%', value: '[x]m' },
+        { name: 'DAFA Sverige AB', pct: '28%', value: '[x]m' },
+        { name: 'DAFA US Inc.', pct: '15%', value: '[x]m' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

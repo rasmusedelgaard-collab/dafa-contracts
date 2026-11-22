@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Dafa.Contracts.Api</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Only used by Auth/EntraAuthExtensions.cs (Auth:Mode=Entra). -->
+    <PackageReference Include="Microsoft.Identity.Web" Version="3.14.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Dafa.Contracts.Core\Dafa.Contracts.Core.csproj" />
+    <ProjectReference Include="..\Dafa.Contracts.Infrastructure\Dafa.Contracts.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

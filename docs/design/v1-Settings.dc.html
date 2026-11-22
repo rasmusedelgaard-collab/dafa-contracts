@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings – DAFA Contracts</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;font-family:"Avenir Next","Avenir Next LT Pro",Arial,sans-serif;color:#505152;background:#ffffff}
+a{color:#00456c}a:hover{color:#505152}
+</style>
+</helmet>
+<div style="display: flex; flex-wrap: wrap; min-height: 100vh; font-family: 'Avenir Next', 'Avenir Next LT Pro', Arial, sans-serif; color: #505152; background: #ffffff">
+  <nav aria-label="Main" style="flex: 1 1 240px; max-width: 100%; background: #505152; color: #ffffff; padding: 24px 0; display: flex; flex-direction: column; gap: 4px">
+    <div style="padding: 0 24px 24px; font-size: 17px; font-weight: 700; color: #ffffff">Contracts &amp; Documents</div>
+    <a href="Tasks.dc.html" style="display: block; padding: 12px 24px; color: #ffffff; text-decoration: none; font-size: 15px">My work</a>
+    <a href="Contracts.dc.html" style="display: block; padding: 12px 24px; color: #ffffff; text-decoration: none; font-size: 15px">Contracts</a>
+    <a href="Timeline.dc.html" style="display: block; padding: 12px 24px; color: #ffffff; text-decoration: none; font-size: 15px">Renewals</a>
+    <a href="Approvals.dc.html" style="display: block; padding: 12px 24px; color: #ffffff; text-decoration: none; font-size: 15px">Approvals</a>
+    <a href="Settings.dc.html" style="display: block; padding: 12px 24px; color: #ffffff; text-decoration: none; background: #00456c; font-size: 15px; font-weight: 700">Settings</a>
+  </nav>
+  <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-wrap: wrap">
+    <nav aria-label="Settings" style="flex: 0 1 220px; min-width: 180px; background: #d6d7d7; padding: 32px 0; display: flex; flex-direction: column">
+      <sc-for list="{{sections}}" as="s" hint-placeholder-count="8">
+        <button type="button" onClick="{{s.pick}}" style="text-align: left; padding: 12px 24px; border: 0; background: {{s.bg}}; color: {{s.fg}}; font: inherit; font-size: 15px; font-weight: {{s.w}}; cursor: pointer">{{s.label}}</button>
+      </sc-for>
+    </nav>
+    <div style="flex: 1 1 560px; min-width: 0; padding: 32px; box-sizing: border-box; display: flex; flex-direction: column; gap: 24px; max-width: 960px">
+      <sc-if value="{{showRetention}}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; flex-direction: column; gap: 4px">
+          <h1 style="margin: 0; font-size: 40px; line-height: 1.1; font-weight: 700">Retention</h1>
+          <p style="margin: 0; font-size: 17px">How long contracts are kept after they end, and what happens then. Applied to the SharePoint folder as a retention label.</p>
+        </div>
+        <div style="overflow-x: auto">
+          <table style="width: 100%; border-collapse: collapse; font-size: 15px; min-width: 640px">
+            <thead>
+              <tr style="text-align: left">
+                <th style="padding: 12px 8px; border-bottom: 2px solid #505152">Contract type</th>
+                <th style="padding: 12px 8px; border-bottom: 2px solid #505152">Keep after end</th>
+                <th style="padding: 12px 8px; border-bottom: 2px solid #505152">Then</th>
+                <th style="padding: 12px 8px; border-bottom: 2px solid #505152">Reviewer</th>
+              </tr>
+            </thead>
+            <tbody>
+              <sc-for list="{{rules}}" as="r" hint-placeholder-count="6">
+                <tr>
+                  <td style="padding: 8px; border-bottom: 1px solid #d6d7d7">{{r.type}}</td>
+                  <td style="padding: 8px; border-bottom: 1px solid #d6d7d7">
+                    <label style="display: inline-flex; align-items: center; gap: 8px"><input type="text" value="{{r.years}}" aria-label="Years for {{r.type}}" style="width: 64px; height: 40px; padding: 0 8px; border: 1px solid #7f8181; border-radius: 8px; font: inherit; font-size: 15px; color: #505152">years</label>
+                  </td>
+                  <td style="padding: 8px; border-bottom: 1px solid #d6d7d7">
+                    <select aria-label="Action for {{r.type}}" style="height: 40px; padding: 0 8px; border: 1px solid #7f8181; border-radius: 8px; font: inherit; font-size: 15px; color: #505152; background: #ffffff"><option>{{r.action}}</option><option>Delete automatically</option><option>Keep</option></select>
+                  </td>
+                  <td style="padding: 8px; border-bottom: 1px solid #d6d7d7">{{r.reviewer}}</td>
+                </tr>
+              </sc-for>
+            </tbody>
+          </table>
+        </div>
+        <p style="margin: 0; font-size: 14px">Example values, to be set by an administrator. Changes are logged.</p>
+      </sc-if>
+      <sc-if value="{{showDepts}}" hint-placeholder-val="{{ false }}">
+        <div style="display: flex; flex-direction: column; gap: 4px">
+          <h1 style="margin: 0; font-size: 40px; line-height: 1.1; font-weight: 700">Departments</h1>
+          <p style="margin: 0; font-size: 17px">Each department gets a library in every entity site and a dynamic Entra group from the department attribute.</p>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px">
+          <sc-for list="{{depts}}" as="d" hint-placeholder-count="12">
+            <div style="padding: 16px; border: 1px solid #d6d7d7; display: flex; flex-direction: column; gap: 4px">
+              <span style="font-size: 17px; font-weight: 700">{{d.n}}</span>
+              <span style="font-size: 14px">Entra: department = "{{d.n}}"</span>
+            </div>
+          </sc-for>
+        </div>
+        <button type="button" style="align-self: flex-start; height: 44px; padding: 0 20px; background: #ffffff; color: #00456c; border: 1px solid #00456c; border-radius: 8px; font: inherit; font-size: 15px; font-weight: 700">Add department</button>
+      </sc-if>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(p) { super(p); this.state = { s: 'Retention' }; }
+  renderVals() {
+    var self = this, s = this.state.s;
+    var labels = ['Legal entities', 'Departments', 'Contract types', 'Approval rules', 'Reminders', 'Retention', 'Templates', 'Audit log'];
+    return {
+      showRetention: s !== 'Departments',
+      showDepts: s === 'Departments',
+      sections: labels.map(function (l) { var on = l === s; return { label: l, bg: on ? '#505152' : 'transparent', fg: on ? '#ffffff' : '#505152', w: on ? 700 : 400, pick: function () { self.setState({ s: l }); } }; }),
+      rules: [
+        { type: 'Supplier – direct materials', years: '5', action: 'Review, then delete', reviewer: 'Purchasing' },
+        { type: 'IT and SaaS', years: '5', action: 'Review, then delete', reviewer: 'IT' },
+        { type: 'Lease and property', years: '10', action: 'Review, then delete', reviewer: 'Finance' },
+        { type: 'Finance and insurance', years: '10', action: 'Review, then delete', reviewer: 'Finance' },
+        { type: 'NDA', years: '5', action: 'Delete automatically', reviewer: '–' },
+        { type: 'Corporate (shareholder, M&A)', years: '–', action: 'Keep', reviewer: 'Group management' }
+      ],
+      depts: [
+        { n: 'Management' }, { n: 'Finance' }, { n: 'Purchasing' }, { n: 'Sales' }, { n: 'Production' }, { n: 'Supply chain and logistics' },
+        { n: 'Quality' }, { n: 'R&D and engineering' }, { n: 'Maintenance and facilities' }, { n: 'HSE' }, { n: 'IT' }, { n: 'HR' }, { n: 'Marketing' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

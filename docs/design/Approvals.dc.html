@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Approvals – DAFA Contracts v2</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#f4f6f9;-webkit-font-smoothing:antialiased}
+a{color:#00456c}a:hover{color:#002a42}
+.q:hover{background:#f7f9fc}
+.nav a:hover{background:#f1f5f9}a:focus-visible,button:focus-visible{outline:2px solid #00456c;outline-offset:2px}button{transition:background-color .15s ease}
+@media (prefers-reduced-motion: no-preference){
+button,a,.nav a svg{transition:transform .16s ease,box-shadow .16s ease,filter .16s ease,background-color .16s ease}
+button:hover{filter:brightness(0.96)}
+button[style*="background: #00456c"]:hover,a[style*="background: #00456c"]:hover{filter:brightness(1.14)}
+button:active,a[style*="height: 44px"]:active{transform:scale(0.97)}
+.nav a:hover svg{transform:translateX(2px)}
+.lift:hover{transform:translateY(-2px);box-shadow:0 0 0 1px rgba(16,24,40,0.05),0 12px 28px rgba(16,24,40,0.10)!important}
+.row,.trow,.drow,.q{transition:background-color .16s ease}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+main>div>*{animation:rise .4s ease both}
+main>div>*:nth-child(2){animation-delay:.05s}main>div>*:nth-child(3){animation-delay:.1s}main>div>*:nth-child(4){animation-delay:.15s}main>div>*:nth-child(5){animation-delay:.2s}
+}
+</style>
+</helmet>
+<div style="display: flex; flex-wrap: wrap; min-height: 100vh; font-family: 'Avenir Next', 'Avenir Next LT Pro', 'Inter', -apple-system, 'Helvetica Neue', Arial, sans-serif; color: #1d2733; background: #f4f6f9; letter-spacing: -0.005em; font-variant-numeric: tabular-nums">
+  <nav class="nav" aria-label="Main" style="flex: 1 1 224px; max-width: 100%; background: #ffffff; color: #1d2733; border-right: 1px solid #e6ebf1; padding: 24px 14px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px"><div style="display: flex; align-items: center; gap: 12px; padding: 0 12px 14px"><span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 11px; background: #00456c; color: #ffffff; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v5h5M9 13h6M9 17h6"></path></svg></span><span style="display: flex; flex-direction: column"><span style="font-size: 14px; font-weight: 700; letter-spacing: -0.01em">DAFA Contracts</span><span style="font-size: 12px; color: #5b6672">Group workspace</span></span></div><span style="padding: 10px 12px 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #8a94a0">Work</span><a href="Home.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"></path></svg>My work<span style="margin-left: auto; background: #e9eef4; color: #00456c; border-radius: 999px; padding: 1px 8px; font-size: 12px; font-weight: 700">5</span></a><a href="Register.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v5h5M9 13h6M9 17h6"></path></svg>Contracts</a><a href="Renewals.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="15" rx="2"></rect><path d="M4 10h16M9 3v4M15 3v4"></path></svg>Renewals</a><a href="Approvals.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #00456c; font-weight: 600; background: #e6f0f8"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4 10-10"></path></svg>Approvals<span style="margin-left: auto; background: #00456c; color: #ffffff; border-radius: 999px; padding: 1px 8px; font-size: 12px; font-weight: 700">3</span></a><span style="padding: 10px 12px 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #8a94a0">Manage</span><a href="#" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"></path></svg>Overview</a><a href="#" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg>Settings</a><div style="flex: 1 1 auto; min-height: 24px"></div><div style="display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 14px; background: #f4f6f9"><span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 999px; background: #00456c; color: #ffffff; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center">R</span><span style="display: flex; flex-direction: column"><span style="font-size: 13px; font-weight: 600">Rasmus</span><span style="font-size: 12px; color: #5b6672">Group management</span></span></div></nav>
+  <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+    <div style="max-width: 1240px; width: 100%; box-sizing: border-box; padding: 24px 32px 40px; display: flex; flex-direction: column; gap: 16px">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+        <h1 style="margin: 0; font-size: 30px; line-height: 1.1; font-weight: 700; letter-spacing: -0.02em">Approvals</h1>
+        <span style="font-size: 14px; color: #5b6672">3 contracts are waiting for your decision</span>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
+        <div role="list" style="flex: 1 1 280px; min-width: 0; background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 18px; overflow: hidden">
+          <sc-for list="{{queue}}" as="q" hint-placeholder-count="3">
+            <button type="button" role="listitem" class="q" onClick="{{q.pick}}" style="width: 100%; text-align: left; padding: 12px 16px; border: 0; border-bottom: 1px solid #eef1f5; border-radius: 0; background: {{q.bg}}; font: inherit; cursor: pointer; display: flex; gap: 12px; align-items: flex-start">
+              <span aria-hidden="true" style="flex: 0 0 auto; width: 10px; height: 10px; margin-top: 6px; border-radius: 999px; background: {{q.dot}}"></span>
+              <span style="display: flex; flex-direction: column; gap: 3px; min-width: 0">
+                <span style="font-size: 14px; font-weight: 600; color: #1d2733">{{q.title}}</span>
+                <span style="font-size: 12px; color: #5b6672">{{q.meta}}</span>
+                <span style="font-size: 12px; font-weight: 700; color: {{q.waitFg}}">{{q.wait}}</span>
+              </span>
+            </button>
+          </sc-for>
+        </div>
+        <div style="flex: 3 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+          <section style="background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 20px; padding: 18px 22px; display: flex; flex-direction: column; gap: 18px">
+            <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start">
+              <div style="flex: 1 1 320px; display: flex; flex-direction: column; gap: 6px">
+                <span style="font-size: 12px; font-weight: 700; color: #00456c">{{cur.step}}</span>
+                <h2 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.015em">{{cur.title}}</h2>
+                <span style="font-size: 13px; color: #5b6672">{{cur.meta}}</span>
+              </div>
+              <a href="Record.dc.html" style="display: inline-flex; align-items: center; height: 38px; padding: 0 14px; border: 1px solid #d5dde6; border-radius: 10px; text-decoration: none; font-size: 13px; font-weight: 600; color: #1d2733">Open contract</a>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px">
+              <sc-for list="{{cur.terms}}" as="t" hint-placeholder-count="4">
+                <div style="background: #f4f6f9; border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px">
+                  <span style="font-size: 12px; color: #5b6672">{{t.k}}</span><span style="font-size: 14px; font-weight: 600">{{t.v}}</span>
+                </div>
+              </sc-for>
+            </div>
+          </section>
+          <section style="background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 20px; padding: 12px 16px; display: flex; flex-direction: column; gap: 12px">
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span aria-hidden="true" style="width: 30px; height: 30px; border-radius: 9px; background: #e6f0f8; color: #00456c; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.2 5.3L20 9l-4.4 3.8L17 19l-5-3-5 3 1.4-6.2L4 9l5.8-.7z"></path></svg></span>
+              <h3 style="margin: 0; font-size: 15px; font-weight: 700">What differs from the DAFA standard</h3>
+            </div>
+            <sc-for list="{{cur.dev}}" as="d" hint-placeholder-count="3">
+              <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid #eef1f5">
+                <span style="font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: {{d.bg}}; color: {{d.fg}}">{{d.level}}</span>
+                <span style="flex: 1 1 300px; font-size: 14px">{{d.text}}</span>
+                <span style="font-size: 12px; color: #5b6672">{{d.std}}</span>
+              </div>
+            </sc-for>
+            <span style="font-size: 12px; color: #5b6672">Found by AI in the uploaded file. Check against the document before you decide.</span>
+          </section>
+          <section style="background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 20px; padding: 12px 16px; display: flex; flex-direction: column; gap: 14px">
+            <h3 style="margin: 0; font-size: 15px; font-weight: 700">Approval route</h3>
+            <ol style="margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px">
+              <sc-for list="{{route}}" as="r" hint-placeholder-count="4">
+                <li style="display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 14px; background: {{r.bg}}; border: {{r.border}}">
+                  <span aria-hidden="true" style="width: 32px; height: 32px; border-radius: 999px; background: {{r.avBg}}; color: {{r.avFg}}; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center">{{r.ini}}</span>
+                  <span style="display: flex; flex-direction: column"><span style="font-size: 13px; font-weight: 600">{{r.who}}</span><span style="font-size: 12px; color: #5b6672">{{r.state}}</span></span>
+                </li>
+              </sc-for>
+            </ol>
+          </section>
+          <section style="background: #00456c; border-radius: 20px; padding: 18px 20px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center">
+            <label for="cmt" style="position: absolute; left: -9999px">Comment</label>
+            <input id="cmt" type="text" placeholder="Add a comment (required if you reject)" style="flex: 1 1 280px; height: 44px; padding: 0 14px; border: 0; border-radius: 12px; font: inherit; font-size: 14px; color: #1d2733">
+            <button type="button" style="height: 44px; padding: 0 16px; border: 1px solid rgba(255,255,255,0.6); border-radius: 12px; background: transparent; color: #ffffff; font: inherit; font-size: 14px; font-weight: 600">Delegate</button>
+            <button type="button" style="height: 44px; padding: 0 16px; border: 1px solid rgba(255,255,255,0.6); border-radius: 12px; background: transparent; color: #ffffff; font: inherit; font-size: 14px; font-weight: 600">Reject</button>
+            <button type="button" style="height: 44px; padding: 0 22px; border: 0; border-radius: 12px; background: #ffffff; color: #00456c; font: inherit; font-size: 14px; font-weight: 700">Approve</button>
+          </section>
+        </div>
+      </div>
+      <p style="margin: 0; font-size: 12px; color: #5b6672">Sample data. Pick a contract on the left.</p>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(p) { super(p); this.state = { i: 0 }; }
+  renderVals() {
+    var self = this, i = this.state.i;
+    var hi = ['#fbe9e7', '#9b2c1f'], md = ['#fdf1d6', '#7a5300'], lo = ['#e3f4ea', '#1e6b3a'];
+    var items = [
+      { title: 'ERP software subscription', meta: 'DAFA Group A/S · IT', wait: 'Waiting 2 days', waitFg: '#7a5300', dot: '#c88a00', step: 'Step 2 of 3 · you and Legal in parallel', head: 'ERP software subscription – [Supplier H]', dmeta: 'Submitted by [IT manager] · DAFA Group A/S · IT',
+        terms: [{ k: 'Total value', v: 'DKK [x]m' }, { k: 'Term', v: '36 months' }, { k: 'Notice period', v: '6 months' }, { k: 'Change of control', v: 'Yes' }],
+        dev: [{ l: hi, level: 'High', text: 'Liability cap at 6 months of fees', std: 'Standard: 12 months' }, { l: md, level: 'Medium', text: 'Auto-renewal for 36 months', std: 'Standard: 12 months' }, { l: md, level: 'Medium', text: 'Price increase up to 7% a year, not index-linked', std: 'Standard: index-linked' }] },
+      { title: 'Warehouse lease – Jönköping', meta: 'DAFA Sverige AB · Operations', wait: 'New today', waitFg: '#5b6672', dot: '#00456c', step: 'Step 3 of 3 · final approval', head: 'Warehouse lease – Jönköping', dmeta: 'Submitted by [Country manager] · DAFA Sverige AB · Operations',
+        terms: [{ k: 'Total value', v: 'SEK [x]m' }, { k: 'Term', v: '5 years' }, { k: 'Notice period', v: '9 months' }, { k: 'Change of control', v: 'No' }],
+        dev: [{ l: md, level: 'Medium', text: 'Landlord paper, not a DAFA template', std: 'Review in full' }, { l: lo, level: 'Low', text: 'Index-linked rent, annual', std: 'In line with policy' }] },
+      { title: 'Mutual NDA – development project', meta: 'DAFA Deutschland GmbH · R&D', wait: 'New today', waitFg: '#5b6672', dot: '#00456c', step: 'Step 1 of 1', head: 'Mutual NDA – development project', dmeta: 'Submitted by [R&D manager] · DAFA Deutschland GmbH · R&D',
+        terms: [{ k: 'Total value', v: '–' }, { k: 'Term', v: '3 years' }, { k: 'Notice period', v: '–' }, { k: 'Change of control', v: 'No' }],
+        dev: [{ l: lo, level: 'None', text: 'Matches the DAFA standard NDA', std: '' }] }
+    ];
+    var c = items[i];
+    return {
+      queue: items.map(function (x, k) { return { title: x.title, meta: x.meta, wait: x.wait, waitFg: x.waitFg, dot: x.dot, bg: k === i ? '#eef4f9' : '#ffffff', pick: function () { self.setState({ i: k }); } }; }),
+      cur: { step: c.step, title: c.head, meta: c.dmeta, terms: c.terms, dev: c.dev.map(function (d) { return { level: d.level, text: d.text, std: d.std, bg: d.l[0], fg: d.l[1] }; }) },
+      route: [
+        { ini: 'DH', who: 'Department head', state: 'Approved', bg: '#f4f6f9', border: '0', avBg: '#e3f4ea', avFg: '#1e6b3a' },
+        { ini: 'R', who: 'You', state: 'Your turn', bg: '#eef4f9', border: '2px solid #00456c', avBg: '#00456c', avFg: '#ffffff' },
+        { ini: 'LG', who: 'Legal', state: 'Reviewing', bg: '#f4f6f9', border: '0', avBg: '#dbe8f2', avFg: '#00456c' },
+        { ini: 'CE', who: 'CEO', state: 'Next', bg: '#f4f6f9', border: '0', avBg: '#e9eef4', avFg: '#5b6672' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

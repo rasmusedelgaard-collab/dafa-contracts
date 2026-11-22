@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Contract – DAFA Contracts v2</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#f4f6f9;-webkit-font-smoothing:antialiased}
+a{color:#00456c}a:hover{color:#002a42}
+.drow:hover{background:#f7f9fc}
+.nav a:hover{background:#f1f5f9}a:focus-visible,button:focus-visible{outline:2px solid #00456c;outline-offset:2px}button{transition:background-color .15s ease}
+@media (prefers-reduced-motion: no-preference){
+button,a,.nav a svg{transition:transform .16s ease,box-shadow .16s ease,filter .16s ease,background-color .16s ease}
+button:hover{filter:brightness(0.96)}
+button[style*="background: #00456c"]:hover,a[style*="background: #00456c"]:hover{filter:brightness(1.14)}
+button:active,a[style*="height: 44px"]:active{transform:scale(0.97)}
+.nav a:hover svg{transform:translateX(2px)}
+.lift:hover{transform:translateY(-2px);box-shadow:0 0 0 1px rgba(16,24,40,0.05),0 12px 28px rgba(16,24,40,0.10)!important}
+.row,.trow,.drow,.q{transition:background-color .16s ease}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+main>div>*{animation:rise .4s ease both}
+main>div>*:nth-child(2){animation-delay:.05s}main>div>*:nth-child(3){animation-delay:.1s}main>div>*:nth-child(4){animation-delay:.15s}main>div>*:nth-child(5){animation-delay:.2s}
+}
+</style>
+</helmet>
+<div style="display: flex; flex-wrap: wrap; min-height: 100vh; font-family: 'Avenir Next', 'Avenir Next LT Pro', 'Inter', -apple-system, 'Helvetica Neue', Arial, sans-serif; color: #1d2733; background: #f4f6f9; letter-spacing: -0.005em; font-variant-numeric: tabular-nums">
+  <nav class="nav" aria-label="Main" style="flex: 1 1 224px; max-width: 100%; background: #ffffff; color: #1d2733; border-right: 1px solid #e6ebf1; padding: 24px 14px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px"><div style="display: flex; align-items: center; gap: 12px; padding: 0 12px 14px"><span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 11px; background: #00456c; color: #ffffff; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v5h5M9 13h6M9 17h6"></path></svg></span><span style="display: flex; flex-direction: column"><span style="font-size: 14px; font-weight: 700; letter-spacing: -0.01em">DAFA Contracts</span><span style="font-size: 12px; color: #5b6672">Group workspace</span></span></div><span style="padding: 10px 12px 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #8a94a0">Work</span><a href="Home.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"></path></svg>My work<span style="margin-left: auto; background: #e9eef4; color: #00456c; border-radius: 999px; padding: 1px 8px; font-size: 12px; font-weight: 700">5</span></a><a href="Register.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #00456c; font-weight: 600; background: #e6f0f8"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v5h5M9 13h6M9 17h6"></path></svg>Contracts</a><a href="Renewals.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="15" rx="2"></rect><path d="M4 10h16M9 3v4M15 3v4"></path></svg>Renewals</a><a href="Approvals.dc.html" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4 10-10"></path></svg>Approvals<span style="margin-left: auto; background: #e9eef4; color: #00456c; border-radius: 999px; padding: 1px 8px; font-size: 12px; font-weight: 700">3</span></a><span style="padding: 10px 12px 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #8a94a0">Manage</span><a href="#" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"></path></svg>Overview</a><a href="#" style="display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; text-decoration: none; font-size: 14px; color: #3f4a56"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg>Settings</a><div style="flex: 1 1 auto; min-height: 24px"></div><div style="display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 14px; background: #f4f6f9"><span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 999px; background: #00456c; color: #ffffff; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center">R</span><span style="display: flex; flex-direction: column"><span style="font-size: 13px; font-weight: 600">Rasmus</span><span style="font-size: 12px; color: #5b6672">Group management</span></span></div></nav>
+  <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+    <div style="max-width: 1240px; width: 100%; box-sizing: border-box; padding: 20px 32px 40px; display: flex; flex-direction: column; gap: 16px">
+      <a href="Register.dc.html" style="font-size: 13px; font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; gap: 6px">
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M15 6l-6 6 6 6"></path></svg>Contracts</a>
+      <header style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
+        <span aria-hidden="true" style="flex: 0 0 auto; width: 56px; height: 56px; border-radius: 16px; background: #00456c; color: #ffffff; display: flex; align-items: center; justify-content: center">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v5h5M9 13h6M9 17h6"></path></svg></span>
+        <div style="flex: 1 1 360px; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+          <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center">
+            <h1 style="margin: 0; font-size: 26px; line-height: 1.15; font-weight: 700; letter-spacing: -0.02em">Raw material supply – rubber compounds</h1>
+            <span style="font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: #e3f4ea; color: #1e6b3a">Active</span>
+          </div>
+          <span style="font-size: 14px; color: #5b6672">[Supplier A] · DAFA A/S · Purchasing · C-2024-0187</span>
+        </div>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap">
+          <button type="button" style="height: 44px; padding: 0 18px; border: 1px solid #d5dde6; background: #ffffff; color: #1d2733; border-radius: 12px; font: inherit; font-size: 14px; font-weight: 600">Open in SharePoint</button>
+          <button type="button" style="height: 44px; padding: 0 20px; border: 0; background: #00456c; color: #ffffff; border-radius: 12px; font: inherit; font-size: 14px; font-weight: 600">Decide on renewal</button>
+        </div>
+      </header>
+      <div role="tablist" aria-label="Contract sections" style="display: inline-flex; align-self: flex-start; background: #e9eef4; border-radius: 12px; padding: 3px; flex-wrap: wrap">
+        <sc-for list="{{tabs}}" as="t" hint-placeholder-count="5">
+          <button type="button" role="tab" aria-selected="{{t.on}}" onClick="{{t.pick}}" style="height: 36px; padding: 0 16px; border: 0; border-radius: 9px; font: inherit; font-size: 13px; font-weight: 600; background: {{t.bg}}; color: {{t.fg}}; cursor: pointer">{{t.label}}</button>
+        </sc-for>
+      </div>
+      <sc-if value="{{isOverview}}" hint-placeholder-val="{{ true }}">
+        <ol aria-label="Lifecycle" style="margin: 0; padding: 12px 18px; list-style: none; background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px">
+          <sc-for list="{{life}}" as="l" hint-placeholder-count="6">
+            <li style="display: flex; flex-direction: column; gap: 8px">
+              <span aria-hidden="true" style="height: 6px; border-radius: 999px; background: {{l.bar}}"></span>
+              <span style="font-size: 12px; font-weight: {{l.w}}; color: {{l.fg}}">{{l.name}}</span>
+              <span style="font-size: 12px; color: #5b6672">{{l.date}}</span>
+            </li>
+          </sc-for>
+        </ol>
+        <section style="background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 18px; padding: 20px 22px; display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
+          <span aria-hidden="true" style="flex: 0 0 auto; width: 36px; height: 36px; border-radius: 10px; background: #e6f0f8; color: #00456c; display: flex; align-items: center; justify-content: center">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.2 5.3L20 9l-4.4 3.8L17 19l-5-3-5 3 1.4-6.2L4 9l5.8-.7z"></path></svg></span>
+          <div style="flex: 1 1 400px; display: flex; flex-direction: column; gap: 6px">
+            <span style="font-size: 14px; font-weight: 700">In short</span>
+            <span style="font-size: 14px; color: #3f4a56; line-height: 1.5">Supply of rubber compounds at annual index-linked prices, with a minimum volume commitment added by amendment. Renews for 12 months unless DAFA gives 75 days' notice. No change-of-control clause.</span>
+            <span style="font-size: 12px; color: #5b6672">Summary written by AI from the signed documents. Check the contract before you act on it.</span>
+          </div>
+        </section>
+        <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
+          <div style="flex: 2 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+            <section style="background: #00456c; color: #ffffff; border-radius: 20px; padding: 18px 22px; display: flex; flex-wrap: wrap; gap: 18px; align-items: center">
+              <svg role="img" aria-label="23 days left of the 120-day reminder window" width="88" height="88" viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="10"></circle>
+                <circle cx="60" cy="60" r="50" fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round" stroke-dasharray="60 314" transform="rotate(-90 60 60)"></circle>
+                <text x="60" y="62" text-anchor="middle" font-size="34" font-weight="700" fill="#ffffff">23</text>
+                <text x="60" y="82" text-anchor="middle" font-size="12" fill="#ffffff">days left</text>
+              </svg>
+              <div style="flex: 1 1 260px; display: flex; flex-direction: column; gap: 8px">
+                <span style="font-size: 13px; opacity: 0.85">Notice deadline · 15 December 2026</span>
+                <span style="font-size: 19px; font-weight: 700; letter-spacing: -0.01em">Renews automatically for 12 months unless notice is given</span>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px">
+                  <button type="button" style="height: 38px; padding: 0 16px; border: 0; border-radius: 10px; background: #ffffff; color: #00456c; font: inherit; font-size: 13px; font-weight: 700">Renew</button>
+                  <button type="button" style="height: 38px; padding: 0 16px; border: 1px solid rgba(255,255,255,0.6); border-radius: 10px; background: transparent; color: #ffffff; font: inherit; font-size: 13px; font-weight: 600">Renegotiate</button>
+                  <button type="button" style="height: 38px; padding: 0 16px; border: 1px solid rgba(255,255,255,0.6); border-radius: 10px; background: transparent; color: #ffffff; font: inherit; font-size: 13px; font-weight: 600">Give notice</button>
+                </div>
+              </div>
+            </section>
+            <section style="background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 18px; padding: 6px 22px; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0 24px">
+              <sc-for list="{{facts}}" as="f" hint-placeholder-count="8">
+                <div style="padding: 10px 0; border-bottom: 1px solid #eef1f5; display: flex; flex-direction: column; gap: 4px">
+                  <span style="font-size: 12px; color: #5b6672">{{f.k}}</span>
+                  <span style="font-size: 14px; font-weight: 600">{{f.v}}</span>
+                </div>
+              </sc-for>
+            </section>
+            <section style="background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 18px; overflow: hidden">
+              <h2 style="margin: 0; padding: 12px 18px 8px; font-size: 15px; font-weight: 700">Documents</h2>
+              <sc-for list="{{docs}}" as="d" hint-placeholder-count="3">
+                <div class="drow" style="display: flex; align-items: center; gap: 14px; padding: 9px 18px; border-top: 1px solid #eef1f5">
+                  <span aria-hidden="true" style="width: 36px; height: 36px; border-radius: 10px; background: {{d.bg}}; color: {{d.fg}}; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center">{{d.ext}}</span>
+                  <div style="flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column"><a href="#" style="font-size: 14px; font-weight: 600; color: #1d2733; text-decoration: none">{{d.name}}</a><span style="font-size: 12px; color: #5b6672">{{d.meta}}</span></div>
+                </div>
+              </sc-for>
+            </section>
+            <div style="display: flex; flex-wrap: wrap; gap: 16px"><section style="flex: 1 1 260px; min-width: 0; background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 18px; padding: 14px 18px; display: flex; flex-direction: column"><h2 style="margin: 0 0 6px; font-size: 15px; font-weight: 700">Obligations</h2><sc-for list="{{obl}}" as="o" hint-placeholder-count="3"><div style="display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-top: 1px solid #eef1f5"><span style="font-size: 13px; font-weight: 600">{{o.a}}</span><span style="font-size: 12px; color: #5b6672">{{o.b}}</span></div></sc-for></section><section style="flex: 1 1 260px; min-width: 0; background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 18px; padding: 14px 18px; display: flex; flex-direction: column"><h2 style="margin: 0 0 6px; font-size: 15px; font-weight: 700">Recent activity</h2><sc-for list="{{act}}" as="o" hint-placeholder-count="3"><div style="display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-top: 1px solid #eef1f5"><span style="font-size: 13px; font-weight: 600">{{o.a}}</span><span style="font-size: 12px; color: #5b6672">{{o.b}}</span></div></sc-for></section></div>
+          </div>
+          <aside style="flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+            <section style="background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 18px; padding: 16px 18px; display: flex; flex-direction: column; gap: 14px">
+              <h2 style="margin: 0; font-size: 15px; font-weight: 700">People</h2>
+              <sc-for list="{{people}}" as="p" hint-placeholder-count="3">
+                <div style="display: flex; align-items: center; gap: 12px">
+                  <span aria-hidden="true" style="width: 38px; height: 38px; border-radius: 999px; background: #dbe8f2; color: #00456c; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center">{{p.ini}}</span>
+                  <div style="flex: 1 1 auto; display: flex; flex-direction: column"><span style="font-size: 14px; font-weight: 600">{{p.name}}</span><span style="font-size: 12px; color: #5b6672">{{p.role}}</span></div>
+                  <span style="font-size: 12px; font-weight: 700; color: #00456c">{{p.tag}}</span>
+                </div>
+              </sc-for>
+            </section>
+            <section style="background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 18px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px">
+              <h2 style="margin: 0; font-size: 15px; font-weight: 700">Linked contracts</h2>
+              <a href="#" style="font-size: 14px; text-decoration: none; font-weight: 600">Amendment 1 – volume commitment</a>
+              <a href="#" style="font-size: 14px; text-decoration: none; font-weight: 600">Quality agreement – [Supplier A]</a>
+              <a href="#" style="font-size: 14px; text-decoration: none; font-weight: 600">NDA – [Supplier A]</a>
+            </section>
+            <section style="background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 18px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px"><h2 style="margin: 0; font-size: 15px; font-weight: 700">Reminders</h2><div style="display: flex; justify-content: space-between; font-size: 13px"><span>120 days · 17 Aug</span><span style="color: #1e6b3a; font-weight: 600">Sent</span></div><div style="display: flex; justify-content: space-between; font-size: 13px"><span>60 days · 16 Oct</span><span style="color: #1e6b3a; font-weight: 600">Sent</span></div><div style="display: flex; justify-content: space-between; font-size: 13px"><span>30 days · 15 Nov</span><span style="color: #1e6b3a; font-weight: 600">Sent</span></div><div style="display: flex; justify-content: space-between; font-size: 13px"><span>Escalates to owner · 1 Dec</span><span style="color: #5b6672; font-weight: 600">Planned</span></div></section>
+            <section style="background: #eef4f9; border-radius: 18px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px">
+              <h2 style="margin: 0; font-size: 15px; font-weight: 700">Who can see this</h2>
+              <span style="font-size: 13px; color: #3f4a56">Purchasing (all entities) · DAFA A/S management · Group management · the three people above</span>
+            </section>
+          </aside>
+        </div>
+      </sc-if>
+      <sc-if value="{{isOther}}" hint-placeholder-val="{{ false }}">
+        <section style="background: #ffffff; box-shadow: 0 0 0 1px rgba(16,24,40,0.05), 0 1px 2px rgba(16,24,40,0.04), 0 8px 24px rgba(16,24,40,0.05); border-radius: 18px; padding: 28px; display: flex; flex-direction: column; gap: 14px">
+          <h2 style="margin: 0; font-size: 19px; font-weight: 700">{{otherTitle}}</h2>
+          <sc-for list="{{otherRows}}" as="o" hint-placeholder-count="3">
+            <div style="display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; padding: 10px 0; border-top: 1px solid #eef1f5">
+              <span style="font-size: 14px; font-weight: 600">{{o.a}}</span><span style="font-size: 13px; color: #5b6672">{{o.b}}</span>
+            </div>
+          </sc-for>
+        </section>
+      </sc-if>
+      <p style="margin: 0; font-size: 12px; color: #5b6672">Sample data.</p>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+  constructor(p) { super(p); this.state = { tab: 'Overview' }; }
+  renderVals() {
+    var self = this, tab = this.state.tab;
+    var other = {
+      Obligations: [{ a: 'Minimum annual volume [x] t', b: 'Measured 31 Dec · Purchasing' }, { a: 'Price adjustment notice from supplier', b: 'Expected by 1 Dec · Purchasing' }, { a: 'Quality audit of supplier', b: 'Every 24 months · Quality' }],
+      Approvals: [{ a: 'Contract owner – Purchasing', b: 'Submitted 2 Feb 2024' }, { a: 'Legal review', b: 'Approved 6 Feb 2024' }, { a: 'CFO', b: 'Approved 9 Feb 2024' }],
+      Activity: [{ a: 'Reminder sent to responsible', b: '22 Nov 2026' }, { a: 'Appendix 2 – price list 2026 uploaded', b: '3 Jan 2026' }, { a: 'Amendment 1 signed', b: '2 Sep 2025' }]
+    };
+    var labels = ['Overview', 'Obligations', 'Approvals', 'Activity'];
+    return {
+      tabs: labels.map(function (l) { var on = l === tab; return { label: l, on: on ? 'true' : 'false', bg: on ? '#ffffff' : 'transparent', fg: on ? '#00456c' : '#3f4a56', pick: function () { self.setState({ tab: l }); } }; }),
+      isOverview: tab === 'Overview',
+      life: [
+        { name: 'Drafted', date: 'Jan 2024', bar: '#00456c', fg: '#1d2733', w: 400 },
+        { name: 'Approved', date: '9 Feb 2024', bar: '#00456c', fg: '#1d2733', w: 400 },
+        { name: 'Signed', date: '14 Feb 2024', bar: '#00456c', fg: '#1d2733', w: 400 },
+        { name: 'Active', date: 'since 1 Mar 2024', bar: '#00456c', fg: '#1d2733', w: 400 },
+        { name: 'Notice deadline', date: '15 Dec 2026', bar: '#9b2c1f', fg: '#9b2c1f', w: 700 },
+        { name: 'Renewal', date: '1 Mar 2027', bar: '#dbe3ea', fg: '#5b6672', w: 400 }
+      ],
+      isOther: tab !== 'Overview',
+      otherTitle: tab,
+      otherRows: other[tab] || [],
+      obl: other.Obligations, act: other.Activity,
+      facts: [
+        { k: 'Term', v: '1 Mar 2024 – 28 Feb 2027' }, { k: 'Notice period', v: '75 days' }, { k: 'Annual value', v: 'DKK [x]k' }, { k: 'Price adjustment', v: 'Annual, index-linked' },
+        { k: 'Total value', v: 'DKK [x]m' }, { k: 'Renewal', v: 'Automatic, 12 months' }, { k: 'Exclusivity', v: 'None' }, { k: 'Signed', v: '14 Feb 2024, both parties' },
+        { k: 'Payment terms', v: '[60 days net]' }, { k: 'Governing law', v: 'Danish law' }, { k: 'Change of control', v: 'No clause' }, { k: 'Liability cap', v: '12 months of fees' }
+      ],
+      docs: [
+        { ext: 'PDF', bg: '#fbe9e7', fg: '#9b2c1f', name: 'Supply agreement – signed', meta: 'Main contract · v3 · 14 Feb 2024' },
+        { ext: 'PDF', bg: '#fbe9e7', fg: '#9b2c1f', name: 'Appendix 2 – price list 2026', meta: 'Appendix · v5 · 3 Jan 2026' },
+        { ext: 'DOC', bg: '#e6f0f8', fg: '#00456c', name: 'Amendment 1 – volume commitment', meta: 'Amendment · signed 2 Sep 2025' }
+      ],
+      people: [
+        { ini: 'PM', name: '[Purchasing manager]', role: 'Owner', tag: '' },
+        { ini: 'BY', name: '[Buyer]', role: 'Delegate', tag: '' },
+        { ini: 'CM', name: '[Category manager]', role: 'Responsible', tag: 'Gets reminders' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
