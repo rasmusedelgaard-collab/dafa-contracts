@@ -34,7 +34,8 @@ public sealed class SchemaUpgradeResult
 ///   current provider, so the DDL is exactly what EnsureCreated would have produced.
 /// - Step 1 = phase 2 baseline, step 2 = release 3, step 3 = release 4, step 4 = SharePoint hardening.
 /// - A failed table or column statement stops startup (better than running on a half schema); a
-///   failed index (for example duplicates already in the data) is logged as a warning.
+///   failed index (for example duplicates already in the data) is logged as a warning and tried
+///   again on the next start.
 /// </summary>
 public sealed class SchemaUpgrader
 {
@@ -207,6 +208,7 @@ public sealed class SchemaUpgrader
         {
             await EnsureVersionTableAsync(result, cancellationToken);
             var applied = await ReadAppliedVersionsAsync(cancellationToken);
+            var appliedEarlier = new HashSet<int>(applied);
             foreach (var step in Steps.OrderBy(s => s.Version))
             {
                 if (applied.Contains(step.Version))
@@ -229,6 +231,22 @@ public sealed class SchemaUpgrader
                 await RecordVersionAsync(step, cancellationToken);
                 result.AppliedVersions.Add(step.Version);
                 applied.Add(step.Version);
+            }
+            // An index that could not be created when its step ran (duplicates in the data, a column
+            // that a later step adds) is tried again on every start: each one is guarded by an
+            // existence check, and a failure is still only a warning.
+            foreach (var tableName in Steps.Where(s => appliedEarlier.Contains(s.Version))
+                         .SelectMany(s => s.IndexTables).Distinct(StringComparer.Ordinal).ToList())
+            {
+                try
+                {
+                    await EnsureIndexesAsync(model, tableName, result, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Could not check the indexes of table {Table}", tableName);
+                    result.Warnings.Add("Indexes of " + tableName + " could not be checked: " + ex.Message);
+                }
             }
             result.CurrentVersion = applied.Count == 0 ? 0 : applied.Max();
             await LogDriftAsync(model, cancellationToken);
@@ -454,22 +472,57 @@ public sealed class SchemaUpgrader
                 result.Warnings.Add("Index " + index.Name + " skipped: a column is missing.");
                 continue;
             }
+            var columnList = string.Join(", ", index.Columns.Select(c => Quote(c.Name)));
+            var hasFilter = !string.IsNullOrWhiteSpace(index.Filter);
+            if (index.IsUnique)
+            {
+                // Rows that already break the rule: say so plainly and leave the index out, instead
+                // of letting the CREATE statement fail.
+                try
+                {
+                    var check = "SELECT COUNT(*) FROM (SELECT " + columnList + " FROM " + Quote(table.Name)
+                        + (hasFilter ? " WHERE " + index.Filter : "")
+                        + " GROUP BY " + columnList + " HAVING COUNT(*) > 1) AS " + Quote("d");
+                    using var checkCommand = CreateCommand(check);
+                    var duplicates = await ScalarCountAsync(checkCommand, cancellationToken);
+                    if (duplicates > 0)
+                    {
+                        _logger.LogWarning(
+                            "Unique index {Index} on {Table} not created: {Count} value(s) occur more than once. Clean up the rows and restart.",
+                            index.Name, table.Name, duplicates);
+                        result.Warnings.Add("Index " + index.Name + " could not be created: " + duplicates.ToString(CultureInfo.InvariantCulture) + " duplicate value(s) in existing rows.");
+                        continue;
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // The check is only a courtesy; the CREATE statement below decides.
+                    _logger.LogDebug(ex, "Duplicate check for index {Index} failed", index.Name);
+                }
+            }
             var sql = new StringBuilder();
             sql.Append("CREATE ").Append(index.IsUnique ? "UNIQUE " : "").Append("INDEX ")
                 .Append(IsSqlServer ? "" : "IF NOT EXISTS ")
                 .Append(Quote(index.Name)).Append(" ON ").Append(Quote(table.Name)).Append(" (")
-                .Append(string.Join(", ", index.Columns.Select(c => Quote(c.Name)))).Append(')');
-            if (!string.IsNullOrWhiteSpace(index.Filter))
+                .Append(columnList).Append(')');
+            if (hasFilter)
             {
                 sql.Append(" WHERE ").Append(index.Filter);
             }
             var text = sql.ToString();
             try
             {
+                if (IsSqlServer && hasFilter)
+                {
+                    // A filtered index can only be created (and its table only be written) by a
+                    // session with these options. They are the SqlClient defaults; stated here so the
+                    // statement does not depend on how the connection was configured.
+                    await ExecuteAsync(FilteredIndexSetOptions, cancellationToken);
+                }
                 await ExecuteAsync(text, cancellationToken);
                 result.Statements.Add(text);
             }
-            catch (DbException ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // For example duplicates in old data under a new unique index. The app still works;
                 // the index is missing until the data is cleaned up and the app restarts.
@@ -478,6 +531,10 @@ public sealed class SchemaUpgrader
             }
         }
     }
+
+    private const string FilteredIndexSetOptions =
+        "SET ANSI_NULLS ON; SET ANSI_PADDING ON; SET ANSI_WARNINGS ON; SET ARITHABORT ON; "
+        + "SET CONCAT_NULL_YIELDS_NULL ON; SET QUOTED_IDENTIFIER ON; SET NUMERIC_ROUNDABORT OFF;";
 
     /// <summary>Logs model tables or columns that are still missing after all steps (a step was forgotten).</summary>
     private async Task LogDriftAsync(IRelationalModel model, CancellationToken cancellationToken)

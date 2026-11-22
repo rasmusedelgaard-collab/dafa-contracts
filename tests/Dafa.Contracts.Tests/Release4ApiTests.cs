@@ -313,7 +313,9 @@ public class Release4ApiTests : IClassFixture<ApiFactory>
         // From approval on, only an administrator adds a Main document.
         var upload = await admin.PostAsync("/api/contracts/" + contractId + "/documents", FileForm("Agreement to sign.pdf", ReviewTestHelpers.PdfBytes("to sign"), "Main"));
         Assert.True(upload.IsSuccessStatusCode, "upload answered " + (int)upload.StatusCode);
-        var documentId = (await upload.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        // The upload answers with the contract detail; the new document is in its documents list.
+        var documentId = (await upload.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("documents").EnumerateArray()
+            .Single(d => d.GetProperty("name").GetString() == "Agreement to sign.pdf").GetProperty("id").GetGuid();
         var body = new
         {
             documentIds = new[] { documentId },
@@ -336,7 +338,8 @@ public class Release4ApiTests : IClassFixture<ApiFactory>
         var polishId = await ApprovedContractAsync("jonas", "DAFA Polska sp. z o.o.");
         var polishUpload = await admin.PostAsync("/api/contracts/" + polishId + "/documents", FileForm("Polish agreement.pdf", ReviewTestHelpers.PdfBytes("pl"), "Main"));
         Assert.True(polishUpload.IsSuccessStatusCode);
-        var polishDocument = (await polishUpload.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        var polishDocument = (await polishUpload.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("documents").EnumerateArray()
+            .Single(d => d.GetProperty("name").GetString() == "Polish agreement.pdf").GetProperty("id").GetGuid();
         var outsideLimit = await buyer.PostAsync("/api/contracts/" + polishId + "/signature-requests", Json(new
         {
             documentIds = new[] { polishDocument },
