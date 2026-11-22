@@ -1,32 +1,10 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { qk, useApi, useLookups } from '../../app/context';
+import { qk, useApi } from '../../app/context';
 import type { NamedRef, NameInput } from '../../api/types';
-import { Button, Card, EmptyState, ErrorState, Field, Modal, SkeletonRows, TextInput, useToast } from '../../components';
+import { Button, Card, EmptyState, ErrorState, Field, Modal, Pill, SkeletonRows, TextInput, useToast } from '../../components';
 import { validateName } from '../../lib/settingsForms';
 import { ConfirmDelete, SectionHead } from './common';
-
-export function LegalEntities() {
-  const { entities } = useLookups();
-  return (
-    <>
-      <SectionHead title="Legal entities" text="The DAFA companies a contract can belong to. Each one gets its own SharePoint site in production. The list is maintained by IT and cannot be changed here." />
-      <Card clip>
-        <ul aria-label="Legal entities">
-          {entities.map((e, i) => (
-            <li key={e.id} className="list-row" style={i === 0 ? { borderTop: 0 } : undefined}>
-              <span className="tile" aria-hidden="true">
-                {i + 1}
-              </span>
-              <span className="kv__v">{e.name}</span>
-            </li>
-          ))}
-        </ul>
-      </Card>
-      <p className="caption">{entities.length} legal entities. Read-only.</p>
-    </>
-  );
-}
 
 interface NamedListProps {
   resource: string;
@@ -38,6 +16,8 @@ interface NamedListProps {
   create: (input: NameInput) => Promise<NamedRef>;
   update: (id: string, input: NameInput) => Promise<NamedRef>;
   remove: (id: string) => Promise<void>;
+  /** Release 3: deactivate instead of deleting (`isActive` in the update body). */
+  setActive?: (id: string, input: { name: string; isActive: boolean }) => Promise<NamedRef>;
 }
 
 function NameDialog({ noun, item, existing, onSave, pending, onClose }: { noun: string; item: NamedRef | null; existing: NamedRef[]; onSave: (name: string) => void; pending: boolean; onClose: () => void }) {
@@ -82,7 +62,7 @@ function NameDialog({ noun, item, existing, onSave, pending, onClose }: { noun: 
   );
 }
 
-function NamedList({ resource, title, text, noun, list, create, update, remove }: NamedListProps) {
+function NamedList({ resource, title, text, noun, list, create, update, remove, setActive }: NamedListProps) {
   const client = useQueryClient();
   const toast = useToast();
   const [editing, setEditing] = useState<NamedRef | 'new' | null>(null);
@@ -99,6 +79,11 @@ function NamedList({ resource, title, text, noun, list, create, update, remove }
   const save = useMutation({
     mutationFn: (name: string) => (editing && editing !== 'new' ? update(editing.id, { name }) : create({ name })),
     onSuccess: (saved) => changed(editing === 'new' ? `Added ${saved.name}` : `Renamed to ${saved.name}`),
+    onError: (e) => toast.error(e),
+  });
+  const activate = useMutation({
+    mutationFn: (item: NamedRef & { isActive?: boolean }) => (setActive ? setActive(item.id, { name: item.name, isActive: item.isActive === false }) : Promise.reject(new Error('Not supported'))),
+    onSuccess: (saved) => changed(`${saved.name} is ${(saved as { isActive?: boolean }).isActive === false ? 'inactive' : 'active'}`),
     onError: (e) => toast.error(e),
   });
   const del = useMutation({
@@ -133,7 +118,14 @@ function NamedList({ resource, title, text, noun, list, create, update, remove }
           <ul aria-label={title}>
             {(items.data ?? []).map((item, i) => (
               <li key={item.id} className="list-row" style={i === 0 ? { borderTop: 0 } : undefined}>
-                <span className="kv__v spacer">{item.name}</span>
+                <span className="kv__v spacer">
+                  {item.name} {(item as { isActive?: boolean }).isActive === false ? <Pill tone="gray" small>Inactive</Pill> : null}
+                </span>
+                {setActive ? (
+                  <Button variant="ghost" size="sm" loading={activate.isPending && activate.variables?.id === item.id} onClick={() => activate.mutate(item)}>
+                    {(item as { isActive?: boolean }).isActive === false ? 'Activate' : 'Deactivate'}
+                  </Button>
+                ) : null}
                 <Button variant="ghost" size="sm" icon="edit" onClick={() => setEditing(item)} aria-label={`Rename ${item.name}`}>
                   Rename
                 </Button>
@@ -169,6 +161,7 @@ export function Departments() {
       create={api.admin.createDepartment}
       update={api.admin.updateDepartment}
       remove={api.admin.deleteDepartment}
+      setActive={api.admin.updateDepartmentV3}
     />
   );
 }
@@ -185,6 +178,7 @@ export function ContractTypes() {
       create={api.admin.createContractType}
       update={api.admin.updateContractType}
       remove={api.admin.deleteContractType}
+      setActive={api.admin.updateContractTypeV3}
     />
   );
 }

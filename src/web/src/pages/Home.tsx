@@ -5,7 +5,7 @@ import { useBodyFlag } from '../app/bodyFlag';
 import { apiMode } from '../api';
 import { permissions, qk, useApi, useInvalidateContracts, useMe } from '../app/context';
 import type { HomeData, HomeTask, Urgency } from '../api/types';
-import { Avatar, Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Icon, Pill, Segmented, Skeleton, SkeletonRows, useToast, type IconName } from '../components';
+import { Avatar, Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Icon, NoticePill, Pill, Segmented, Skeleton, SkeletonRows, useToast, type IconName } from '../components';
 import { ApprovalDialog } from '../features/Approval';
 import { RenewalDialog } from '../features/RenewalDialog';
 import { formatWeekdayLong, monthShort, todayIso } from '../lib/dates';
@@ -70,6 +70,32 @@ function NoticeChart({ data }: { data: HomeData['noticeByMonth'] }) {
         </li>
       ))}
     </ol>
+  );
+}
+
+/** Contracts the user watches (release 3): nearest notice first, with the countdown. */
+function WatchingCard() {
+  const api = useApi();
+  const q = useQuery({ queryKey: qk.watching, queryFn: () => api.getWatching(), retry: false });
+  if (q.isError) return null;
+  return (
+    <Card pad className="stack" style={{ gap: 10 }}>
+      <CardTitle>Watching</CardTitle>
+      {!q.data ? (
+        <Skeleton width="70%" />
+      ) : q.data.length === 0 ? (
+        <span className="secondary">Press Watch on a contract to follow its changes here.</span>
+      ) : (
+        q.data.slice(0, 6).map((c) => (
+          <div key={c.id} className="watch-row">
+            <Link to={`/contracts/${c.id}`} className="watch-row__title">
+              {c.title}
+            </Link>
+            <NoticePill days={c.daysToNotice} />
+          </div>
+        ))
+      )}
+    </Card>
   );
 }
 
@@ -282,6 +308,7 @@ export function Home() {
             </CardTitle>
             {data ? <NoticeChart data={data.noticeByMonth} /> : home.isError ? <span className="secondary">Not available.</span> : <Skeleton height={144} radius={12} />}
           </Card>
+          <WatchingCard />
           <Card pad className="stack" style={{ gap: 12 }}>
             <CardTitle>Recently opened</CardTitle>
             {data ? (

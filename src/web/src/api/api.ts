@@ -46,6 +46,68 @@ import type {
   Template,
   TemplateInput,
 } from './types';
+import type {
+  AdminUser,
+  AdminUserInput,
+  AppConfig,
+  AppSettings,
+  BulkInput,
+  BulkResult,
+  Comment,
+  CommentInput,
+  ContractComparison,
+  ContractFilter,
+  ContractVersion,
+  Counterparty,
+  CounterpartyInput,
+  CounterpartyPage,
+  CounterpartyQuery,
+  Currency,
+  CustomFieldDef,
+  CustomFieldInput,
+  DataRoomExport,
+  DataRoomInput,
+  DuplicateGroup,
+  EffectiveAccess,
+  FieldRules,
+  FullSearchQuery,
+  FullSearchResult,
+  ImportFieldDef,
+  ImportKind,
+  ImportPreview,
+  ImportResult,
+  ImportRunInput,
+  ImportSession,
+  JobInfo,
+  JobKey,
+  LegalEntity,
+  LegalEntityInput,
+  MergeInput,
+  MergeResult,
+  NameInputV3,
+  NamedRefV3,
+  NotificationPage,
+  NotificationSettings,
+  OverviewAnalytics,
+  PersonPage,
+  ReassignInput,
+  ReassignPreview,
+  ReassignResult,
+  SavedView,
+  SavedViewInput,
+  Schedule,
+  SyncConnection,
+  SyncRun,
+  SyncSource,
+  SyncSourceInput,
+  SyncTestResult,
+  Tag,
+  TagInput,
+  TagRef,
+  TemplatePreview,
+  TemplatePreviewInput,
+  UserPreferences,
+} from './types';
 
 /** Error thrown by both API implementations; carries the RFC 7807 problem. */
 export class ApiError extends Error {
@@ -114,7 +176,61 @@ export interface Api {
 
   // Renewals and overview
   getRenewals(months?: number): Promise<RenewalItem[]>;
+  /** Release 3: every signed-in user, scoped to what they can see (no 403 any more). */
   getOverview(): Promise<OverviewData>;
+
+  // ----- Release 3 (docs/CONTRACT_V3.md) -----
+  /** `GET app-config`: settings, custom fields, field rules, tags and rates every page needs. */
+  getAppConfig(): Promise<AppConfig>;
+  /** `GET overview/analytics?<filter>&ddThresholdDkk=` */
+  getOverviewAnalytics(filter: ContractFilter, ddThresholdDkk?: number): Promise<OverviewAnalytics>;
+  /** `GET search/full` */
+  searchFull(query: FullSearchQuery): Promise<FullSearchResult>;
+  /** `GET people/{id}` */
+  getPerson(userId: Id): Promise<PersonPage>;
+  /** `GET counterparties/{id}` */
+  getCounterparty(id: Id): Promise<CounterpartyPage>;
+  /** `GET counterparties?q=` (active master records, any signed-in user; supersedes `suppliers`). */
+  getCounterparties(q?: string): Promise<Counterparty[]>;
+  /** `GET tags` */
+  getTags(): Promise<TagRef[]>;
+  /** `PUT contracts/{id}/tags {tagIds}` (replaces the contract's tags). */
+  setContractTags(contractId: Id, tagIds: Id[]): Promise<ContractDetail>;
+  /** `PUT contracts/{id}/watch` / `DELETE contracts/{id}/watch` */
+  watchContract(contractId: Id): Promise<void>;
+  unwatchContract(contractId: Id): Promise<void>;
+  /** `GET watching` */
+  getWatching(): Promise<ContractListItem[]>;
+  /** `GET contracts/{id}/comments` (oldest first) */
+  getComments(contractId: Id): Promise<Comment[]>;
+  addComment(contractId: Id, input: CommentInput): Promise<Comment>;
+  updateComment(id: Id, input: CommentInput): Promise<Comment>;
+  deleteComment(id: Id): Promise<void>;
+  /** `GET notifications?unreadOnly=&page=&pageSize=` */
+  getNotifications(query?: { unreadOnly?: boolean; page?: number; pageSize?: number }): Promise<NotificationPage>;
+  /** `GET notifications/unread-count` */
+  getUnreadCount(): Promise<{ count: number }>;
+  markNotificationRead(id: Id): Promise<void>;
+  markAllNotificationsRead(): Promise<void>;
+  /** `GET|PUT me/preferences` */
+  getPreferences(): Promise<UserPreferences>;
+  updatePreferences(input: UserPreferences): Promise<UserPreferences>;
+  /** `GET contracts/{id}/versions` (newest first; the first is 'current'). */
+  getContractVersions(contractId: Id): Promise<ContractVersion[]>;
+  /** `GET contracts/{id}/compare?from=&to=` */
+  compareContract(contractId: Id, from: string, to: string): Promise<ContractComparison>;
+  /** `POST contracts/bulk` */
+  bulk(input: BulkInput): Promise<BulkResult>;
+  /** `GET views` (mine + shared), `POST views`, `PUT views/{id}`, `DELETE views/{id}` */
+  getViews(): Promise<SavedView[]>;
+  createView(input: SavedViewInput): Promise<SavedView>;
+  updateView(id: Id, input: SavedViewInput): Promise<SavedView>;
+  deleteView(id: Id): Promise<void>;
+  /** `POST data-room/exports`, `GET data-room/exports`, `GET data-room/exports/{id}`, `GET data-room/exports/{id}/content` */
+  createDataRoomExport(input: DataRoomInput): Promise<DataRoomExport>;
+  getDataRoomExports(): Promise<DataRoomExport[]>;
+  getDataRoomExport(id: Id): Promise<DataRoomExport>;
+  getDataRoomContent(id: Id): Promise<FileDownload>;
 
   // Admin (role Admin)
   admin: {
@@ -155,6 +271,77 @@ export interface Api {
     getHolidayCover(): Promise<HolidayCover[]>;
     /** Replaces the whole list. */
     updateHolidayCover(input: HolidayCoverInput[]): Promise<HolidayCover[]>;
+
+    // ----- Release 3 -----
+    /** Release 3: `isActive` in the body deactivates instead of deleting. */
+    updateDepartmentV3(id: Id, input: NameInputV3): Promise<NamedRefV3>;
+    updateContractTypeV3(id: Id, input: NameInputV3): Promise<NamedRefV3>;
+
+    getCounterparties(query?: CounterpartyQuery): Promise<Paged<Counterparty>>;
+    createCounterparty(input: CounterpartyInput): Promise<Counterparty>;
+    updateCounterparty(id: Id, input: CounterpartyInput): Promise<Counterparty>;
+    getCounterpartyDuplicates(): Promise<DuplicateGroup[]>;
+    mergeCounterparties(input: MergeInput): Promise<MergeResult>;
+
+    getImportFields(kind: ImportKind): Promise<ImportFieldDef[]>;
+    /** Multipart `file` (.csv, .xlsx; max 10 MB, 5000 rows). */
+    uploadImport(kind: ImportKind, file: File): Promise<ImportSession>;
+    previewImport(sessionId: Id, input: ImportRunInput): Promise<ImportPreview>;
+    runImport(sessionId: Id, input: ImportRunInput): Promise<ImportResult>;
+    getImportHistory(kind?: ImportKind): Promise<ImportResult[]>;
+    /** CSV with the header row of the import fields and one example row. */
+    getImportTemplate(kind: ImportKind): Promise<FileDownload>;
+
+    getSyncConnections(): Promise<SyncConnection[]>;
+    getSyncSources(): Promise<SyncSource[]>;
+    createSyncSource(input: SyncSourceInput): Promise<SyncSource>;
+    updateSyncSource(id: Id, input: SyncSourceInput): Promise<SyncSource>;
+    deleteSyncSource(id: Id): Promise<void>;
+    /** Tests an unsaved definition: connects, reads up to 5 rows. Never writes. */
+    testSyncSource(input: SyncSourceInput): Promise<SyncTestResult>;
+    runSyncSource(id: Id): Promise<SyncRun>;
+    getSyncRuns(id: Id): Promise<SyncRun[]>;
+
+    getCustomFields(): Promise<CustomFieldDef[]>;
+    createCustomField(input: CustomFieldInput): Promise<CustomFieldDef>;
+    updateCustomField(id: Id, input: CustomFieldInput): Promise<CustomFieldDef>;
+    deleteCustomField(id: Id): Promise<void>;
+    /** `PUT admin/custom-fields/order {ids}` */
+    reorderCustomFields(ids: Id[]): Promise<CustomFieldDef[]>;
+
+    getFieldRules(): Promise<FieldRules>;
+    updateFieldRules(input: FieldRules): Promise<FieldRules>;
+
+    getEntities(): Promise<LegalEntity[]>;
+    createEntity(input: LegalEntityInput): Promise<LegalEntity>;
+    updateEntity(id: Id, input: LegalEntityInput): Promise<LegalEntity>;
+
+    getCurrencies(): Promise<Currency[]>;
+    /** Replaces the list. DKK must stay, with rate 1. */
+    updateCurrencies(input: Currency[]): Promise<Currency[]>;
+
+    getTags(): Promise<Tag[]>;
+    createTag(input: TagInput): Promise<Tag>;
+    updateTag(id: Id, input: TagInput): Promise<Tag>;
+    deleteTag(id: Id): Promise<void>;
+
+    getUsers(query?: { q?: string; active?: boolean }): Promise<AdminUser[]>;
+    createUser(input: AdminUserInput): Promise<AdminUser>;
+    updateUser(id: Id, input: AdminUserInput): Promise<AdminUser>;
+    getEffectiveAccess(userId: Id, query?: { q?: string; page?: number; pageSize?: number }): Promise<EffectiveAccess>;
+    previewReassign(input: ReassignInput): Promise<ReassignPreview>;
+    reassign(input: ReassignInput): Promise<ReassignResult>;
+
+    getNotificationSettings(): Promise<NotificationSettings>;
+    updateNotificationSettings(input: NotificationSettings): Promise<NotificationSettings>;
+    previewNotificationTemplate(input: TemplatePreviewInput): Promise<TemplatePreview>;
+
+    getJobs(): Promise<JobInfo[]>;
+    updateJobSchedule(key: JobKey, schedule: Schedule): Promise<JobInfo>;
+    runJob(key: JobKey): Promise<JobInfo>;
+
+    getAppSettings(): Promise<AppSettings>;
+    updateAppSettings(input: AppSettings): Promise<AppSettings>;
   };
 
   // Dev mode sign-in

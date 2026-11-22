@@ -201,8 +201,8 @@ describe('access model', () => {
     expect(await status(as(USER.jon).createContract(newContract()))).toBe(200);
   });
 
-  it('keeps Overview and Settings to the right roles', async () => {
-    expect(await status(as(USER.jon).getOverview())).toBe(403);
+  it('keeps Settings to administrators; Overview is open to everyone (release 3)', async () => {
+    expect(await status(as(USER.jon).getOverview())).toBe(200);
     expect(await status(as(USER.ann).getOverview())).toBe(200);
     expect(await status(as(USER.ras).getOverview())).toBe(200);
     expect(await status(as(USER.ras).admin.getApprovalRules())).toBe(403);

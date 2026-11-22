@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { apiMode } from '../../api';
 import { ApiError } from '../../api/api';
-import { qk, useApi, useInvalidateContracts, useMe } from '../../app/context';
+import { qk, useApi, useAppConfig, useInvalidateContracts, useMe } from '../../app/context';
 import type { ContractDetail, ContractReminder, Obligation, RenewalDecision } from '../../api/types';
 import { Avatar, Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Icon, Pill, Segmented, Skeleton, StatusPill, useToast } from '../../components';
 import { ApprovalRoute, DecisionForm, Deviations } from '../../features/Approval';
@@ -11,12 +11,15 @@ import { RenewalDialog } from '../../features/RenewalDialog';
 import { addDays, daysBetween, formatDate, formatDateLong, formatDayMonth, todayIso } from '../../lib/dates';
 import { fileExtension, formatFileSize, formatMoney, saveBlob } from '../../lib/format';
 import { EditDetailsDialog, LinkDialog, ObligationDialog, SignDialog, SubmitDialog, UploadDialog } from './dialogs';
+import { AdditionalDetails, CommentsTab, CompareDialog, TagsCard, WatchButton } from './collab';
+import { PersonLink } from '../../features/columns';
 
-type Tab = 'overview' | 'obligations' | 'approvals' | 'activity';
+type Tab = 'overview' | 'obligations' | 'approvals' | 'comments' | 'activity';
 const TABS: { value: Tab; label: string }[] = [
   { value: 'overview', label: 'Overview' },
   { value: 'obligations', label: 'Obligations' },
   { value: 'approvals', label: 'Approvals' },
+  { value: 'comments', label: 'Comments' },
   { value: 'activity', label: 'Activity' },
 ];
 
@@ -28,6 +31,7 @@ type Dialog =
   | { kind: 'upload' }
   | { kind: 'link' }
   | { kind: 'obligation'; obligation: Obligation | null }
+  | { kind: 'compare' }
   | null;
 
 const DECISION_LABEL: Record<RenewalDecision, string> = { Renew: 'Renew', Renegotiate: 'Renegotiate', GiveNotice: 'Give notice', LetExpire: 'Let it expire' };
@@ -252,6 +256,9 @@ function Facts({ c }: { c: ContractDetail }) {
 function Documents({ c, open }: { c: ContractDetail; open: (d: Dialog) => void }) {
   const api = useApi();
   const toast = useToast();
+  // `?doc=<id>` (from search): the document is marked in the list.
+  const [params] = useSearchParams();
+  const highlight = params.get('doc');
   const download = useMutation({
     mutationFn: (id: string) => api.getDocumentContent(id),
     onSuccess: (file) => saveBlob(file.blob, file.fileName),
@@ -281,7 +288,7 @@ function Documents({ c, open }: { c: ContractDetail; open: (d: Dialog) => void }
             const ext = fileExtension(d.name);
             const busy = download.isPending && download.variables === d.id;
             return (
-              <li key={d.id} className="list-row">
+              <li key={d.id} className={`list-row${d.id === highlight ? ' list-row--hit' : ''}`}>
                 <span className={`tile ${ext === 'PDF' ? 'tone-red' : 'tone-blue'}`} aria-hidden="true">
                   {ext.slice(0, 3)}
                 </span>
@@ -444,12 +451,18 @@ function ApprovalsTab({ c, onSubmit, submitting }: { c: ContractDetail; onSubmit
   );
 }
 
-function ActivityTab({ c }: { c: ContractDetail }) {
+function ActivityTab({ c, open }: { c: ContractDetail; open: (d: Dialog) => void }) {
   return (
     <Card className="tab-card">
-      <h2 className="h2" style={{ marginBottom: 8 }}>
-        Activity
-      </h2>
+      <CardTitle
+        action={
+          <Button variant="tint" size="sm" icon="compare" onClick={() => open({ kind: 'compare' })}>
+            Compare versions
+          </Button>
+        }
+      >
+        <span className="h2">Activity</span>
+      </CardTitle>
       {c.activity.length === 0 ? (
         <EmptyState compact title="No activity yet" />
       ) : (
@@ -514,6 +527,7 @@ function Overview({ c, open, setTab }: { c: ContractDetail; open: (d: Dialog) =>
             </p>
           ) : null}
           <Facts c={c} />
+          <AdditionalDetails c={c} onEdit={c.canEdit && c.status !== 'InApproval' ? () => open({ kind: 'edit' }) : undefined} />
           <Documents c={c} open={open} />
           <div className="split" style={{ alignItems: 'stretch' }}>
             <Card pad className="stack" style={{ flex: '1 1 260px', minWidth: 0, padding: '14px 18px' }}>
@@ -568,13 +582,16 @@ function Overview({ c, open, setTab }: { c: ContractDetail; open: (d: Dialog) =>
         </div>
 
         <aside className="split__aside">
+          <TagsCard c={c} />
           <Card pad className="stack" style={{ gap: 14 }}>
             <CardTitle>People</CardTitle>
             {c.people.map((p) => (
               <div key={p.role} className="person">
                 <Avatar initials={p.initials} size="lg" />
-                <div className="kv" style={{ flex: '1 1 auto' }}>
-                  <span className="kv__v">{p.name}</span>
+                <div className="kv" style={{ flex: '1 1 auto', minWidth: 0 }}>
+                  <span className="kv__v">
+                    <PersonLink id={p.userId} name={p.name} />
+                  </span>
                   <span className="kv__k">{p.role}</span>
                 </div>
                 {p.getsReminders ? <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--primary)' }}>Gets reminders</span> : null}
@@ -671,6 +688,7 @@ export function Record() {
   const invalidate = useInvalidateContracts();
   const [params, setParams] = useSearchParams();
   const [dialog, setDialog] = useState<Dialog>(null);
+  const config = useAppConfig();
 
   const tabParam = params.get('tab');
   const tab: Tab = TABS.some((t) => t.value === tabParam) ? (tabParam as Tab) : 'overview';
@@ -731,10 +749,16 @@ export function Record() {
             <StatusPill status={c.status} />
           </div>
           <span className="page-sub">
-            {c.counterparty} · {c.entityName} · {c.departmentName} · {c.contractNo}
+            {c.counterpartyId ? <Link to={`/counterparties/${c.counterpartyId}`}>{c.counterparty}</Link> : c.counterparty} · {c.entityName} · {c.departmentName} · {c.contractNo}
           </span>
         </div>
         <div className="row-flex record-actions" style={{ gap: 10 }}>
+          <WatchButton c={c} />
+          {config.features.eSign && c.status === 'Approved' && c.canEdit ? (
+            <Button variant="secondary" disabled title="No e-signature provider is connected yet">
+              Send for e-signature
+            </Button>
+          ) : null}
           {c.storeUrl ? (
             <a className="btn btn--secondary" href={c.storeUrl} target="_blank" rel="noreferrer">
               Open in SharePoint
@@ -761,13 +785,14 @@ export function Record() {
         </div>
       </header>
 
-      <Segmented mode="tabs" idBase="record" ariaLabel="Contract sections" options={TABS.map((t) => (t.value === 'obligations' && c.obligations.length ? { ...t, label: `Obligations (${c.obligations.filter((o) => o.status === 'Open').length})` } : t))} value={tab} onChange={setTab} />
+      <Segmented mode="tabs" idBase="record" ariaLabel="Contract sections" options={TABS.map((t) => (t.value === 'obligations' && c.obligations.length ? { ...t, label: `Obligations (${c.obligations.filter((o) => o.status === 'Open').length})` } : t.value === 'comments' && c.commentCount ? { ...t, label: `Comments (${c.commentCount})` } : t))} value={tab} onChange={setTab} />
 
       <div role="tabpanel" id={`record-panel-${tab}`} aria-labelledby={`record-tab-${tab}`} className="stack rise" style={{ gap: 16 }} key={tab}>
         {tab === 'overview' ? <Overview c={c} open={setDialog} setTab={setTab} /> : null}
         {tab === 'obligations' ? <ObligationsTab c={c} open={setDialog} /> : null}
         {tab === 'approvals' ? <ApprovalsTab c={c} onSubmit={() => setDialog({ kind: 'submit' })} submitting={submit.isPending} /> : null}
-        {tab === 'activity' ? <ActivityTab c={c} /> : null}
+        {tab === 'comments' ? <CommentsTab c={c} /> : null}
+        {tab === 'activity' ? <ActivityTab c={c} open={setDialog} /> : null}
       </div>
       {apiMode === 'mock' ? <p className="caption">Sample data. Seeded documents are placeholder files.</p> : null}
 
@@ -777,6 +802,7 @@ export function Record() {
       {dialog?.kind === 'sign' ? <SignDialog contract={c} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'upload' ? <UploadDialog contract={c} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'link' ? <LinkDialog contract={c} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === 'compare' ? <CompareDialog c={c} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'obligation' ? <ObligationDialog contract={c} obligation={dialog.obligation} onClose={() => setDialog(null)} /> : null}
     </div>
   );

@@ -52,5 +52,7 @@
 
   --font: 'Avenir Next', 'Avenir Next LT Pro', 'Inter', -apple-system, 'Helvetica Neue', Arial, sans-serif;
   --sidebar: 224px;
+  /* Page gutters: 20px on small laptops up to 32px on wide screens. */
+  --gutter: clamp(20px, 1.6vw, 32px);
   --ease: 160ms ease;
 }

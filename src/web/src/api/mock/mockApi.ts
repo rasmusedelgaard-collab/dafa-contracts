@@ -1,7 +1,8 @@
 // Complete in-browser implementation of the Api interface, with state in memory.
 // It enforces the access model for the selected demo user (see access.ts) so screens built
 // on it behave like they will against the real API.
-import { ApiError, type Api } from '../api';
+import type { Api } from '../api';
+import { conflict, forbidden, invalid, notFound, problem } from './problems';
 import type {
   ApprovalInstance,
   ApprovalPreview,
@@ -46,11 +47,15 @@ import {
 } from '../../lib/dates';
 import { toDkk } from '../../lib/format';
 import { validateInput } from '../../lib/validation';
-import { canCreate, canDecideRenewal, canEdit, canSee, canSeeOverview, isAdmin, isOnContract } from './access';
+import { canCreate, canDecideRenewal, canEdit, canSee, isAdmin, isOnContract } from './access';
 import { newId, type ApprovalRec, type ContractRec, type Db, type DocumentRec, type ObligationRec, type StepRec, type UserRec } from './db';
 import { makePdf, makeRtf } from './files';
 import { filterRows, queryRows, sortRows, toCsv, type RegisterRow } from './query';
 import { createSeed } from './seed';
+import { createR3, type MockCtx } from './r3';
+import { validateCustomFields, rulesForType, validateStandardRules, enforcesRequired, displayValue } from '../../lib/customFields';
+import { matchesAll, terms as searchTerms } from '../../lib/search';
+import type { NotificationEvent, RenewalItem } from '../types';
 
 export interface MockOptions {
   /** Fixed "today" (ISO date) for deterministic tests. Defaults to the real date. */
@@ -95,25 +100,7 @@ const LOCKABLE = ['title', 'typeId', 'supplierId', 'counterpartyName', 'entityId
 const LOCKED_MESSAGE = 'Approved terms are locked. Register an amendment as a linked contract, or ask an administrator.';
 const UPLOAD_TYPES = /\.(pdf|docx|doc|xlsx|xls|pptx|msg|eml|txt|png|jpg|jpeg)$/i;
 const READ_LIMIT_BYTES = 20 * 1024 * 1024;
-const PROBLEM_TYPES = {
-  stale: 'urn:dafa:problem:stale',
-  'no-approval-rule': 'urn:dafa:problem:no-approval-rule',
-  'no-approver': 'urn:dafa:problem:no-approver',
-  'locked-fields': 'urn:dafa:problem:locked-fields',
-  duplicate: 'urn:dafa:problem:duplicate',
-  'invalid-state': 'urn:dafa:problem:invalid-state',
-} as const;
-type ConflictKind = keyof typeof PROBLEM_TYPES;
 const DECISION_TEXT = { Renew: 'Renew', Renegotiate: 'Renegotiate', GiveNotice: 'Give notice', LetExpire: 'Let it expire' } as const;
-
-function problem(status: number, title: string, detail?: string, errors?: Record<string, string[]>, type = 'about:blank'): ApiError {
-  return new ApiError({ type, title, status, detail, errors });
-}
-const notFound = (what = 'Contract') => problem(404, 'Not found', `${what} was not found, or you do not have access to it.`);
-const forbidden = (detail = 'You do not have permission to do this.') => problem(403, 'Forbidden', detail);
-/** Every 409 carries one of the backend's problem types; `invalid-state` is the catch-all. */
-const conflict = (detail: string, kind: ConflictKind = 'invalid-state') => problem(409, 'Conflict', detail, undefined, PROBLEM_TYPES[kind]);
-const invalid = (detail: string, errors?: Record<string, string[]>) => problem(400, 'Validation failed', detail, errors);
 
 /** `undefined`: nothing stored. `null`: the user signed out, so a reload stays signed out. */
 function remembered(): Id | null | undefined {
@@ -170,11 +157,20 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     throw problem(401, 'Access code required', code ? 'The access code is not correct.' : 'Enter the access code for this test site.');
   }
 
-  function audit(action: string, contractId: Id | null, text: string, userId: Id | null = currentUserId, at = now()): void {
-    db.audit.push({ id: newId(), at, userId, action, contractId, text });
+  function audit(action: string, contractId: Id | null, text: string, userId: Id | null = currentUserId, at = now(), changes?: { field: string; from: string | null; to: string | null }[]): void {
+    db.audit.push({ id: newId(), at, userId, action, contractId, text, ...(changes ? { changes } : {}) });
   }
-  function notify(toUserId: Id, subject: string, body: string, contractId: Id | null, channel: 'Mail' | 'Teams' = 'Mail'): void {
+  function notify(toUserId: Id, subject: string, body: string, contractId: Id | null, channel: 'Mail' | 'Teams' = 'Mail', event?: NotificationEvent, link?: string | null): void {
+    const setting = event ? db.notificationSettings.events.find((e) => e.event === event) : undefined;
+    if (setting && !setting.enabled) return;
     db.outbox.push({ id: newId(), createdAt: now(), toUserId, subject, body, channel, contractId });
+    // Release 3: the in-app notification centre, when the event has the InApp channel and the user has not turned it off.
+    if (event && setting?.channels.includes('InApp')) {
+      const pref = db.preferences[toUserId]?.events.find((e) => e.event === event);
+      if (!pref || pref.inApp) {
+        db.notifications.push({ id: newId(), userId: toUserId, event, title: subject, body, contractId, link: link ?? (contractId ? `/contracts/${contractId}` : null), actorId: currentUserId, createdAt: now(), readAt: null });
+      }
+    }
   }
 
   // ----- access -----
@@ -199,18 +195,56 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     const d = deadlineOf(c);
     return d ? daysBetween(today(), d) : null;
   };
+  /** Release 3: the admin-editable rates (fall back to the indicative ones). */
+  const rateDkk = (amount: number, currency: string) => {
+    const rate = db.currencyTable.find((x) => x.code === currency)?.rateToDkk;
+    return rate ? amount * rate : toDkk(amount, currency);
+  };
   const valueDkk = (c: Pick<ContractRec, 'totalValue' | 'annualValue' | 'currency'>) =>
-    toDkk(Math.max(c.totalValue ?? 0, c.annualValue ?? 0), c.currency);
-  const annualDkk = (c: ContractRec) => toDkk(c.annualValue ?? 0, c.currency);
+    rateDkk(Math.max(c.totalValue ?? 0, c.annualValue ?? 0), c.currency);
+  const annualDkk = (c: ContractRec) => rateDkk(c.annualValue ?? 0, c.currency);
   const isLive = (c: ContractRec) => c.status === 'Active' || c.status === 'NoticeGiven';
 
+  const DQ_LABEL: Record<string, string> = {
+    noticePeriodDays: 'Notice period',
+    contractValue: 'Contract value',
+    signedDate: 'Signed date',
+    changeOfControl: 'Change of control',
+    signedDocument: 'Signed document',
+    endDate: 'End date',
+    responsibleId: 'Responsible',
+    paymentTerms: 'Payment terms',
+    governingLaw: 'Governing law',
+  };
+  const dqLabel = (key: string) => DQ_LABEL[key] ?? db.customFields.find((d) => `cf.${d.key}` === key)?.label ?? key;
+  const hasMainDoc = (c: ContractRec) => db.documents.some((d) => d.contractId === c.id && d.kind === 'Main');
+
+  /** Data-quality keys (General settings) the contract is missing. */
+  function missingKeys(c: ContractRec): string[] {
+    const out: string[] = [];
+    for (const key of db.appSettings.dataQualityFields) {
+      let missing = false;
+      if (key === 'noticePeriodDays') missing = c.noticePeriodDays === null;
+      else if (key === 'contractValue') missing = c.annualValue === null && c.totalValue === null;
+      else if (key === 'signedDate') missing = isLive(c) && !c.signedDate;
+      else if (key === 'changeOfControl') missing = c.changeOfControl === null;
+      else if (key === 'signedDocument') missing = isLive(c) && !hasMainDoc(c);
+      else if (key === 'endDate') missing = !c.endDate;
+      else if (key === 'responsibleId') missing = !c.responsibleId;
+      else if (key === 'paymentTerms') missing = !c.paymentTerms;
+      else if (key === 'governingLaw') missing = !c.governingLaw;
+      else if (key.startsWith('cf.')) {
+        const def = db.customFields.find((d) => d.key === key.slice(3) && d.isActive);
+        const applies = def && (def.contractTypeIds.length === 0 || def.contractTypeIds.includes(c.typeId));
+        const v = def ? c.customFields[def.key] : undefined;
+        missing = !!applies && (v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0));
+      }
+      if (missing) out.push(key);
+    }
+    return out;
+  }
   function missingData(c: ContractRec): string[] {
-    const missing: string[] = [];
-    if (c.noticePeriodDays === null) missing.push('Notice period');
-    if (c.annualValue === null && c.totalValue === null) missing.push('Contract value');
-    if (isLive(c) && !c.signedDate) missing.push('Signed date');
-    if (c.changeOfControl === null) missing.push('Change of control');
-    return missing;
+    return missingKeys(c).map(dqLabel);
   }
 
   /**
@@ -235,9 +269,30 @@ export function createMockApi(options: MockOptions = {}): MockApi {
   }
 
   // ----- projections -----
-  function toListItem(c: ContractRec): ContractListItem {
+  function toListItem(c: ContractRec, viewer?: UserRec): ContractListItem {
     const owner = userOf(c.ownerId);
     return {
+      entityId: c.entityId,
+      departmentId: c.departmentId,
+      typeId: c.typeId,
+      ownerId: c.ownerId,
+      delegateName: c.delegateId ? userName(c.delegateId) : null,
+      responsibleName: c.responsibleId ? userName(c.responsibleId) : null,
+      counterpartyId: c.supplierId,
+      startDate: c.startDate,
+      endDate: c.endDate,
+      totalValue: c.totalValue,
+      annualValueDkk: Math.round(rateDkk(c.annualValue ?? 0, c.currency)),
+      totalValueDkk: Math.round(rateDkk(c.totalValue ?? 0, c.currency)),
+      autoRenew: c.autoRenew,
+      changeOfControl: c.changeOfControl,
+      exclusivity: c.exclusivity,
+      createdAt: c.createdAt,
+      signedDate: c.signedDate,
+      hasSignedDocument: hasMainDoc(c),
+      tags: c.tagIds.map((id) => db.tags.find((t) => t.id === id)).filter((t): t is NonNullable<typeof t> => !!t).map((t) => ({ id: t.id, name: t.name, color: t.color })),
+      watching: viewer ? db.watchers.some((w) => w.contractId === c.id && w.userId === viewer.id) : false,
+      customFields: structuredClone(c.customFields),
       id: c.id,
       contractNo: c.contractNo,
       title: c.title,
@@ -256,8 +311,20 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     };
   }
 
-  const toRow = (c: ContractRec): RegisterRow => ({
-    item: toListItem(c),
+  const toRow = (c: ContractRec, viewer?: UserRec): RegisterRow => ({
+    item: toListItem(c, viewer),
+    ownerId: c.ownerId,
+    supplierId: c.supplierId,
+    valueDkk: valueDkk(c),
+    dates: { notice: deadlineOf(c), end: c.endDate, start: c.startDate, created: c.createdAt, signed: c.signedDate },
+    tagIds: c.tagIds,
+    watching: viewer ? db.watchers.some((w) => w.contractId === c.id && w.userId === viewer.id) : false,
+    customFields: c.customFields,
+    missingKeys: missingKeys(c),
+    hasMainDoc: hasMainDoc(c),
+    exclusivity: c.exclusivity,
+    changeOfControl: c.changeOfControl,
+    autoRenew: c.autoRenew,
     decided: c.renewalDecision !== null,
     entityId: c.entityId,
     departmentId: c.departmentId,
@@ -391,11 +458,16 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     const approval = latestApproval(c.id);
     const plan = c.renewalDecision === null && c.status === 'Active' ? reminderPlan(c) : [];
     const {
-      id: _id, contractNo: _no, createdAt: _ca, createdBy: _cb, approvedAt: _aa, deviations, renewalDecidedBy, ...fields
+      id: _id, contractNo: _no, createdAt: _ca, createdBy: _cb, approvedAt: _aa, deviations, renewalDecidedBy, tagIds: _tags, customFields, ...fields
     } = c;
     return {
-      ...toListItem(c),
+      ...toListItem(c, u),
       ...fields,
+      customFields: structuredClone(customFields),
+      watching: db.watchers.some((w) => w.contractId === c.id && w.userId === u.id),
+      watcherCount: db.watchers.filter((w) => w.contractId === c.id).length,
+      commentCount: db.comments.filter((x) => x.contractId === c.id).length,
+      canTag: canEdit(u, c),
       renewalDecidedBy: renewalDecidedBy ? userName(renewalDecidedBy) : null,
       nextReminderDate: nextReminderDate(plan, today()),
       lifecycle: lifecycleOf(c),
@@ -483,7 +555,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
       }
       st.status = 'Pending';
       st.pendingSince = today();
-      notify(st.approverId, `Approval needed: ${c.title}`, `${userName(c.ownerId)} asks for your approval as ${st.roleLabel}.`, c.id);
+      notify(st.approverId, `Approval needed: ${c.title}`, `${userName(c.ownerId)} asks for your approval as ${st.roleLabel}.`, c.id, 'Mail', 'ApprovalRequested', '/approvals');
     }
   }
 
@@ -547,7 +619,9 @@ export function createMockApi(options: MockOptions = {}): MockApi {
 
   function addDocument(c: ContractRec, name: string, kind: DocumentKind, blob: Blob, uploadedBy: Id): DocumentRec {
     const version = Math.max(0, ...db.documents.filter((d) => d.contractId === c.id && d.name === name).map((d) => d.version)) + 1;
-    const doc: DocumentRec = { id: newId(), contractId: c.id, name, kind, storeKey: `mock/${c.id}/${name}`, version, size: blob.size, uploadedBy, uploadedAt: now(), blob };
+    const doc: DocumentRec = { id: newId(), contractId: c.id, name, kind, storeKey: `mock/${c.id}/${name}`, version, size: blob.size, uploadedBy, uploadedAt: now(), blob, text: '' };
+    // Plain-text uploads are searchable in the mock; other files match on their name.
+    if (/\.txt$/i.test(name) && typeof blob.text === 'function') void blob.text().then((t) => (doc.text = t.slice(0, 400_000)));
     db.documents.push(doc);
     return doc;
   }
@@ -619,7 +693,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           : `Reminder sent to ${userName(recipientId)} (${days} days before the notice deadline)`;
         audit('ReminderSent', c.id, text, null, sentAt);
         if (!historical) {
-          notify(recipientId, `${escalation ? 'Escalation' : 'Reminder'}: ${c.title}`, `The notice deadline is ${formatDate(deadlineOf(c))}. Record a renewal decision in DAFA Contracts.`, c.id);
+          notify(recipientId, `${escalation ? 'Escalation' : 'Reminder'}: ${c.title}`, `The notice deadline is ${formatDate(deadlineOf(c))}. Record a renewal decision in DAFA Contracts.`, c.id, 'Mail', escalation ? 'Escalation' : 'NoticeReminder');
         }
         if (escalation) result.escalations += 1;
         else result.remindersCreated += 1;
@@ -637,7 +711,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
       const sentAt = historical ? `${due}T07:00:00Z` : now();
       db.reminders.push({ id: newId(), contractId: c.id, kind: 'AnnualReview', dueDate: due, sentAt, recipientId });
       audit('ReminderSent', c.id, `Annual review reminder sent to ${userName(recipientId)} (open-ended contract)`, null, sentAt);
-      if (!historical) notify(recipientId, `Annual review: ${c.title}`, 'This open-ended contract has its anniversary in 60 days. Check that it is still needed, or give notice.', c.id);
+      if (!historical) notify(recipientId, `Annual review: ${c.title}`, 'This open-ended contract has its anniversary in 60 days. Check that it is still needed, or give notice.', c.id, 'Mail', 'AnnualReview');
       result.annualReviewReminders += 1;
     }
 
@@ -647,7 +721,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
       if (addDays(o.dueDate, -db.reminderSettings.obligationDays) > t || has(o.contractId, kind, o.dueDate)) continue;
       const sentAt = historical ? `${addDays(o.dueDate, -db.reminderSettings.obligationDays)}T07:00:00Z` : now();
       db.reminders.push({ id: newId(), contractId: o.contractId, kind, dueDate: o.dueDate, sentAt, recipientId: o.responsibleId });
-      if (!historical) notify(o.responsibleId, `Obligation due ${formatDate(o.dueDate)}`, o.description, o.contractId);
+      if (!historical) notify(o.responsibleId, `Obligation due ${formatDate(o.dueDate)}`, o.description, o.contractId, 'Mail', 'ObligationDue');
       result.obligationReminders += 1;
     }
     return result;
@@ -863,7 +937,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     if (Object.keys(errors).length) throw invalid('Check the obligation.', errors);
   }
 
-  function checkRefs(input: ContractInput): void {
+  function checkRefs(input: ContractInput, status: ContractRec['status'] | null): void {
     const errors = validateInput(input);
     const ref = (field: string, ok: boolean) => {
       if (!ok && !errors[field]) errors[field] = ['Unknown value'];
@@ -875,6 +949,15 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     if (input.delegateId) ref('delegateId', !!userOf(input.delegateId));
     if (input.responsibleId) ref('responsibleId', !!userOf(input.responsibleId));
     if (input.currency) ref('currency', db.currencies.includes(input.currency));
+    // Release 3: custom fields, per-type required fields, tags.
+    const enforce = enforcesRequired(status);
+    const cfErrors = validateCustomFields(db.customFields, input.typeId, input.customFields, enforce, (id) => !!userOf(id), db.currencies);
+    for (const [k, v] of Object.entries(cfErrors)) errors[k] = [v];
+    if (enforce) {
+      const ruleErrors = validateStandardRules(rulesForType(db.fieldRules, input.typeId), { ...input, openEnded: input.endDate === null });
+      for (const [k, v] of Object.entries(ruleErrors)) if (!errors[k]) errors[k] = [v as string];
+    }
+    if (input.tagIds?.some((id) => !db.tags.some((t) => t.id === id))) errors.tagIds = ['Unknown tag'];
     if (Object.keys(errors).length) throw invalid('Some fields are missing or not valid.', errors);
   }
 
@@ -908,6 +991,52 @@ export function createMockApi(options: MockOptions = {}): MockApi {
       changeOfControl: input.changeOfControl,
       summary: input.summary ?? null,
     } satisfies Partial<ContractRec>);
+    // Omitted = unchanged on update, empty on create.
+    if (input.customFields !== undefined) c.customFields = Object.fromEntries(Object.entries(input.customFields).filter(([, v]) => !(v === null || v === '' || (Array.isArray(v) && v.length === 0))));
+    else c.customFields ??= {};
+    if (input.tagIds !== undefined) c.tagIds = [...new Set(input.tagIds)];
+    else c.tagIds ??= [];
+  }
+
+  /** Key terms with display values, for audit history and version comparison. */
+  function keyTerms(c: ContractRec): { field: string; label: string; value: string | null }[] {
+    const num = (n: number | null) => (n === null ? null : String(n));
+    const yes = (b: boolean | null) => (b === null ? null : b ? 'Yes' : 'No');
+    const base: { field: string; label: string; value: string | null }[] = [
+      { field: 'title', label: 'Title', value: c.title },
+      { field: 'counterpartyName', label: 'Counterparty', value: c.counterpartyName },
+      { field: 'typeId', label: 'Contract type', value: nameOf(db.contractTypes, c.typeId) },
+      { field: 'entityId', label: 'Legal entity', value: nameOf(db.entities, c.entityId) },
+      { field: 'departmentId', label: 'Department', value: nameOf(db.departments, c.departmentId) },
+      { field: 'ownerId', label: 'Owner', value: userName(c.ownerId) },
+      { field: 'startDate', label: 'Start date', value: c.startDate },
+      { field: 'endDate', label: 'End date', value: c.endDate ?? 'Open-ended' },
+      { field: 'noticePeriodDays', label: 'Notice period (days)', value: num(c.noticePeriodDays) },
+      { field: 'autoRenew', label: 'Automatic renewal', value: yes(c.autoRenew) },
+      { field: 'renewalMonths', label: 'Renewal period (months)', value: num(c.renewalMonths) },
+      { field: 'annualValue', label: 'Annual value', value: num(c.annualValue) },
+      { field: 'totalValue', label: 'Total value', value: num(c.totalValue) },
+      { field: 'currency', label: 'Currency', value: c.currency },
+      { field: 'paymentTerms', label: 'Payment terms', value: c.paymentTerms },
+      { field: 'priceAdjustment', label: 'Price adjustment', value: c.priceAdjustment },
+      { field: 'priceAdjustmentDate', label: 'Next price adjustment', value: c.priceAdjustmentDate },
+      { field: 'governingLaw', label: 'Governing law', value: c.governingLaw },
+      { field: 'liabilityCap', label: 'Liability cap', value: c.liabilityCap },
+      { field: 'exclusivity', label: 'Exclusivity', value: c.exclusivity },
+      { field: 'changeOfControl', label: 'Change of control', value: yes(c.changeOfControl) },
+      { field: 'status', label: 'Status', value: c.status },
+    ];
+    for (const d of db.customFields.filter((x) => x.isActive)) {
+      const v = c.customFields[d.key];
+      base.push({ field: `cf.${d.key}`, label: d.label, value: v === undefined || v === null || (Array.isArray(v) && v.length === 0) ? null : displayValue(d, v, { users: db.users }) });
+    }
+    return base;
+  }
+
+  function diffTerms(before: ReturnType<typeof keyTerms>, after: ReturnType<typeof keyTerms>) {
+    return after
+      .map((a) => ({ field: a.field, from: before.find((b) => b.field === a.field)?.value ?? null, to: a.value }))
+      .filter((x) => x.from !== x.to);
   }
 
   function seededDocumentPdf(d: DocumentRec, c: ContractRec): Blob {
@@ -924,6 +1053,14 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     ]);
   }
 
+  function renewalItem(c: ContractRec): RenewalItem | null {
+    const t = today();
+    const deadline = deadlineOf(c);
+    if (c.status !== 'Active' || !deadline) return null;
+    if (deadline < t && (c.renewalDecision !== null || (c.endDate ?? '') < t)) return null;
+    return { id: c.id, title: c.title, entityId: c.entityId, entityName: nameOf(db.entities, c.entityId), departmentName: nameOf(db.departments, c.departmentId), noticeDeadline: deadline, daysToNotice: daysBetween(t, deadline), autoRenew: c.autoRenew, annualValue: c.annualValue, currency: c.currency };
+  }
+
   // ----- the Api -----
   const run = <T>(fn: () => T | Promise<T>): Promise<T> =>
     new Promise<T>((resolve, reject) => {
@@ -938,8 +1075,43 @@ export function createMockApi(options: MockOptions = {}): MockApi {
       else go();
     });
 
+  const ctx: MockCtx = {
+    db,
+    today,
+    now,
+    me,
+    admin,
+    sees,
+    visible,
+    contractFor,
+    editable,
+    toListItem,
+    toRow,
+    toDetail,
+    audit,
+    notify,
+    userOf,
+    userName,
+    nameOf,
+    deadlineOf,
+    daysOf,
+    valueDkk,
+    toDkk: rateDkk,
+    missingKeys,
+    dqLabel,
+    documentBlob: (d, c) => d.blob ?? seededDocumentPdf(d, c),
+    keyTerms,
+    renewalItem,
+    run,
+    nextContractNo: () => `C-${today().slice(0, 4)}-${String(db.nextContractSeq++).padStart(4, '0')}`,
+    listMissing: missingData,
+    runJobs: () => runJobs(false),
+  };
+  const r3 = createR3(ctx);
+
   const api: MockApi = {
     db,
+    ...r3.top,
 
     getMe: () => run(() => toMe(me())),
 
@@ -952,7 +1124,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           entities: db.entities.map((x) => ({ ...x })),
           departments: db.departments.map((x) => ({ ...x })),
           contractTypes: db.contractTypes.map((x) => ({ ...x })),
-          users: db.users.map((u) => ({ id: u.id, name: u.name, initials: u.initials, departmentIds: [...u.departmentIds], roles: [...u.roles] })),
+          users: db.users.map((u) => ({ id: u.id, name: u.name, initials: u.initials, departmentIds: [...u.departmentIds], roles: [...u.roles], isActive: u.isActive, email: u.email, title: u.title || null })),
           currencies: [...db.currencies],
         };
       }),
@@ -961,7 +1133,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
       run(() => {
         me();
         const needle = q?.trim().toLowerCase() ?? '';
-        return db.suppliers.filter((s) => !needle || s.name.toLowerCase().includes(needle)).slice(0, 20).map((s) => ({ ...s }));
+        return db.suppliers.filter((s) => s.isActive && (!needle || s.name.toLowerCase().includes(needle))).slice(0, 20).map((s) => ({ id: s.id, name: s.name, country: s.country, vatNo: s.vatNo }));
       }),
 
     getHome: () =>
@@ -1005,24 +1177,37 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           .filter((c) => [c.title, c.counterpartyName, c.contractNo].some((v) => v.toLowerCase().includes(needle)))
           .slice(0, 6)
           .map((c) => ({ kind: 'Contract' as const, id: c.id, title: c.title, subtitle: `${c.counterpartyName} · ${nameOf(db.entities, c.entityId)}` }));
+        const ts = searchTerms(q);
+        const contractList = contracts.slice(0, 4);
+        const visibleIds = new Map(visible(u).map((c) => [c.id, c]));
+        const docs = db.documents
+          .filter((d) => visibleIds.has(d.contractId) && matchesAll([d.name, d.text], ts))
+          .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt))
+          .slice(0, 2)
+          .map((d) => ({ kind: 'Document' as const, id: d.id, title: d.name, subtitle: visibleIds.get(d.contractId)?.title ?? '', contractId: d.contractId }));
+        const people = db.users
+          .filter((p) => p.isActive && matchesAll([p.name, p.email], ts))
+          .slice(0, 2)
+          .map((p) => ({ kind: 'Person' as const, id: p.id, title: p.name, subtitle: p.title.split(' · ')[0] ?? '' }));
         const suppliers = db.suppliers
-          .filter((s) => s.name.toLowerCase().includes(needle))
+          .filter((s) => s.isActive && s.name.toLowerCase().includes(needle))
           .map((s) => ({ kind: 'Supplier' as const, id: s.id, title: s.name, subtitle: `Supplier${s.country ? ` · ${s.country}` : ''}` }));
-        return [...contracts, ...suppliers].slice(0, 8);
+        return [...contractList, ...docs, ...people, ...suppliers].slice(0, 8);
       }),
 
     getContracts: (query = {}) =>
       run(() => {
         const u = me();
-        return queryRows(visible(u).map(toRow), query, u.id);
+        return queryRows(visible(u).map((c) => toRow(c, u)), query, u.id, { today: today(), customFields: db.customFields });
       }),
 
     exportContracts: (query = {}) =>
       run(() => {
         const u = me();
-        const rows = sortRows(filterRows(visible(u).map(toRow), query, u.id), query.sort);
+        const rows = sortRows(filterRows(visible(u).map((c) => toRow(c, u)), query, u.id, { today: today(), customFields: db.customFields }), query.sort);
         audit('RegisterExported', null, `Exported ${rows.length} contracts to CSV`);
-        const csv = String.fromCharCode(0xfeff) + toCsv(rows.map((r) => r.item));
+        const columns = (query as { columns?: string[] }).columns;
+        const csv = String.fromCharCode(0xfeff) + toCsv(rows.map((r) => r.item), columns, db.customFields);
         return { blob: new Blob([csv], { type: 'text/csv;charset=utf-8' }), fileName: `dafa-contracts-${today()}.csv` };
       }),
 
@@ -1039,7 +1224,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
       run(() => {
         const u = me();
         if (!canCreate(u)) throw forbidden('Your role does not allow creating contracts.');
-        checkRefs(input);
+        checkRefs(input, null);
         const createdAt = today();
         const c: ContractRec = {
           id: newId(),
@@ -1055,10 +1240,16 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           createdBy: u.id,
           approvedAt: null,
           deviations: [],
+          tagIds: [],
+          customFields: {},
         } as unknown as ContractRec;
         applyInput(c, input);
         db.contracts.push(c);
         audit('ContractCreated', c.id, 'Draft created');
+        // Personal setting: watch the contracts I create or am added to.
+        for (const pid of [c.ownerId, c.delegateId, c.responsibleId]) {
+          if (pid && db.preferences[pid]?.autoWatch && !db.watchers.some((w) => w.contractId === c.id && w.userId === pid)) db.watchers.push({ contractId: c.id, userId: pid });
+        }
         if (input.uploadId) {
           const i = db.uploads.findIndex((x) => x.id === input.uploadId);
           const upload = db.uploads[i];
@@ -1077,11 +1268,14 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         const u = me();
         const c = editable(id, u);
         if (c.status === 'InApproval') throw conflict('The contract is in approval and cannot be changed until the approval is finished.');
-        checkRefs(input);
+        checkRefs(input, c.status);
         const changed = lockedFieldsOf(c, u).filter((f) => (input[f] ?? null) !== (c[f] ?? null));
         if (changed.length > 0) throw conflict(`${LOCKED_MESSAGE} Locked: ${changed.map((f) => LOCK_LABELS[f] ?? f).join(', ')}.`, 'locked-fields');
+        const before = keyTerms(c);
         applyInput(c, input);
-        audit('ContractUpdated', c.id, 'Details updated');
+        const changes = diffTerms(before, keyTerms(c));
+        audit('ContractUpdated', c.id, 'Details updated', currentUserId, now(), changes.length ? changes : undefined);
+        r3.watchersChanged(c, u, 'updated the details');
         return toDetail(c, u);
       }),
 
@@ -1092,9 +1286,14 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         if (c.status !== 'Draft') throw conflict('Only a draft can be submitted for approval.');
         const missing = missingData(c);
         if (missing.length) throw invalid(`Complete the contract before you submit it: ${missing.join(', ').toLowerCase()}.`);
+        const cfErrors = validateCustomFields(db.customFields, c.typeId, c.customFields, true, (id) => !!userOf(id), db.currencies);
+        const ruleErrors = validateStandardRules(rulesForType(db.fieldRules, c.typeId), { ...c, openEnded: c.endDate === null });
+        const all = [...Object.values(cfErrors), ...Object.values(ruleErrors)];
+        if (all.length) throw invalid(`Complete the contract before you submit it: ${all.join(', ').toLowerCase()}.`, Object.fromEntries(Object.entries({ ...cfErrors, ...ruleErrors }).map(([k, v]) => [k, [v as string]])));
         startApproval(c, u.id);
         c.status = 'InApproval';
         audit('ApprovalStarted', c.id, 'Submitted for approval');
+        r3.watchersChanged(c, u, 'submitted the contract for approval');
         return toDetail(c, u);
       }),
 
@@ -1110,6 +1309,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         c.signingMethod = input.method.trim();
         c.status = 'Active';
         audit('ContractSigned', c.id, `Marked as signed (${c.signingMethod})`);
+        r3.watchersChanged(c, u, 'marked the contract as signed');
         return toDetail(c, u);
       }),
 
@@ -1165,7 +1365,8 @@ export function createMockApi(options: MockOptions = {}): MockApi {
             if (!c.endDate) c.endDate = addDays(today(), c.noticePeriodDays ?? 0);
           }
         }
-        if (c.ownerId !== u.id) notify(c.ownerId, `Renewal decision: ${c.title}`, `${u.name} recorded "${DECISION_TEXT[input.decision]}".`, c.id);
+        if (c.ownerId !== u.id) notify(c.ownerId, `Renewal decision: ${c.title}`, `${u.name} recorded "${DECISION_TEXT[input.decision]}".`, c.id, 'Mail', 'RenewalDecision');
+        r3.watchersChanged(c, u, `recorded the renewal decision "${DECISION_TEXT[input.decision]}"`);
         return toDetail(c, u);
       }),
 
@@ -1182,6 +1383,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         }
         const doc = addDocument(c, file.name, kind, file, u.id);
         audit('DocumentUploaded', c.id, `${doc.name} uploaded${doc.version > 1 ? ` (version ${doc.version})` : ''}`);
+        r3.watchersChanged(c, u, `uploaded ${doc.name}`);
         return toDetail(c, u);
       }),
 
@@ -1283,19 +1485,22 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         if (!canCreate(u)) throw forbidden('Your role does not allow creating contracts.');
         if (file.size > 25 * 1024 * 1024) throw invalid('The file is larger than 25 MB.', { file: ['File too large'] });
         if (!UPLOAD_TYPES.test(file.name)) throw invalid('This file type cannot be uploaded.', { file: ['File type not allowed'] });
-        return buildExtract(file, u);
+        const result = buildExtract(file, u);
+        if (!db.appSettings.features.aiSuggestions) return { ...result, suggestions: [], summary: '', deviations: [], note: 'AI suggestions are turned off.' };
+        return result;
       }),
 
     getTemplates: () =>
       run(() => {
         me();
-        return db.templates.map(toTemplate);
+        return db.appSettings.features.templates ? db.templates.map(toTemplate) : [];
       }),
 
     fromTemplate: (input) =>
       run(() => {
         const u = me();
         if (!canCreate(u)) throw forbidden('Your role does not allow creating contracts.');
+        if (!db.appSettings.features.templates) throw problem(400, 'Feature off', 'Templates are turned off in Settings.', undefined, 'urn:dafa:problem:feature-off');
         const t = byId(db.templates, input.templateId);
         if (!t) throw notFound('Template');
         const text = t.body.replace(/\{\{(\w+)\}\}/g, (_m, key: string) => input.fields[key]?.trim() || `[${key}]`);
@@ -1334,7 +1539,8 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           a.status = 'Rejected';
           c.status = 'Draft';
           audit('ApprovalDecision', c.id, `Rejected as ${step.roleLabel}: ${comment}`);
-          notify(c.ownerId, `Rejected: ${c.title}`, `${u.name} rejected the contract: ${comment}`, c.id);
+          notify(c.ownerId, `Rejected: ${c.title}`, `${u.name} rejected the contract: ${comment}`, c.id, 'Mail', 'ApprovalDecided');
+          r3.watchersChanged(c, u, 'rejected the contract');
           return;
         }
         step.status = 'Approved';
@@ -1352,7 +1558,8 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         c.approvedAt = today();
         addDocument(c, 'Approval log.pdf', 'ApprovalLog', makePdf(approvalLog(a, c)), u.id);
         audit('ApprovalCompleted', c.id, 'Approved by all approvers. Approval log saved to the documents', null);
-        notify(c.ownerId, `Approved: ${c.title}`, 'All approvers have approved. Mark the contract as signed when both parties have signed.', c.id);
+        notify(c.ownerId, `Approved: ${c.title}`, 'All approvers have approved. Mark the contract as signed when both parties have signed.', c.id, 'Mail', 'ApprovalDecided');
+        r3.watchersChanged(c, u, 'approval completed');
       }),
 
     delegateApprovalStep: (stepId, userId) =>
@@ -1375,7 +1582,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
         const base = step.roleLabel.replace(/ \(delegated by .*\)$/, '');
         stage.steps.push({ id: newId(), approverId: to.id, roleLabel: `${base} (delegated by ${u.name})`, status: 'Pending', decidedAt: null, comment: null, pendingSince: today() });
         audit('ApprovalDelegated', c.id, `${step.roleLabel} step delegated to ${to.name}`);
-        notify(to.id, `Approval delegated to you: ${c.title}`, `${u.name} delegated their approval step to you.`, c.id);
+        notify(to.id, `Approval delegated to you: ${c.title}`, `${u.name} delegated their approval step to you.`, c.id, 'Mail', 'ApprovalDelegated', '/approvals');
       }),
 
     previewApproval: (query) =>
@@ -1422,7 +1629,6 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     getOverview: () =>
       run(() => {
         const u = me();
-        if (!canSeeOverview(u)) throw forbidden('Overview is for entity management, group management and administrators.');
         const all = visible(u);
         const live = all.filter(isLive);
         const t = today();
@@ -1450,7 +1656,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           expiringNoRenewal: live
             .filter((c) => c.status === 'Active' && !c.autoRenew && c.endDate !== null && c.endDate >= t && c.endDate <= addDays(t, 365) && c.renewalDecision === null)
             .sort((a, b) => (a.endDate ?? '').localeCompare(b.endDate ?? ''))
-            .map(toListItem),
+            .map((c) => toListItem(c, u)),
         };
       }),
 
@@ -1611,6 +1817,7 @@ export function createMockApi(options: MockOptions = {}): MockApi {
           return result;
         }),
 
+      ...r3.admin,
       getHolidayCover: () => run(() => (admin(), db.holidayCover.map(toCover))),
       updateHolidayCover: (input) =>
         run(() => {
@@ -1631,15 +1838,16 @@ export function createMockApi(options: MockOptions = {}): MockApi {
     getDevUsers: (accessCode) =>
       run(() => {
         checkAccessCode(accessCode);
-        return db.users.map((u) => ({ id: u.id, name: u.name, initials: u.initials, title: u.title }));
+        return db.users.filter((u) => u.isActive).map((u) => ({ id: u.id, name: u.name, initials: u.initials, title: u.title }));
       }),
 
     devLogin: (userId, accessCode) =>
       run(() => {
         checkAccessCode(accessCode);
         const u = userOf(userId);
-        if (!u) throw notFound('User');
+        if (!u || !u.isActive) throw notFound('User');
         currentUserId = u.id;
+        u.lastSignInAt = now();
         if (options.rememberUser) remember(u.id);
         return toMe(u);
       }),

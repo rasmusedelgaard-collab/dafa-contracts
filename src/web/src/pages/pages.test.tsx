@@ -35,10 +35,11 @@ describe('app shell', () => {
     expect(within(nav).queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
   });
 
-  it('hides Manage links and New contract from a reader', async () => {
+  it('gives a reader Overview (release 3: scoped to their access) but not Settings or New contract', async () => {
     renderApp('/', USER.emm);
     const nav = await screen.findByRole('navigation', { name: 'Main' });
-    expect(within(nav).queryByRole('link', { name: 'Overview' })).not.toBeInTheDocument();
+    expect(within(nav).getByRole('link', { name: 'Overview' })).toBeInTheDocument();
+    expect(within(nav).queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'New contract' })).not.toBeInTheDocument();
   });
 
@@ -60,7 +61,8 @@ describe('Home', () => {
     renderApp('/');
     await screen.findByText('Group insurance programme');
     await user.click(screen.getByRole('button', { name: 'Approvals', pressed: false }));
-    expect(screen.queryByText('Group insurance programme')).not.toBeInTheDocument();
+    // (The Watching card on the side may still list it.)
+    expect(screen.queryAllByText('Group insurance programme').filter((el) => !el.closest('.watch-row'))).toHaveLength(0);
     expect(screen.getByRole('button', { name: 'Review: ERP software subscription' })).toBeInTheDocument();
   });
 });

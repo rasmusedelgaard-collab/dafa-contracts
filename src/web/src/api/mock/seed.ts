@@ -1,12 +1,14 @@
 // Seeded demo data for the mock API. Everything is fictional test data. Dates are relative
 // to "today" so the demo always has contracts close to their notice deadline.
 import { addDays, addMonths } from '../../lib/dates';
-import type { ApprovalRule, ContractStatus, Deviation, Id, ReminderRecipient, RenewalDecision, Supplier } from '../types';
+import type { ApprovalRule, ContractStatus, Deviation, Id, ReminderRecipient, RenewalDecision } from '../types';
+import { extendSeed, type BaseDb } from './seedR3';
 import {
   seedId,
   type ApprovalRec,
   type AuditRec,
   type ContractRec,
+  type CounterpartyRec,
   type Db,
   type DocumentRec,
   type LinkRec,
@@ -16,6 +18,9 @@ import {
 } from './db';
 
 const G = { entity: 1, dept: 2, type: 3, user: 4, supplier: 5, contract: 6, link: 7, obligation: 8, document: 9, approval: 10, step: 11, rule: 12, retention: 13, template: 14, audit: 15, cover: 16 };
+
+const ENTITY_COUNTRY = ['DK', 'DK', 'DK', 'SE', 'DE', 'CN', 'US', 'PL', 'IT'];
+const ENTITY_CURRENCY = ['DKK', 'DKK', 'DKK', 'SEK', 'EUR', 'CNY', 'USD', 'PLN', 'EUR'];
 
 const ENTITY_NAMES = [
   'DAFA Group A/S',
@@ -92,6 +97,10 @@ function user(
     departmentIds: departments.map(departmentId),
     managedEntityIds: [],
     isGroupManagement: false,
+    isActive: true,
+    source: 'Seed',
+    externalId: null,
+    lastSignInAt: null,
     ...extra,
   };
 }
@@ -262,6 +271,9 @@ const SPECS: Spec[] = [
   { t: 'Truck lease – Horsens', cp: 11, ty: TYP.lease, en: ENT.dafa, de: DEP.logistics, own: 'tho', st: 'Terminated', ni: -180, np: 90, av: 330_000, term: 48, dec: 'GiveNotice', law: 'Danish law' },
 ];
 
+/** Live contracts seeded without a signed main document. */
+const NO_SIGNED_COPY = new Set(['Legal services framework', 'Company car leasing – Italy', 'Marketing agency retainer']);
+
 function step(n: number, approver: UserKey, roleLabel: string, status: StepRec['status'], decidedAt: string | null, pendingSince: string | null, comment: string | null = null): StepRec {
   return { id: seedId(G.step, n), approverId: USER[approver], roleLabel, status, decidedAt, comment, pendingSince };
 }
@@ -305,15 +317,27 @@ Signed for DAFA: ____________________    Signed for the other party: ___________
 
 /** Builds the full demo database relative to `today` (ISO date). */
 export function createSeed(today: string): Db {
-  const entities = ENTITY_NAMES.map((name, i) => ({ id: entityId(i), name }));
-  const departments = DEPARTMENT_NAMES.map((name, i) => ({ id: departmentId(i), name }));
-  const contractTypes = TYPE_NAMES.map((name, i) => ({ id: typeId(i), name }));
+  return extendSeed(createBaseSeed(today), today);
+}
+
+function createBaseSeed(today: string): BaseDb {
+  const entities = ENTITY_NAMES.map((name, i) => ({ id: entityId(i), name, country: ENTITY_COUNTRY[i] ?? 'DK', currency: ENTITY_CURRENCY[i] ?? 'DKK', isActive: true }));
+  const departments = DEPARTMENT_NAMES.map((name, i) => ({ id: departmentId(i), name, isActive: true }));
+  const contractTypes = TYPE_NAMES.map((name, i) => ({ id: typeId(i), name, isActive: true }));
   const users = seedUsers();
-  const suppliers: Supplier[] = SUPPLIERS.map(([name, country], i) => ({
+  const suppliers: CounterpartyRec[] = SUPPLIERS.map(([name, country], i) => ({
     id: seedId(G.supplier, i + 1),
     name,
     country,
     vatNo: `${country}${String(10_000_000 + i * 734_561).slice(0, 8)}`,
+    kind: i === 20 || i === 27 ? 'Partner' : i === 13 ? 'Partner' : 'Supplier',
+    externalId: `V${String(10_040 + i * 13)}`,
+    city: null,
+    email: null,
+    phone: null,
+    isActive: true,
+    source: 'Seed',
+    updatedAt: `${addDays(today, -120 + i)}T08:00:00Z`,
   }));
 
   const contracts: ContractRec[] = [];
@@ -327,7 +351,7 @@ export function createSeed(today: string): Db {
   };
   const addDoc = (contractId: Id, name: string, kind: DocumentRec['kind'], version: number, by: UserKey, at: string, size: number) => {
     docN += 1;
-    documents.push({ id: seedId(G.document, docN), contractId, name, kind, storeKey: `seed/${docN}`, version, size, uploadedBy: USER[by], uploadedAt: `${at}T10:00:00Z`, blob: null });
+    documents.push({ id: seedId(G.document, docN), contractId, name, kind, storeKey: `seed/${docN}`, version, size, uploadedBy: USER[by], uploadedAt: `${at}T10:00:00Z`, blob: null, text: '' });
   };
 
   SPECS.forEach((s, i) => {
@@ -384,6 +408,8 @@ export function createSeed(today: string): Db {
       createdBy: USER[s.own],
       approvedAt,
       deviations: s.dev ?? [],
+      tagIds: [],
+      customFields: {},
     });
 
     log(createdAt, s.own, 'ContractCreated', id, missingImport ? 'Contract imported from the old register' : 'Draft created');
@@ -393,7 +419,8 @@ export function createSeed(today: string): Db {
       // Only the flagship contract has its approval on record here (below); the rest were approved before they were imported.
       if (approvedAt) log(approvedAt, null, 'ApprovalCompleted', id, s.no ? 'Approved by all approvers' : 'Registered as approved (approval on file outside DAFA Contracts)');
       if (signedDate && !missingImport) log(signedDate, s.own, 'ContractSigned', id, 'Marked as signed by both parties');
-      addDoc(id, `${s.t} – signed.pdf`, 'Main', 1 + (i % 3), s.own, signedDate ?? createdAt, 420_000 + i * 31_700);
+      // Imported contracts with missing data have no signed copy on file (due-diligence gap).
+      if (!missingImport && !NO_SIGNED_COPY.has(s.t)) addDoc(id, `${s.t} – signed.pdf`, 'Main', 1 + (i % 3), s.own, signedDate ?? createdAt, 420_000 + i * 31_700);
       if (i % 4 === 1) addDoc(id, 'Appendix 1 – price list.pdf', 'Appendix', 1 + (i % 2), s.own, addDays(startDate, 30), 96_000 + i * 2_300);
     }
   });

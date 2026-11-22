@@ -3,7 +3,7 @@ import { Icon } from './Icon';
 
 export interface Column<T> {
   key: string;
-  header: string;
+  header: ReactNode;
   /** Makes the header a sort button; the value is the sort field sent to the API. */
   sortKey?: string;
   render: (row: T) => ReactNode;

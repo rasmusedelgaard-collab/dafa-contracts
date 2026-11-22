@@ -3,9 +3,14 @@ import { createPortal } from 'react-dom';
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiMode } from '../api';
-import { qk, useApi, useLookups, useScope } from '../app/context';
-import type { ContractListItem, ContractQuery, ContractSort, ContractStatus, ContractView } from '../api/types';
-import { Avatar, Button, ButtonLink, Card, ChipSelect, EmptyState, ErrorState, Icon, NoticePill, Segmented, Skeleton, SkeletonRows, StatusDot, Table, useToast, type Column } from '../components';
+import { qk, useApi, useAppConfig, useLookups, useScope } from '../app/context';
+import type { ContractListItem, ContractQuery, ContractSort, ContractStatus, ContractView, RegisterColumn } from '../api/types';
+import { Button, ButtonLink, Card, ChipSelect, EmptyState, ErrorState, Icon, Segmented, Skeleton, SkeletonRows, Table, useToast, type Column } from '../components';
+import { BulkBar } from '../features/Bulk';
+import { contractColumns, defaultColumns, TagList, useColumnBudget } from '../features/columns';
+import { ColumnChooser, ViewsMenu } from '../features/Views';
+import { chipsOf, filterToParams as filterParams, parseFilter } from '../lib/drill';
+import { sanitizeColumns } from '../lib/views';
 import { formatDate, noticeTone } from '../lib/dates';
 import { ALL_STATUSES, formatMoneyCompact, plural, saveBlob, statusLabel } from '../lib/format';
 import { useNarrow, usePhone } from '../lib/media';
@@ -84,6 +89,7 @@ function QuickLook({ item }: { item: ContractListItem }) {
           <dd className="kv__v">{item.contractNo}</dd>
         </div>
       </dl>
+      {item.tags?.length ? <TagList tags={item.tags} max={6} /> : null}
       {item.missingData.length > 0 ? <p className="banner tone-amber">Missing: {item.missingData.join(', ').toLowerCase()}</p> : null}
       <ButtonLink to={`/contracts/${item.id}`} block>
         Open contract
@@ -108,6 +114,12 @@ export function Register() {
   const [params, setParams] = useSearchParams();
   const phone = usePhone();
   const narrow = useNarrow();
+  const config = useAppConfig();
+  const budget = useColumnBudget();
+  const [choosing, setChoosing] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  // With many columns the table needs the full width: the quick look is left out (double-click or the title opens the contract).
+  const wide = false;
 
   const view: ContractView = isView(params.get('view')) ? (params.get('view') as ContractView) : 'all';
   const q = params.get('q') ?? '';
@@ -144,7 +156,10 @@ export function Register() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
 
+  // Release 3: every filter of the shared contract filter can come from the URL (saved views, Overview links).
+  const { entityId: _urlEntity, ...extra } = parseFilter(params);
   const filters: ContractQuery = {
+    ...extra,
     view,
     q: q.trim() || undefined,
     entityId: scope.entityId || undefined,
@@ -178,8 +193,11 @@ export function Register() {
     if (pastEnd) update({ page: pages <= 1 ? null : String(pages) }, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pastEnd, pages]);
-  const selected = items.find((i) => i.id === selectedId) ?? items[0] ?? null;
-  const hasFilters = !!(q || scope.entityId || departmentId || typeId || status || view !== 'all');
+  const peek = items.find((i) => i.id === selectedId) ?? items[0] ?? null;
+  const extraChips = chipsOf({ ...extra, q: undefined, departmentId: undefined, typeId: undefined, status: undefined }, lookups, { tags: Object.fromEntries(config.tags.map((t) => [t.id, t.name])), customFields: Object.fromEntries(config.customFields.map((d) => [d.key, d.label])) });
+  const hasFilters = !!(q || scope.entityId || departmentId || typeId || status || view !== 'all' || extraChips.length);
+  const colsParam = params.get('cols');
+  const columnKeys: RegisterColumn[] = colsParam ? sanitizeColumns(colsParam.split(','), config.customFields) : defaultColumns(budget);
 
   const clear = () => {
     scope.setEntityId('');
@@ -193,48 +211,36 @@ export function Register() {
     else update({ sel: row.id }, true);
   };
 
-  const allColumns: Column<ContractListItem>[] = [
-    {
-      key: 'contract',
-      header: 'Contract',
-      sortKey: 'title',
-      width: '40%',
-      render: (r) => (
-        <div className="cell-title">
-          <button type="button" className="cell-title__btn" title={r.title} aria-label={`${phone ? 'Open' : 'Preview'} ${r.title}`} onClick={(e) => { e.stopPropagation(); pick(r); }} onDoubleClick={() => navigate(`/contracts/${r.id}`)}>
-            {r.title}
-          </button>
-          <span className="caption cell-title__meta" title={`${r.counterparty} · ${r.typeName}`}>
-            {r.counterparty} · {r.typeName}
-            <span className="only-sm"> · {statusLabel(r.status)}</span>
-          </span>
-        </div>
-      ),
-    },
-    { key: 'entity', header: 'Entity', sortKey: 'entity', className: 'col-hide-sm', width: '17%', render: (r) => <span className="cell-clip" title={r.entityName}>{r.entityName}</span> },
-    {
-      key: 'owner',
-      header: 'Owner',
-      sortKey: 'owner',
-      className: 'col-hide-sm col-hide-md',
-      width: '14%',
-      render: (r) => (
-        <span className="cell-owner" title={`${r.ownerName}, ${r.departmentName}`}>
-          <Avatar initials={r.ownerInitials} size="sm" />
-          <span className="sr-only">{r.ownerName}, </span>
-          <span className="cell-clip">{r.departmentName}</span>
-        </span>
-      ),
-    },
-    { key: 'notice', header: 'Notice', sortKey: 'notice', width: '136px', render: (r) => <NoticePill days={r.daysToNotice} /> },
-    { key: 'status', header: 'Status', sortKey: 'status', className: 'col-hide-sm', width: '11%', render: (r) => <StatusDot status={r.status} /> },
-  ];
+  const titleCell = (r: ContractListItem) => (
+    <div className="cell-title">
+      <button type="button" className="cell-title__btn" title={r.title} aria-label={`${phone ? 'Open' : 'Preview'} ${r.title}`} onClick={(e) => { e.stopPropagation(); pick(r); }} onDoubleClick={() => navigate(`/contracts/${r.id}`)}>
+        {r.title}
+      </button>
+      <span className="caption cell-title__meta" title={`${r.counterparty} · ${r.typeName}`}>
+        {r.counterparty} · {r.typeName}
+        <span className="only-sm"> · {statusLabel(r.status)}</span>
+      </span>
+    </div>
+  );
+  const pageIds = items.map((i) => i.id);
+  const allOnPage = pageIds.length > 0 && pageIds.every((id) => selected.includes(id));
+  const selectColumn: Column<ContractListItem> = {
+    key: 'select',
+    header: (
+      <input type="checkbox" className="check__box" aria-label="Select all on this page" checked={allOnPage} onChange={(e) => setSelected(e.target.checked ? [...new Set([...selected, ...pageIds])] : selected.filter((id) => !pageIds.includes(id)))} />
+    ),
+    width: '44px',
+    className: 'col-select hide-phone',
+    render: (r) => <input type="checkbox" className="check__box" aria-label={`Select ${r.title}`} checked={selected.includes(r.id)} onClick={(e) => e.stopPropagation()} onChange={(e) => setSelected(e.target.checked ? [...selected, r.id] : selected.filter((x) => x !== r.id))} />,
+  };
+  const configured = contractColumns(columnKeys, { title: titleCell, customFields: config.customFields, lookups });
   // Tablet (720–1000px): no room for five columns. Contract, Notice and Status stay; the entity and
   // the owner are in the record. (A phone shows cards; the CSS hides the extra cells there.)
   const tablet = narrow && !phone;
-  const columns = tablet
-    ? allColumns.filter((c) => c.key !== 'entity' && c.key !== 'owner').map((c) => (c.key === 'contract' ? { ...c, width: undefined } : c.key === 'status' ? { ...c, width: '112px' } : c))
-    : allColumns;
+  const columns = [
+    selectColumn,
+    ...(tablet ? contractColumns(['contract', 'notice', 'status'], { title: titleCell }).map((c) => (c.key === 'contract' ? { ...c, width: undefined } : c)) : configured),
+  ];
 
   const exportButton = (
     <Button variant="secondary" icon="download" loading={exportCsv.isPending} onClick={() => exportCsv.mutate()}>
@@ -266,6 +272,22 @@ export function Register() {
       <div className="toolbar toolbar--views">
         <Segmented ariaLabel="Views" options={VIEWS} value={view} onChange={(v) => update({ view: v === 'all' ? null : v, sel: null })} />
         <div className="spacer" />
+        {phone ? null : (
+          <>
+            <ViewsMenu
+              params={params}
+              columns={columnKeys}
+              onApply={(p) => {
+                const e = p.get('entity');
+                if (e) scope.adopt(e);
+                setParams(p, { replace: false });
+              }}
+            />
+            <Button variant="secondary" size="sm" icon="columns" onClick={() => setChoosing(true)}>
+              Columns
+            </Button>
+          </>
+        )}
         <label className="search-pill">
           <span className="sr-only">Search contracts</span>
           <Icon name="search" size={15} stroke={2.2} />
@@ -277,6 +299,14 @@ export function Register() {
         <ChipSelect label="Department" options={refs(lookups.departments)} value={departmentId} onChange={(v) => update({ department: v, sel: null })} />
         <ChipSelect label="Type" options={refs(lookups.contractTypes)} value={typeId} onChange={(v) => update({ type: v, sel: null })} />
         <ChipSelect label="Status" options={ALL_STATUSES.map((s) => ({ value: s, label: statusLabel(s) }))} value={status} onChange={(v) => update({ status: v, sel: null })} />
+        {config.tags.length ? <ChipSelect label="Tag" options={config.tags.map((t) => ({ value: t.id, label: t.name }))} value={params.get('tag') ?? ''} onChange={(v) => update({ tag: v, sel: null })} /> : null}
+        {narrow
+          ? null
+          : config.customFields
+              .filter((d) => d.showInFilters && (d.type === 'Choice' || d.type === 'MultiChoice' || d.type === 'YesNo'))
+              .map((d) => (
+                <ChipSelect key={d.key} label={d.label} options={d.type === 'YesNo' ? [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }] : d.options.map((o) => ({ value: o, label: o }))} value={params.get(`cf.${d.key}`) ?? ''} onChange={(v) => update({ [`cf.${d.key}`]: v, sel: null })} />
+              ))}
         <select className={`chip only-phone${sort !== 'notice' ? ' chip--on' : ''}`} aria-label="Sort by" value={sort} onChange={(e) => update({ sort: e.target.value === 'notice' ? null : e.target.value })}>
           {SORTS.map((s) => (
             <option key={s.value} value={s.value}>
@@ -291,6 +321,46 @@ export function Register() {
           </>
         ) : null}
       </div>
+      {extraChips.length ? (
+        <nav className="crumbs" aria-label="More filters">
+          <span className="caption">Also filtered by</span>
+          <ol>
+            {extraChips.map((c) => (
+              <li key={c.id}>
+                <span className="crumb">
+                  {c.label}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${c.label}`}
+                    onClick={() => {
+                      const next = filterParams({ ...c.without, q: q || undefined, departmentId: departmentId || undefined, typeId: typeId || undefined, status: (status || undefined) as ContractStatus | undefined, entityId: scope.entityId || undefined }, params);
+                      next.delete('page');
+                      setParams(next, { replace: true });
+                    }}
+                  >
+                    <Icon name="x" size={12} stroke={2.6} />
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ol>
+        </nav>
+      ) : null}
+      {selected.length > 0 && !phone ? <BulkBar ids={selected} onClear={() => setSelected([])} /> : null}
+      {choosing ? (
+        <ColumnChooser
+          columns={columnKeys}
+          onClose={() => setChoosing(false)}
+          onReset={() => {
+            update({ cols: null }, true);
+            setChoosing(false);
+          }}
+          onChange={(c) => {
+            update({ cols: c.join(',') }, true);
+            setChoosing(false);
+          }}
+        />
+      ) : null}
 
       <div className="split">
         <Card clip className="split__main split__main--wide register-card" style={{ gap: 0 }}>
@@ -308,7 +378,7 @@ export function Register() {
           ) : (
             <>
               <div style={{ opacity: list.isPlaceholderData ? 0.6 : 1 }} aria-busy={list.isPlaceholderData}>
-                <Table fixed caption="Contracts" columns={columns} rows={items} rowKey={(r) => r.id} sort={sort} onSort={(s) => update({ sort: s === 'notice' ? null : s })} onRowClick={pick} selectedKey={selected?.id} />
+                <Table fixed caption="Contracts" columns={columns} rows={items} rowKey={(r) => r.id} sort={sort} onSort={(s) => update({ sort: s === 'notice' ? null : s })} onRowClick={pick} selectedKey={peek?.id} />
               </div>
               <div className="pager">
                 <span aria-live="polite">
@@ -325,7 +395,7 @@ export function Register() {
             </>
           )}
         </Card>
-        {selected ? <QuickLook key={selected.id} item={selected} /> : null}
+        {peek && !wide ? <QuickLook key={peek.id} item={peek} /> : null}
       </div>
       {apiMode === 'mock' ? <p className="caption">Sample data.<span className="hide-phone"> Select a row to preview it.</span></p> : null}
     </div>

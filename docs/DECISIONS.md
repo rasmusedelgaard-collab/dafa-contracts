@@ -136,3 +136,40 @@
 - FE: Mock aligned with backend phase 2: problem types on every 409, 429 after 10 wrong access codes, `lockedFields` only for filled fields (annual and total value together), lock from submission, `AnnualReview` reminders and `annualReviewReminders`, GiveNotice-only on open-ended contracts (409 otherwise; sets the end date to today + notice period), Renew only inside the reminder window (409 with the opening date), `note` on `intake/extract` for files over 20 MB, `view=due90` without decided contracts, delegate to someone already in the stage is 400, Main document locked from submission (409 `locked-fields`), a stay-signed-out marker after sign-out.
 - FE: `npm run e2e:demo` (src/web/e2e/demo.mjs, playwright-core with an installed Chrome; `CHROME_PATH` overrides) builds and serves the demo and runs a smoke journey at 390 and 1440 px with motion on. It is not part of CI (the runner would need a Chrome path).
 - DevOps: the Web Deploy sync also skips the host's `.well-known` folder (HTTPS certificate renewal). No automatic stop/start or app_offline step was added.
+
+## Backend release 3 (2026-11-22)
+
+- BE: Schema changes are applied by a start-up schema upgrader (`SchemaUpgrader`, table `SchemaVersion`, ordered additive steps with existence checks, DDL generated from the EF relational model) instead of EF Core migrations, because migrations for two providers cannot be generated or verified without a compiler and the test database already holds data. Steps never drop or rewrite; a failing index is a warning, a failing table/column stops the start.
+- BE: Custom field values are an EAV table (`CustomFieldValues`: typed columns Text/Number(double)/Date/Bool/User; MultiChoice stored as `|a|b|`) rather than a JSON column, so `cf.<key>` filters run in SQL on both Sqlite and SQL Server. Numbers are doubles so comparisons are correct on Sqlite.
+- BE: The shared contract filter runs the access filter and indexed criteria in SQL and calculated criteria (notice deadline, DKK value, missing data, name search) in memory; analytics aggregate in memory over the filtered rows (Sqlite cannot sum or compare decimals in SQL; a few thousand rows take milliseconds).
+- BE: Document search stores extracted text (max 400,000 characters) and a lower-cased copy in `DocumentTexts` and uses contains-matching in SQL (no full-text catalog), capped at 1000 documents per query; snippets read a 400-character window via `IndexOf`/`Substring` in SQL.
+- BE: `INotifier` is now Core's `NotificationDispatcher`; the Outbox/Graph providers are the `IMailChannel`. Without a settings row for an event the code's own subject and body are sent, so release 2 texts are unchanged; with a row the templates are rendered.
+- BE: Watcher notifications are created by `AuditService` for a fixed list of audited actions (one per contract per unit of work, in-app only, never to the actor), so every change path notifies watchers without changes in each service.
+- BE: Contract updates store old/new values per field in `AuditEvent.DataJson`; version comparison undoes them from the current contract. Release 2 audit texts are parsed as a fallback.
+- BE: Currency rates come from the `Currencies` table (seeded from the fixed rates) for every DKK figure including approval value and preview; unknown codes fall back to the fixed rates. Contract currencies must be active codes (the contract's current code stays valid).
+- BE: Data room zips are built synchronously in the request and stored by `IExportStorage` (local folder `DataRoom:LocalPath`), not in the document store, and expire after 7 days.
+- BE: Sync source secrets stay in server configuration (`Sync:Connections:<name>:*`, `Suppliers:PowerBi:*`, managed identity); SQL sources run SELECT/WITH only inside a rolled-back transaction; the app's own `Default` connection is refused. `Sync:Provider=Demo` (default) answers with demo rows so the test site can exercise the flow.
+- BE: Jobs have individual schedules (`JobSchedules`) checked every `Jobs:TickMinutes`; the search text backfill runs inside the `UploadCleanup` job because the contract's job list has no separate key for it.
+- BE: Import rows are written one by one (a failing row does not stop the others); records updated by a row are re-read at write time so a failed row never leaves stale tracked entities behind.
+- BE: MVC's implicit `[Required]` for non-nullable reference properties is switched off; the services validate input and answer 400 with field names (release 3 DTOs mirror `types.ts` with non-nullable strings).
+- BE: Bulk reassignment never makes someone the owner of a contract on which they hold an open (Pending or Waiting) approval step, in addition to skipping contracts in approval.
+
+## Frontend release 3 (2026-11-22)
+
+- FE: The release 3 API contract is `docs/CONTRACT_V3.md` plus the "Release 3" section of `src/web/src/api/types.ts`; written before the UI, for the backend to implement and list mismatches.
+- FE: One shared contract filter (`ContractFilter`) for the register, Overview, exports and the data room; repeated query parameters mean OR, different parameters AND; unknown ids match nothing. `includeEnded` defaults to true for `contracts` (unchanged) and false for `overview/analytics`.
+- FE: Overview is open to every user and scoped by the access filter; the old 403/no-access state is removed. `GET overview` stays for compatibility; the page uses `GET overview/analytics`.
+- FE: Drill-down state lives in the URL with the same parameter names as the register (`entity`, `department`, `type`, `status`, …); the Overview entity filter is the shell's entity scope.
+- FE: Charts are plain HTML/CSS (no chart library). Urgency colours for the stacked month chart (#b3261e, #d18f00, #2f7bbf, gray #a9b4c0 for "decided") were run through the dataviz palette validator; the gray intentionally fails the chroma floor, so every segment carries a text label and the list below is the table view.
+- FE: Value bands are fixed in the contract (`lt1m`, `1to5m`, `5to20m`, `gte20m`, max(total, annual) in DKK), matching the seeded approval bands.
+- FE: "Signed document" for due diligence = a document of kind Main on an Active or NoticeGiven contract.
+- FE: Search requires every term; snippets carry `[start, end)` highlight offsets instead of HTML.
+- FE: One app-wide `GET app-config` gives forms and pages the custom fields, field rules, tags, rates and resolved start page, so non-admin pages never call admin endpoints.
+- FE: Custom-field values are not part of `lockedFields` (editable after approval); required custom fields and per-type required standard fields are enforced on create, on drafts and on submit, and are warnings on import.
+- FE: Imports run in three server calls (upload → preview → run) on a server-side session; the browser never parses the file in real mode. Contract imports skip approval and keep missing notice periods/values as missing data.
+- FE: Sync source secrets stay in server configuration; the UI only picks a connection name from `GET admin/sync-connections` and can test an unsaved definition.
+- FE: Start page and default entity scope (personal setting, else role default) are applied once per browser session at sign-in, not on every visit to `/`.
+- FE: The notification bell polls `notifications/unread-count` every 60 s (no push).
+- FE: Saved views store the register URL query and columns; a personal default view is applied when the register opens without its own filters; shared views can be created by contract owners and admins.
+- FE: Settings are grouped Organization / Data / Rules / System; departments and contract types are deactivated through `PUT` with `isActive` (delete stays for unused rows).
+- FE: Mock: one seeded user (Louise Winther) is marked as an Entra ID account to demo read-only synced fields in Dev mode; the data-room zip is built in the browser (stored entries) and is ready at once.

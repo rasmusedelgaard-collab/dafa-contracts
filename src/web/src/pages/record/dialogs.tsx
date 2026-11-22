@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { permissions, qk, useApi, useInvalidateContracts, useLookups, useMe } from '../../app/context';
+import { permissions, qk, useApi, useAppConfig, useInvalidateContracts, useLookups, useMe } from '../../app/context';
 import { ApiError } from '../../api/api';
 import type { ContractDetail, DocumentKind, LinkKind, Obligation } from '../../api/types';
 import { Button, Field, Modal, Select, Skeleton, TextInput, useToast } from '../../components';
@@ -26,6 +26,8 @@ export function EditDetailsDialog({ contract, onClose }: DialogProps) {
   const api = useApi();
   const toast = useToast();
   const invalidate = useInvalidateContracts();
+  const config = useAppConfig();
+  const rules = { customFields: config.customFields, fieldRules: config.fieldRules, enforceRequired: contract.status === 'Draft' };
   const [draft, setDraft] = useState<ContractDraft>(() => fieldsToDraft(contract));
   const [errors, setErrors] = useState<DraftErrors>({});
   const [tried, setTried] = useState(false);
@@ -46,12 +48,12 @@ export function EditDetailsDialog({ contract, onClose }: DialogProps) {
   const onPatch = (patch: Partial<ContractDraft>) => {
     const next = { ...draft, ...patch };
     setDraft(next);
-    if (tried) setErrors(validateDraft(next));
+    if (tried) setErrors(validateDraft(next, [], rules));
   };
 
   const submit = () => {
     setTried(true);
-    const found = validateDraft(draft);
+    const found = validateDraft(draft, [], rules);
     setErrors(found);
     if (hasErrors(found)) {
       toast.error(null, `Check the ${Object.keys(found).length === 1 ? 'field' : 'fields'} marked in red.`);
@@ -79,7 +81,7 @@ export function EditDetailsDialog({ contract, onClose }: DialogProps) {
       }
     >
       {contract.lockedFields.length > 0 ? <p className="banner tone-amber">{LOCKED_MESSAGE}</p> : null}
-      <ContractForm flat draft={draft} errors={errors} onPatch={onPatch} lockedFields={contract.lockedFields} />
+      <ContractForm flat showTags={contract.canTag ?? contract.canEdit} draft={draft} errors={errors} onPatch={onPatch} lockedFields={contract.lockedFields} />
     </Modal>
   );
 }

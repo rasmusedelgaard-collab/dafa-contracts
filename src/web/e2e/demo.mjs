@@ -12,6 +12,10 @@
 //
 // The mock keeps its data in memory, so each journey runs in one page load (no reloads).
 //
+// Release 3 adds a second journey per width (`journeyR3`): Overview drill-down as two users with
+// different totals, search finds another owner's document, and (desktop) an admin imports a
+// supplier CSV and adds a custom field that then appears in New contract.
+//
 // Chrome: `CHROME_PATH`, else an installed Chrome/Chromium found in the usual places.
 // Screenshots: set `E2E_SHOTS=<folder>` to save one per step.
 import { existsSync, mkdirSync } from 'node:fs';
@@ -237,6 +241,164 @@ async function journey(browser, baseUrl, width, height) {
   }
 }
 
+/**
+ * Release 3 journey (one page load, mock state in memory): Overview drill-down as two users with
+ * different totals, search finds another owner's document, admin imports a supplier CSV, admin
+ * adds a custom field and it appears in New contract. On a phone only the first two run.
+ */
+async function journeyR3(browser, baseUrl, width, height) {
+  const phone = width < 720;
+  const tag = `${width}px r3`;
+  const log = (text) => console.log(`  [${tag}] ${text}`);
+  const context = await browser.newContext({ viewport: { width, height } });
+  await context.addInitScript(() => {
+    if (!sessionStorage.getItem('e2e.started')) {
+      localStorage.setItem('dafa.mock.userId', 'signed-out');
+      sessionStorage.setItem('e2e.started', '1');
+    }
+  });
+  const page = await context.newPage();
+  page.setDefaultTimeout(15_000);
+  const problems = [];
+  page.on('pageerror', (e) => problems.push(`page error: ${e.message}`));
+  page.on('console', (m) => {
+    if (m.type() === 'error') problems.push(`console error: ${m.text()}`);
+  });
+  const shot = async (name) => {
+    if (shotsDir) await page.screenshot({ path: join(shotsDir, `${width}-r3-${name}.png`), fullPage: !phone });
+  };
+  const openUserMenu = () => visible(page.locator('.user-card, .topbar__avatar, .home-head__avatar')).click();
+  const switchTo = async (name) => {
+    await openUserMenu();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: new RegExp(`^(\\S+ )?${name}`) }).click();
+    await page.getByText(`You are now ${name}`).waitFor();
+    await dialog.waitFor({ state: 'detached' });
+  };
+  /** Overview through the sidebar (desktop) or the user menu (phone, where the tab bar has no Overview). */
+  const openOverview = async () => {
+    if (phone) {
+      await openUserMenu();
+      await page.getByRole('dialog').getByRole('link', { name: 'Overview' }).click();
+    } else {
+      await visible(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Overview' })).click();
+    }
+    await page.getByRole('heading', { level: 1, name: 'Overview' }).waitFor();
+    await page.locator('.kpi').first().waitFor();
+  };
+  const kpi = async (label) => {
+    const tile = page.locator('.kpi', { has: page.locator('.kpi__label', { hasText: new RegExp(`^${label}$`) }) }).first();
+    return (await tile.locator('.kpi__value').innerText()).trim();
+  };
+  const settingsSection = async (label) => {
+    if (!(await page.locator('.settings').count())) await visible(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Settings' })).click();
+    await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: label, exact: true }).click();
+    await page.getByRole('heading', { level: 2, name: new RegExp(label === 'Counterparties' ? 'counterparties' : `^${label}`, 'i') }).first().waitFor();
+  };
+
+  try {
+    await page.goto(baseUrl, { waitUntil: 'networkidle' });
+    await page.getByText('Choose a demo user').waitFor();
+    await page.getByRole('button', { name: /Rasmus Holm/ }).click();
+    await page.locator('.shell').waitFor();
+
+    // 1. Overview as group management, then drill down by department.
+    await openOverview();
+    const cfoCount = Number(await kpi('Contracts'));
+    const cfoValue = await kpi('Annual value');
+    const bars = page.getByRole('list', { name: 'Annual value by department' });
+    const firstBar = bars.getByRole('button').first();
+    const barLabel = (await firstBar.getAttribute('aria-label')) ?? '';
+    const deptName = barLabel.split(':')[0];
+    await firstBar.click();
+    const crumbs = page.getByRole('navigation', { name: 'Applied drill-downs' });
+    await crumbs.getByText(deptName, { exact: true }).waitFor();
+    await page.waitForFunction((n) => {
+      const t = [...document.querySelectorAll('.kpi')].find((k) => k.querySelector('.kpi__label')?.textContent === 'Contracts');
+      return t && Number(t.querySelector('.kpi__value')?.textContent) < n;
+    }, cfoCount);
+    const drilled = Number(await kpi('Contracts'));
+    await page.getByText(new RegExp(`^${drilled} contracts? match the drill-down$`)).waitFor();
+    check(drilled > 0 && drilled < cfoCount, `Drilling into ${deptName} gave ${drilled} of ${cfoCount} contracts.`);
+    log(`Rasmus Holm (group management): ${cfoCount} contracts, ${cfoValue} a year; drill-down "${deptName}" -> ${drilled} contracts in the list`);
+    await shot('overview-cfo-drilled');
+    await crumbs.getByRole('button', { name: `Remove ${deptName}` }).click();
+    await crumbs.waitFor({ state: 'detached' });
+
+    // 2. The same page as a reader shows only her scope (different totals).
+    await switchTo('Emma Nygaard');
+    await openOverview();
+    const readerCount = Number(await kpi('Contracts'));
+    const readerValue = await kpi('Annual value');
+    check(readerCount > 0 && readerCount < cfoCount, `The reader sees ${readerCount} contracts, group management ${cfoCount}; expected fewer but some.`);
+    check(readerValue !== cfoValue, 'The reader sees the same annual value as group management.');
+    const readerBars = page.getByRole('list', { name: 'Annual value by department' }).getByRole('button');
+    check((await readerBars.count()) === 1, `The reader sees ${await readerBars.count()} departments, expected only her own.`);
+    await readerBars.first().click();
+    await page.getByRole('navigation', { name: 'Applied drill-downs' }).waitFor();
+    log(`Emma Nygaard (reader): ${readerCount} contracts, ${readerValue} a year (scoped); drill-down works`);
+    await shot('overview-reader');
+
+    // 3. Search finds a document of another owner, inside the user's access.
+    await switchTo('Jonas Bak');
+    // Phone My work has its own header without the top bar: go to Contracts, where the search box is.
+    if (phone) await visible(page.getByRole('navigation', { name: 'Main, phone' }).getByRole('link', { name: /^Contracts/ })).click();
+    const box = visible(page.getByRole('combobox', { name: /Search contracts, documents and people/ }));
+    await box.click();
+    await box.pressSequentially('FSC certified', { delay: 10 });
+    await box.press('Enter');
+    await page.getByRole('heading', { level: 1, name: 'Search' }).waitFor();
+    await page.getByText('Packaging supply – signed.pdf').waitFor();
+    check(await page.getByText(/Owner Camilla Frost/).isVisible(), 'The document hit does not name its owner.');
+    check((await page.locator('mark').count()) >= 2, 'The matched words are not highlighted.');
+    log('Jonas Bak found "Packaging supply – signed.pdf" (owner Camilla Frost) by words in the document');
+    await shot('search');
+
+    if (!phone) {
+      // 4. Admin imports a supplier CSV.
+      await switchTo('Peter Aagaard');
+      await settingsSection('Imports');
+      const csv = 'Name;VAT number;Country;External id\nE2E Gummi ApS;DK55667788;DK;V77001\nNordpolymer Compounds ApS;;DK;V10040\n';
+      await page.locator('input[type="file"]').setInputFiles({ name: 'vendors-e2e.csv', mimeType: 'text/csv', buffer: Buffer.from(csv, 'utf8') });
+      await page.getByText(/2 rows · 4 columns/).waitFor();
+      await shot('import-mapping');
+      await page.getByRole('button', { name: 'Check 2 rows' }).click();
+      await page.getByRole('table', { name: 'Rows to import' }).waitFor();
+      await page.getByRole('button', { name: 'Import 1 row' }).click();
+      await page.getByText(/Import of vendors-e2e\.csv finished: 1 created, 0 updated, 1 skipped, 0 failed/).waitFor();
+      await shot('import-done');
+      await settingsSection('Counterparties');
+      await page.getByRole('searchbox', { name: 'Search counterparties' }).fill('E2E Gummi');
+      await page.getByRole('table', { name: 'Counterparties' }).getByText('E2E Gummi ApS').waitFor();
+      log('Peter Aagaard imported a supplier CSV (1 created, 1 skipped as existing); the supplier is in the master data');
+
+      // 5. Admin adds a custom field; it appears in New contract.
+      await settingsSection('Custom fields');
+      await page.getByRole('button', { name: 'Add field' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Add field' });
+      await dialog.getByLabel('Label', { exact: true }).fill('E2E insurance reference');
+      await dialog.getByRole('button', { name: 'Save field' }).click();
+      await dialog.waitFor({ state: 'detached' });
+      await page.getByText('cf.e2eInsuranceReference').waitFor();
+      await visible(page.locator('a[href="/contracts/new"]')).click();
+      await page.getByRole('heading', { name: 'New contract' }).waitFor();
+      await page.getByRole('button', { name: 'Continue without a file' }).click();
+      await page.getByLabel('Contract type', { exact: true }).selectOption({ label: 'IT and SaaS' });
+      await page.getByRole('heading', { name: 'Additional details' }).waitFor();
+      await page.getByLabel(/E2E insurance reference/).fill('POL-2027-001');
+      await shot('new-contract-custom-field');
+      log('Peter Aagaard added the custom field "E2E insurance reference"; it shows in New contract');
+    }
+
+    check(problems.length === 0, `Browser errors:\n    ${problems.join('\n    ')}`);
+  } catch (e) {
+    if (shotsDir) await page.screenshot({ path: join(shotsDir, `${width}-r3-FAILED.png`) }).catch(() => {});
+    throw new Error(`[${tag}] ${e.message}`);
+  } finally {
+    await context.close();
+  }
+}
+
 async function main() {
   check(existsSync(join(root, 'dist', 'index.html')), 'dist/index.html is missing. Run `npm run build:demo` first (`npm run e2e:demo` does both).');
   if (shotsDir) mkdirSync(shotsDir, { recursive: true });
@@ -255,6 +417,13 @@ async function main() {
       try {
         await journey(browser, baseUrl, width, height);
         console.log(`PASS ${width}px`);
+      } catch (e) {
+        failed = true;
+        console.error(`FAIL ${e.message}`);
+      }
+      try {
+        await journeyR3(browser, baseUrl, width, height);
+        console.log(`PASS ${width}px release 3`);
       } catch (e) {
         failed = true;
         console.error(`FAIL ${e.message}`);

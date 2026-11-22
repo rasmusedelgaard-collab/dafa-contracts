@@ -1,6 +1,9 @@
 import { ApiError, type Api } from './api';
 import type {
+  ContractFilter,
   ContractQuery,
+  ImportKind,
+  JobKey,
   GetContractOptions,
   TemplateInput,
   DocumentKind,
@@ -14,11 +17,20 @@ const BASE = '/api';
 
 type QueryValue = string | number | boolean | null | undefined;
 
-function qs(params?: object): string {
+/**
+ * Query string. Arrays repeat the key (`entityId=a&entityId=b`); the `cf` object becomes
+ * `cf.<key>=<value>` (release 3 contract filter).
+ */
+export function qs(params?: object): string {
   if (!params) return '';
   const sp = new URLSearchParams();
-  for (const [k, v] of Object.entries(params as Record<string, QueryValue>)) {
-    if (v !== undefined && v !== null && v !== '') sp.set(k, String(v));
+  const add = (k: string, v: QueryValue) => {
+    if (v !== undefined && v !== null && v !== '') sp.append(k, String(v));
+  };
+  for (const [k, v] of Object.entries(params as Record<string, unknown>)) {
+    if (Array.isArray(v)) for (const x of v) add(k, x as QueryValue);
+    else if (k === 'cf' && v && typeof v === 'object') for (const [ck, cv] of Object.entries(v as Record<string, QueryValue>)) add(`cf.${ck}`, cv);
+    else add(k, v as QueryValue);
   }
   const s = sp.toString();
   return s ? `?${s}` : '';
@@ -158,6 +170,39 @@ export function createHttpApi(): Api {
     getRenewals: (months = 12) => get(`renewals${qs({ months })}`),
     getOverview: () => get('overview'),
 
+    getAppConfig: () => get('app-config'),
+    getOverviewAnalytics: (filter: ContractFilter, ddThresholdDkk?: number) => get(`overview/analytics${qs({ ...filter, ddThresholdDkk })}`),
+    searchFull: (query: object) => get(`search/full${qs(query)}`),
+    getPerson: (id: Id) => get(`people/${id}`),
+    getCounterparty: (id: Id) => get(`counterparties/${id}`),
+    getCounterparties: (q?: string) => get(`counterparties${qs({ q })}`),
+    getTags: () => get('tags'),
+    setContractTags: (id: Id, tagIds: Id[]) => put(`contracts/${id}/tags`, { tagIds }),
+    watchContract: (id: Id) => put(`contracts/${id}/watch`),
+    unwatchContract: (id: Id) => del(`contracts/${id}/watch`),
+    getWatching: () => get('watching'),
+    getComments: (id: Id) => get(`contracts/${id}/comments`),
+    addComment: (id: Id, input: unknown) => post(`contracts/${id}/comments`, input),
+    updateComment: (id: Id, input: unknown) => put(`comments/${id}`, input),
+    deleteComment: (id: Id) => del(`comments/${id}`),
+    getNotifications: (query?: object) => get(`notifications${qs(query)}`),
+    getUnreadCount: () => get('notifications/unread-count'),
+    markNotificationRead: (id: Id) => post(`notifications/${id}/read`),
+    markAllNotificationsRead: () => post('notifications/read-all'),
+    getPreferences: () => get('me/preferences'),
+    updatePreferences: (input: unknown) => put('me/preferences', input),
+    getContractVersions: (id: Id) => get(`contracts/${id}/versions`),
+    compareContract: (id: Id, from: string, to: string) => get(`contracts/${id}/compare${qs({ from, to })}`),
+    bulk: (input: unknown) => post('contracts/bulk', input),
+    getViews: () => get('views'),
+    createView: (input: unknown) => post('views', input),
+    updateView: (id: Id, input: unknown) => put(`views/${id}`, input),
+    deleteView: (id: Id) => del(`views/${id}`),
+    createDataRoomExport: (input: unknown) => post('data-room/exports', input),
+    getDataRoomExports: () => get('data-room/exports'),
+    getDataRoomExport: (id: Id) => get(`data-room/exports/${id}`),
+    getDataRoomContent: (id: Id) => download(`data-room/exports/${id}/content`, 'data-room.zip'),
+
     admin: {
       getApprovalRules: rules.list,
       createApprovalRule: rules.create,
@@ -188,6 +233,70 @@ export function createHttpApi(): Api {
       runJobs: () => post('admin/jobs/run'),
       getHolidayCover: () => get('admin/holiday-cover'),
       updateHolidayCover: (input: HolidayCoverInput[]) => put('admin/holiday-cover', input),
+
+      updateDepartmentV3: departments.update,
+      updateContractTypeV3: types.update,
+
+      getCounterparties: (query?: object) => get(`admin/counterparties${qs(query)}`),
+      createCounterparty: (input: unknown) => post('admin/counterparties', input),
+      updateCounterparty: (id: Id, input: unknown) => put(`admin/counterparties/${id}`, input),
+      getCounterpartyDuplicates: () => get('admin/counterparties/duplicates'),
+      mergeCounterparties: (input: unknown) => post('admin/counterparties/merge', input),
+
+      getImportFields: (kind: ImportKind) => get(`admin/imports/${kind}/fields`),
+      uploadImport: (kind: ImportKind, file: File) => multipart(`admin/imports/${kind}/upload`, file),
+      previewImport: (sessionId: Id, input: unknown) => post(`admin/imports/sessions/${sessionId}/preview`, input),
+      runImport: (sessionId: Id, input: unknown) => post(`admin/imports/sessions/${sessionId}/run`, input),
+      getImportHistory: (kind?: ImportKind) => get(`admin/imports/history${qs({ kind })}`),
+      getImportTemplate: (kind: ImportKind) => download(`admin/imports/${kind}/template`, `${kind}-import.csv`),
+
+      getSyncConnections: () => get('admin/sync-connections'),
+      getSyncSources: () => get('admin/sync-sources'),
+      createSyncSource: (input: unknown) => post('admin/sync-sources', input),
+      updateSyncSource: (id: Id, input: unknown) => put(`admin/sync-sources/${id}`, input),
+      deleteSyncSource: (id: Id) => del(`admin/sync-sources/${id}`),
+      testSyncSource: (input: unknown) => post('admin/sync-sources/test', input),
+      runSyncSource: (id: Id) => post(`admin/sync-sources/${id}/run`),
+      getSyncRuns: (id: Id) => get(`admin/sync-sources/${id}/runs`),
+
+      getCustomFields: () => get('admin/custom-fields'),
+      createCustomField: (input: unknown) => post('admin/custom-fields', input),
+      updateCustomField: (id: Id, input: unknown) => put(`admin/custom-fields/${id}`, input),
+      deleteCustomField: (id: Id) => del(`admin/custom-fields/${id}`),
+      reorderCustomFields: (ids: Id[]) => put('admin/custom-fields/order', { ids }),
+
+      getFieldRules: () => get('admin/field-rules'),
+      updateFieldRules: (input: unknown) => put('admin/field-rules', input),
+
+      getEntities: () => get('admin/entities'),
+      createEntity: (input: unknown) => post('admin/entities', input),
+      updateEntity: (id: Id, input: unknown) => put(`admin/entities/${id}`, input),
+
+      getCurrencies: () => get('admin/currencies'),
+      updateCurrencies: (input: unknown) => put('admin/currencies', input),
+
+      getTags: () => get('admin/tags'),
+      createTag: (input: unknown) => post('admin/tags', input),
+      updateTag: (id: Id, input: unknown) => put(`admin/tags/${id}`, input),
+      deleteTag: (id: Id) => del(`admin/tags/${id}`),
+
+      getUsers: (query?: object) => get(`admin/users${qs(query)}`),
+      createUser: (input: unknown) => post('admin/users', input),
+      updateUser: (id: Id, input: unknown) => put(`admin/users/${id}`, input),
+      getEffectiveAccess: (userId: Id, query?: object) => get(`admin/users/${userId}/effective-access${qs(query)}`),
+      previewReassign: (input: unknown) => post('admin/reassign/preview', input),
+      reassign: (input: unknown) => post('admin/reassign', input),
+
+      getNotificationSettings: () => get('admin/notification-settings'),
+      updateNotificationSettings: (input: unknown) => put('admin/notification-settings', input),
+      previewNotificationTemplate: (input: unknown) => post('admin/notification-settings/preview', input),
+
+      getJobs: () => get('admin/jobs'),
+      updateJobSchedule: (key: JobKey, schedule: unknown) => put(`admin/jobs/${key}`, { schedule }),
+      runJob: (key: JobKey) => post(`admin/jobs/${key}/run`),
+
+      getAppSettings: () => get('admin/app-settings'),
+      updateAppSettings: (input: unknown) => put('admin/app-settings', input),
     },
 
     getDevConfig: () => get('dev/config'),
