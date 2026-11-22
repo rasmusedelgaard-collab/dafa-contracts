@@ -18,11 +18,13 @@ public class GeneralController : ApiControllerBase
 {
     private readonly ContractQueryService _queries;
     private readonly AuthSettings _auth;
+    private readonly SearchService _search;
 
-    public GeneralController(ContractQueryService queries, AuthSettings auth)
+    public GeneralController(ContractQueryService queries, AuthSettings auth, SearchService search)
     {
         _queries = queries;
         _auth = auth;
+        _search = search;
     }
 
     [HttpGet("me")]
@@ -58,7 +60,8 @@ public class GeneralController : ApiControllerBase
     [HttpGet("search")]
     public async Task<ActionResult<List<SearchResultDto>>> Search([FromQuery] string? q, CancellationToken cancellationToken)
     {
-        return await _queries.SearchAsync(q, cancellationToken);
+        // Release 3: contracts, documents (name and text), people, then suppliers; 8 at most.
+        return await _search.PaletteAsync(q, cancellationToken);
     }
 
     [HttpGet("renewals")]
@@ -260,7 +263,20 @@ public class DevController : ControllerBase
         await HttpContext.SignInAsync(
             CookieAuthenticationDefaults.AuthenticationScheme,
             new ClaimsPrincipal(identity),
-            new AuthenticationProperties { IsPersistent = true, ExpiresUtc = DateTimeOffset.UtcNow.AddHours(12) });
+            new AuthenticationProperties
+            {
+                IsPersistent = true,
+                // Release 3: the session timeout from General settings (default 12 hours).
+                ExpiresUtc = DateTimeOffset.UtcNow.AddMinutes((await AppSettingsStore.LoadAsync(_db, cancellationToken)).SessionTimeoutMinutes)
+            });
+
+        // Release 3: last sign-in for the admin user list.
+        var tracked = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+        if (tracked is not null)
+        {
+            tracked.LastSignInAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(cancellationToken);
+        }
 
         var profile = await AccessProfileLoader.LoadAsync(_db, user.Id, cancellationToken);
         if (profile is null)

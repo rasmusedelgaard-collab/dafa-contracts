@@ -183,7 +183,10 @@ public class ApiSecurityTests : IClassFixture<ApiFactory>
         var mine = await outsider.GetFromJsonAsync<JsonElement>("/api/approvals/mine");
         Assert.Equal(0, mine.GetArrayLength());
 
-        Assert.Equal(HttpStatusCode.Forbidden, (await outsider.GetAsync("/api/overview")).StatusCode);
+        // Release 3: the overview is open to every user, computed over the contracts they can see.
+        var overview = await outsider.GetFromJsonAsync<JsonElement>("/api/overview");
+        Assert.Equal(0, overview.GetProperty("activeContracts").GetInt32());
+        Assert.Equal(0, overview.GetProperty("valueByEntity").GetArrayLength());
     }
 
     [Fact]
@@ -210,8 +213,9 @@ public class ApiSecurityTests : IClassFixture<ApiFactory>
         var renewals = await planner.GetFromJsonAsync<JsonElement>("/api/renewals?months=60");
         Assert.All(renewals.EnumerateArray(), r => Assert.Contains(r.GetProperty("id").GetGuid(), ids));
 
-        // A plain department member is not management.
-        Assert.Equal(HttpStatusCode.Forbidden, (await planner.GetAsync("/api/overview")).StatusCode);
+        // Release 3: a plain department member gets the overview of the contracts they can see.
+        var overview = await planner.GetFromJsonAsync<JsonElement>("/api/overview");
+        Assert.True(overview.GetProperty("activeContracts").GetInt32() <= ids.Count);
     }
 
     [Fact]

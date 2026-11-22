@@ -62,6 +62,28 @@ public static class ContractAccessRules
         return profile.IsAdmin || IsOnContract(profile, contract);
     }
 
-    public static bool CanSeeOverview(AccessProfile profile) =>
-        profile.IsAdmin || profile.IsGroupManagement || profile.ManagedEntityIds.Count > 0;
+    /// <summary>
+    /// Release 3: analytics and the overview are for every signed-in user; the figures cover only
+    /// the contracts the user can see. Kept for callers that still ask.
+    /// </summary>
+    public static bool CanSeeOverview(AccessProfile profile) => true;
+
+    /// <summary>
+    /// Every rule of the access model that gives this user read access to the contract
+    /// (empty = no access). Rule names: Admin, GroupManagement, Department, EntityManagement, Owner,
+    /// Delegate, Responsible, CurrentApprover.
+    /// </summary>
+    public static List<string> GrantingRules(AccessProfile profile, Contract contract, bool isCurrentApprover)
+    {
+        var rules = new List<string>();
+        if (profile.IsAdmin) rules.Add("Admin");
+        if (profile.IsGroupManagement) rules.Add("GroupManagement");
+        if (profile.DepartmentIds.Contains(contract.DepartmentId)) rules.Add("Department");
+        if (profile.ManagedEntityIds.Contains(contract.EntityId)) rules.Add("EntityManagement");
+        if (contract.OwnerId == profile.UserId) rules.Add("Owner");
+        if (contract.DelegateId == profile.UserId) rules.Add("Delegate");
+        if (contract.ResponsibleId == profile.UserId) rules.Add("Responsible");
+        if (isCurrentApprover) rules.Add("CurrentApprover");
+        return rules;
+    }
 }

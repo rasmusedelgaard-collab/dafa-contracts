@@ -10,7 +10,10 @@ namespace Dafa.Contracts.Core.Services;
 /// <summary>Required-field rules for saving a contract (brief section 4).</summary>
 public static class ContractValidator
 {
-    public static Dictionary<string, string[]> Validate(ContractInput input)
+    public static Dictionary<string, string[]> Validate(ContractInput input) => Validate(input, null);
+
+    /// <param name="isKnownCurrency">Release 3: the admin-editable currency list; null = the fixed list.</param>
+    public static Dictionary<string, string[]> Validate(ContractInput input, Func<string, bool>? isKnownCurrency)
     {
         var errors = new Dictionary<string, string[]>();
 
@@ -46,7 +49,7 @@ public static class ContractValidator
             Add(errors, "renewalMonths", "Renewal period must be between 1 and 240 months.");
 
         if (string.IsNullOrWhiteSpace(input.Currency)) Add(errors, "currency", "Currency is required.");
-        else if (!CurrencyRates.IsKnown(input.Currency.Trim())) Add(errors, "currency", "Unknown currency.");
+        else if (!(isKnownCurrency ?? CurrencyRates.IsKnown)(input.Currency.Trim().ToUpperInvariant())) Add(errors, "currency", "Unknown currency.");
 
         if (input.AnnualValue is null && input.TotalValue is null)
             Add(errors, "annualValue", "Enter an annual value or a total value.");
@@ -245,6 +248,59 @@ public static class ContractChanges
         return changes;
     }
 
+    /// <summary>
+    /// Release 3: the current values of every field Diff knows, formatted exactly as Diff formats
+    /// old/new values, so a version can be rebuilt by undoing audited changes.
+    /// </summary>
+    public static Dictionary<string, string> Snapshot(Contract contract, ReferenceData reference, IReadOnlyDictionary<Guid, string> supplierNames)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        // Diff against a sentinel contract that differs in every field, then keep the "new" side.
+        foreach (var change in Diff(Sentinel(contract), contract, reference, supplierNames))
+        {
+            result[change.Field] = change.New;
+        }
+        return result;
+    }
+
+    /// <summary>A contract that differs from <paramref name="contract"/> in every compared field.</summary>
+    private static Contract Sentinel(Contract contract)
+    {
+        return new Contract
+        {
+            Title = contract.Title + "\u0001",
+            TypeId = Guid.NewGuid(),
+            SupplierId = Guid.NewGuid(),
+            CounterpartyName = contract.CounterpartyName + "\u0001",
+            EntityId = Guid.NewGuid(),
+            DepartmentId = Guid.NewGuid(),
+            OwnerId = Guid.NewGuid(),
+            DelegateId = Guid.NewGuid(),
+            ResponsibleId = Guid.NewGuid(),
+            ReminderRecipient = contract.ReminderRecipient == ReminderRecipient.Owner ? ReminderRecipient.Delegate : ReminderRecipient.Owner,
+            StartDate = contract.StartDate.AddDays(1),
+            EndDate = contract.EndDate is null ? DateOnly.MinValue : null,
+            NoticePeriodDays = contract.NoticePeriodDays is null ? -1 : null,
+            AutoRenew = !contract.AutoRenew,
+            RenewalMonths = contract.RenewalMonths is null ? -1 : null,
+            AnnualValue = contract.AnnualValue is null ? -1m : null,
+            TotalValue = contract.TotalValue is null ? -1m : null,
+            Currency = contract.Currency + "\u0001",
+            PaymentTerms = contract.PaymentTerms + "\u0001",
+            PriceAdjustment = contract.PriceAdjustment + "\u0001",
+            PriceAdjustmentDate = contract.PriceAdjustmentDate is null ? DateOnly.MinValue : null,
+            GoverningLaw = contract.GoverningLaw + "\u0001",
+            LiabilityCap = contract.LiabilityCap + "\u0001",
+            Exclusivity = contract.Exclusivity + "\u0001",
+            ChangeOfControl = contract.ChangeOfControl is null ? true : null,
+            Summary = contract.Summary + "\u0001"
+        };
+    }
+
+    /// <summary>Release 3: the changes as JSON for AuditEvent.DataJson (version comparison).</summary>
+    public static string ToJson(IEnumerable<FieldChange> changes) =>
+        JsonDefaults.Write(changes.Select(c => new FieldChangeDto { Field = c.Field, Label = c.Label, Old = c.Old, New = c.New }).ToList());
+
     /// <summary>"Title: "A" -> "B"; End date: "2027-03-31" -> "2028-03-31"".</summary>
     public static string Describe(IEnumerable<FieldChange> changes) =>
         string.Join("; ", changes.Select(c => c.Label + ": \"" + c.Old + "\" -> \"" + c.New + "\""));
@@ -321,11 +377,51 @@ public class ContractCommandService
         return FormatContractNo(year, max + 1);
     }
 
-    /// <summary>Validates the input, including that referenced rows exist, and returns the supplier name if one is chosen.</summary>
-    private async Task<string?> ValidateAsync(ContractInput input, CancellationToken cancellationToken)
+    private CustomFieldService CustomFields() => new(_db, _audit, _currentUser);
+
+    /// <summary>
+    /// Validates the input, including that referenced rows exist, and returns the supplier name if one is chosen.
+    /// Release 3: currencies from the admin list (the contract's current currency stays valid), the
+    /// type's required standard fields and the custom fields (required ones only when
+    /// <paramref name="checkRequired"/>: create and Draft updates), and tag ids.
+    /// </summary>
+    private async Task<string?> ValidateAsync(
+        ContractInput input, CancellationToken cancellationToken, Contract? existing = null, List<ParsedCustomValue>? customValues = null)
     {
-        var errors = ContractValidator.Validate(input);
+        var activeCurrencies = await CurrencyTable.ActiveCodesAsync(_db, cancellationToken);
+        var currentCurrency = existing?.Currency;
+        var errors = ContractValidator.Validate(input, code =>
+            activeCurrencies.Contains(code, StringComparer.OrdinalIgnoreCase)
+            || (currentCurrency is not null && string.Equals(code, currentCurrency, StringComparison.OrdinalIgnoreCase)));
         string? supplierName = null;
+        var checkRequired = existing is null || existing.Status == ContractStatus.Draft;
+        var customFields = CustomFields();
+        if (checkRequired)
+        {
+            await customFields.CheckRequiredRulesAsync(input, errors, cancellationToken);
+        }
+        if (input.TypeId is not null)
+        {
+            if (input.CustomFields is not null || existing is null)
+            {
+                var parsed = await customFields.ValidateAsync(
+                    input.CustomFields ?? new Dictionary<string, System.Text.Json.JsonElement>(), input.TypeId.Value, errors, checkRequired, cancellationToken);
+                customValues?.AddRange(parsed);
+            }
+            else if (checkRequired && existing is not null)
+            {
+                // customFields omitted on a Draft update: the stored values must satisfy the required fields.
+                var probe = new Contract { Id = existing.Id, TypeId = input.TypeId.Value };
+                await customFields.CheckStoredRequiredAsync(probe, errors, cancellationToken);
+            }
+        }
+        if (input.TagIds is not null)
+        {
+            var tagIds = input.TagIds.Distinct().ToList();
+            var known = await _db.Tags.AsNoTracking().Where(t => tagIds.Contains(t.Id)).Select(t => t.Id).ToListAsync(cancellationToken);
+            if (known.Count != tagIds.Count)
+                ContractValidator.Add(errors, "tagIds", "Unknown tag.");
+        }
 
         if (input.TypeId is not null)
         {
@@ -415,7 +511,8 @@ public class ContractCommandService
         {
             throw new ForbiddenException("You need the contract owner role to create contracts.");
         }
-        var supplierName = await ValidateAsync(input, cancellationToken);
+        var customValues = new List<ParsedCustomValue>();
+        var supplierName = await ValidateAsync(input, cancellationToken, null, customValues);
         var now = _clock.UtcNow;
         var contract = new Contract
         {
@@ -451,6 +548,12 @@ public class ContractCommandService
             _db.PendingUploads.Remove(upload);
         }
 
+        await CustomFields().SaveValuesAsync(contract.Id, customValues, true, cancellationToken);
+        if (input.TagIds is not null)
+        {
+            await ContractTagWriter.ReplaceAsync(_db, contract.Id, input.TagIds, true, cancellationToken);
+        }
+        await AutoWatch.ApplyAsync(_db, contract, profile.UserId, _clock.UtcNow, cancellationToken);
         var created = _audit.Record("contract.created", "Created draft " + contract.ContractNo, contract.Id);
         for (var attempt = 1; ; attempt++)
         {
@@ -501,7 +604,8 @@ public class ContractCommandService
             throw new ConflictException("The contract is in approval and cannot be changed until the approval is finished.");
         }
         var profile = await _currentUser.GetProfileAsync(cancellationToken);
-        var supplierName = await ValidateAsync(input, cancellationToken);
+        var customValues = new List<ParsedCustomValue>();
+        var supplierName = await ValidateAsync(input, cancellationToken, contract, customValues);
 
         // Work out what would change on a scratch copy first, so a refused update leaves the tracked row untouched.
         var proposed = new Contract();
@@ -538,19 +642,38 @@ public class ContractCommandService
         Apply(input, contract, supplierName);
         contract.UpdatedAt = _clock.UtcNow;
 
-        if (changes.Count == 0)
+        var customChanged = input.CustomFields is null
+            ? new List<FieldChange>()
+            : await CustomFields().SaveValuesAsync(contract.Id, customValues, false, cancellationToken);
+        var tagsChanged = false;
+        if (input.TagIds is not null)
+        {
+            tagsChanged = await ContractTagWriter.ReplaceAsync(_db, contract.Id, input.TagIds, false, cancellationToken);
+        }
+        if (changes.Count == 0 && customChanged.Count == 0)
         {
             _audit.Record("contract.updated", "Saved contract details without changes", contract.Id);
         }
         else
         {
-            _audit.Record("contract.updated", "Updated contract details. " + ContractChanges.Describe(changes), contract.Id);
+            var text = changes.Count == 0 ? "Updated contract details." : "Updated contract details. " + ContractChanges.Describe(changes);
+            if (customChanged.Count > 0)
+            {
+                text += (changes.Count == 0 ? " " : "; ") + ContractChanges.Describe(customChanged);
+            }
+            // Release 3: structured old/new values for the version comparison.
+            _audit.Record("contract.updated", text, contract.Id, ContractChanges.ToJson(changes.Concat(customChanged)));
         }
+        if (tagsChanged)
+        {
+            _audit.Record("contract.tags-changed", "Changed tags", contract.Id);
+        }
+        await AutoWatch.ApplyAsync(_db, contract, null, _clock.UtcNow, cancellationToken);
         if (lockedChanges.Count > 0)
         {
             _audit.Record("contract.approved-terms-changed",
                 "Administrator changed approved terms (status " + contract.Status + "). " + ContractChanges.Describe(lockedChanges),
-                contract.Id);
+                contract.Id, ContractChanges.ToJson(lockedChanges));
         }
         if (completedFields.Count > 0)
         {
@@ -600,7 +723,17 @@ public class ContractCommandService
         {
             throw new ConflictException("Only a draft can be submitted for approval.");
         }
-        var errors = ContractValidator.Validate(ContractValidator.ToInput(contract));
+        var errors = ContractValidator.Validate(ContractValidator.ToInput(contract), code => true);
+        // Release 3: the type's required standard fields and required custom fields.
+        var stored = ContractValidator.ToInput(contract);
+        stored.PaymentTerms = contract.PaymentTerms;
+        stored.PriceAdjustment = contract.PriceAdjustment;
+        stored.GoverningLaw = contract.GoverningLaw;
+        stored.LiabilityCap = contract.LiabilityCap;
+        stored.Exclusivity = contract.Exclusivity;
+        stored.Summary = contract.Summary;
+        await CustomFields().CheckRequiredRulesAsync(stored, errors, cancellationToken);
+        await CustomFields().CheckStoredRequiredAsync(contract, errors, cancellationToken);
         var missing = ContractCalculations.MissingData(contract);
         if (missing.Count > 0)
         {
@@ -686,7 +819,8 @@ public class ContractCommandService
             _audit.Record("renewal.decided",
                 "Notice given on an open-ended contract; it ends on " + contract.EndDate.Value.ToString("yyyy-MM-dd", culture)
                     + " (" + noticeDays + " days' notice) - " + input.Comment!.Trim(),
-                contract.Id);
+                contract.Id,
+                ContractChanges.ToJson(new[] { new FieldChange("endDate", "End date", "open-ended", contract.EndDate.Value.ToString("yyyy-MM-dd", culture)) }));
             await _db.SaveChangesAsync(cancellationToken);
             return;
         }
@@ -706,7 +840,7 @@ public class ContractCommandService
             {
                 throw new ConflictException("This term has already been renewed.");
             }
-            var settings = await ReminderSettingsReader.GetAsync(_db, cancellationToken);
+            var settings = await ReminderSettingsReader.GetForTypeAsync(_db, contract.TypeId, cancellationToken);
             if (!ContractCalculations.IsInRenewalWindow(deadline, today, settings.GetNoticeDays()))
             {
                 throw new ConflictException(
@@ -727,6 +861,7 @@ public class ContractCommandService
             }
         }
 
+        var endBefore = contract.EndDate;
         var rolled = RenewalRules.Apply(contract, decision, profile.UserId, now, input.Comment, newEndDate);
         if (rolled)
         {
@@ -737,7 +872,12 @@ public class ContractCommandService
             {
                 text += " - " + input.Comment.Trim();
             }
-            _audit.Record("renewal.renewed", text, contract.Id);
+            _audit.Record("renewal.renewed", text, contract.Id, ContractChanges.ToJson(new[]
+            {
+                new FieldChange("endDate", "End date",
+                    endBefore is null ? "open-ended" : endBefore.Value.ToString("yyyy-MM-dd", culture),
+                    contract.EndDate.Value.ToString("yyyy-MM-dd", culture))
+            }));
         }
         else
         {

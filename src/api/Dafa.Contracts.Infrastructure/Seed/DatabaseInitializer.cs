@@ -41,6 +41,17 @@ public class DatabaseInitializer
     {
         EnsureSqliteFolder();
         await _db.Database.EnsureCreatedAsync(cancellationToken);
+        // Release 3: bring an existing database up to the current model (adds tables, columns and
+        // indexes; never drops). On a database EnsureCreated just made, every step finds its work done.
+        var upgrade = await new SchemaUpgrader(_db, _logger).UpgradeAsync(cancellationToken);
+        if (upgrade.AppliedVersions.Count > 0)
+        {
+            _logger.LogInformation("Schema upgraded to version {Version} ({Count} statements)", upgrade.CurrentVersion, upgrade.Statements.Count);
+        }
+        foreach (var warning in upgrade.Warnings)
+        {
+            _logger.LogWarning("Schema upgrade: {Warning}", warning);
+        }
         await SeedReferenceDataAsync(cancellationToken);
         // Demo users and contracts are for the test environment only. Off unless Seed:DemoData=true
         // is set explicitly, and only with Dev sign-in: never with Entra, never with an unknown mode.
@@ -49,7 +60,30 @@ public class DatabaseInitializer
         {
             await SeedDemoUsersAsync(cancellationToken);
             await SeedDemoContractsAsync(cancellationToken);
+            await SeedDemoTagsAsync(cancellationToken);
         }
+    }
+
+    /// <summary>Release 3: a few demo tags on demo contracts (only when there are no tags yet).</summary>
+    private async Task SeedDemoTagsAsync(CancellationToken cancellationToken)
+    {
+        if (await _db.Tags.AnyAsync(cancellationToken))
+        {
+            return;
+        }
+        var strategic = new Tag { Id = SeedIds.For("tag:strategic"), Name = "Strategic", Color = "blue", Description = "Contracts that matter for the group strategy." };
+        var critical = new Tag { Id = SeedIds.For("tag:critical"), Name = "Critical supplier", Color = "red", Description = "Single source or hard to replace." };
+        var diligence = new Tag { Id = SeedIds.For("tag:dd"), Name = "Due diligence", Color = "purple", Description = "Part of the exit data room." };
+        _db.Tags.AddRange(strategic, critical, diligence);
+        foreach (var (contractKey, tag) in new[] { ("epdm", critical), ("hq-lease", strategic), ("shareholders", diligence), ("credit", diligence) })
+        {
+            var contractId = SeedIds.For("contract:" + contractKey);
+            if (await _db.Contracts.AnyAsync(c => c.Id == contractId, cancellationToken))
+            {
+                _db.ContractTags.Add(new ContractTag { ContractId = contractId, TagId = tag.Id });
+            }
+        }
+        await _db.SaveChangesAsync(cancellationToken);
     }
 
     private void EnsureSqliteFolder()
@@ -179,6 +213,26 @@ public class DatabaseInitializer
             AddRetention(SeedNames.TypeRd, 10, RetentionAction.ReviewThenDelete, SeedIds.Department("R&D and engineering"));
             AddRetention(SeedNames.TypeCorporate, null, RetentionAction.Keep, management);
             AddRetention(SeedNames.TypeOther, 5, RetentionAction.ReviewThenDelete, finance);
+        }
+        if (!await _db.Currencies.AnyAsync(cancellationToken))
+        {
+            var names = new Dictionary<string, string>
+            {
+                ["DKK"] = "Danish krone", ["EUR"] = "Euro", ["USD"] = "US dollar", ["SEK"] = "Swedish krona",
+                ["NOK"] = "Norwegian krone", ["GBP"] = "Pound sterling", ["PLN"] = "Polish zloty", ["CNY"] = "Chinese yuan"
+            };
+            var currencyOrder = 0;
+            foreach (var code in CurrencyRates.Currencies)
+            {
+                _db.Currencies.Add(new CurrencyDefinition
+                {
+                    Code = code,
+                    Name = names.TryGetValue(code, out var currencyName) ? currencyName : code,
+                    RateToDkk = CurrencyRates.ToDkk(1m, code),
+                    IsActive = true,
+                    SortOrder = ++currencyOrder
+                });
+            }
         }
         if (!await _db.Templates.AnyAsync(cancellationToken))
         {

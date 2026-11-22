@@ -2,6 +2,7 @@ using Dafa.Contracts.Core.Common;
 using Dafa.Contracts.Core.Dtos;
 using Dafa.Contracts.Core.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Dafa.Contracts.Api.Controllers;
 
@@ -27,16 +28,18 @@ public class ContractsController : ApiControllerBase
         _links = links;
     }
 
+    /// <summary>Release 3: the shared ContractFilter (repeatable parameters, cf.&lt;key&gt;), sort and paging.</summary>
     [HttpGet("")]
-    public async Task<ActionResult<PagedDto<ContractListItemDto>>> List([FromQuery] ContractListQuery query, CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedDto<ContractListItemDto>>> List(CancellationToken cancellationToken)
     {
-        return await _queries.ListAsync(query, cancellationToken);
+        return await _queries.ListAsync(QueryFilter.From(Request), cancellationToken);
     }
 
+    /// <summary>Same filter; optional repeatable columns (register column keys or cf.&lt;key&gt;).</summary>
     [HttpGet("export")]
-    public async Task<IActionResult> Export([FromQuery] ContractListQuery query, CancellationToken cancellationToken)
+    public async Task<IActionResult> Export(CancellationToken cancellationToken)
     {
-        var bytes = await _queries.ExportCsvAsync(query, cancellationToken);
+        var bytes = await _queries.ExportCsvAsync(QueryFilter.From(Request), cancellationToken);
         return File(bytes, "text/csv; charset=utf-8", "dafa-contracts.csv");
     }
 
@@ -174,10 +177,12 @@ public class ContractPartsController : ApiControllerBase
 public class IntakeController : ApiControllerBase
 {
     private readonly IntakeService _intake;
+    private readonly Dafa.Contracts.Core.Abstractions.IAppDbContext _db;
 
-    public IntakeController(IntakeService intake)
+    public IntakeController(IntakeService intake, Dafa.Contracts.Core.Abstractions.IAppDbContext db)
     {
         _intake = intake;
+        _db = db;
     }
 
     [HttpPost("intake/extract")]
@@ -193,18 +198,46 @@ public class IntakeController : ApiControllerBase
             throw new InputValidationException("file", "The file is larger than 25 MB.");
         }
         var bytes = await ReadAllAsync(file, cancellationToken);
-        return await _intake.ExtractAsync(file.FileName, bytes, cancellationToken);
+        var result = await _intake.ExtractAsync(file.FileName, bytes, cancellationToken);
+        var settings = await AppSettingsStore.LoadAsync(_db, cancellationToken);
+        if (!settings.Features.AiSuggestions)
+        {
+            // Release 3 feature toggle: the file is kept, but nothing is suggested.
+            var upload = await _db.PendingUploads.FirstOrDefaultAsync(u => u.Id == result.UploadId, cancellationToken);
+            if (upload is not null)
+            {
+                upload.Summary = null;
+                upload.DeviationsJson = null;
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+            result.Suggestions.Clear();
+            result.Deviations.Clear();
+            result.Summary = "";
+            result.Note = "AI suggestions are turned off";
+        }
+        return result;
     }
 
     [HttpGet("templates")]
     public async Task<ActionResult<List<TemplateDto>>> Templates(CancellationToken cancellationToken)
     {
+        var settings = await AppSettingsStore.LoadAsync(_db, cancellationToken);
+        if (!settings.Features.Templates)
+        {
+            await _intake.GetTemplatesAsync(cancellationToken);
+            return new List<TemplateDto>();
+        }
         return await _intake.GetTemplatesAsync(cancellationToken);
     }
 
     [HttpPost("intake/from-template")]
     public async Task<ActionResult<FromTemplateResultDto>> FromTemplate([FromBody] FromTemplateInput input, CancellationToken cancellationToken)
     {
+        var settings = await AppSettingsStore.LoadAsync(_db, cancellationToken);
+        if (!settings.Features.Templates)
+        {
+            throw new FeatureOffException("Templates are turned off in General settings.");
+        }
         return await _intake.FromTemplateAsync(input, cancellationToken);
     }
 }

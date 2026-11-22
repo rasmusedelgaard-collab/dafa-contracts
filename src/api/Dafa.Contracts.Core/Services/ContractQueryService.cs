@@ -19,6 +19,17 @@ public class ContractListQuery
     public string? Sort { get; set; }
     public int? Page { get; set; }
     public int? PageSize { get; set; }
+
+    /// <summary>The release 3 filter with the same meaning.</summary>
+    public ContractFilter ToFilter()
+    {
+        var filter = new ContractFilter { View = View, Q = Q, Sort = Sort, Page = Page, PageSize = PageSize };
+        if (EntityId is not null) filter.EntityIds.Add(EntityId.Value);
+        if (DepartmentId is not null) filter.DepartmentIds.Add(DepartmentId.Value);
+        if (TypeId is not null) filter.TypeIds.Add(TypeId.Value);
+        if (!string.IsNullOrWhiteSpace(Status)) filter.Statuses.Add(Status);
+        return filter;
+    }
 }
 
 public static class ContractPeople
@@ -81,9 +92,31 @@ public class ContractQueryService
         return item;
     }
 
-    private static void FillListItem(ContractListItemDto item, Contract contract, ReferenceData reference, DateOnly today)
+    public static void FillListItem(ContractListItemDto item, Contract contract, ReferenceData reference, DateOnly today)
     {
         var deadline = ContractCalculations.ListNoticeDeadline(contract);
+        // Release 3 fields
+        item.EntityId = contract.EntityId;
+        item.DepartmentId = contract.DepartmentId;
+        item.TypeId = contract.TypeId;
+        item.OwnerId = contract.OwnerId;
+        item.DelegateName = contract.DelegateId is null ? null : reference.UserName(contract.DelegateId);
+        item.ResponsibleName = contract.ResponsibleId is null ? null : reference.UserName(contract.ResponsibleId);
+        item.CounterpartyId = contract.SupplierId;
+        item.StartDate = contract.StartDate;
+        item.EndDate = contract.EndDate;
+        item.TotalValue = contract.TotalValue;
+        item.AnnualValueDkk = reference.AnnualDkk(contract);
+        item.TotalValueDkk = reference.TotalDkk(contract);
+        item.AutoRenew = contract.AutoRenew;
+        item.ChangeOfControl = contract.ChangeOfControl;
+        item.Exclusivity = contract.Exclusivity;
+        item.CreatedAt = DateOnly.FromDateTime(contract.CreatedAt);
+        item.SignedDate = contract.SignedDate;
+        item.HasSignedDocument = reference.HasSignedDocument(contract);
+        item.Tags = reference.TagsFor(contract.Id);
+        item.Watching = reference.IsWatched(contract.Id);
+        item.CustomFields = reference.CustomValuesFor(contract.Id);
         item.Id = contract.Id;
         item.ContractNo = contract.ContractNo;
         item.Title = contract.Title;
@@ -98,7 +131,7 @@ public class ContractQueryService
         item.AnnualValue = contract.AnnualValue;
         item.Currency = contract.Currency;
         item.Status = contract.Status.ToString();
-        item.MissingData = ContractCalculations.MissingData(contract);
+        item.MissingData = reference.Missing(contract);
     }
 
     private static bool ContainsText(string? value, string term) =>
@@ -106,173 +139,72 @@ public class ContractQueryService
 
     // ---------- list / export ----------
 
-    private async Task<List<Contract>> QueryAsync(ContractListQuery query, ReferenceData reference, CancellationToken cancellationToken)
+    private ContractFilterEngine Engine() => new(_db, _access, _currentUser, _clock);
+
+    public Task<PagedDto<ContractListItemDto>> ListAsync(ContractListQuery query, CancellationToken cancellationToken = default) =>
+        ListAsync(query.ToFilter(), cancellationToken);
+
+    /// <summary>GET contracts: the shared filter (CONTRACT_V3 section 2), sorted and paged; ended contracts included by default.</summary>
+    public async Task<PagedDto<ContractListItemDto>> ListAsync(ContractFilter filter, CancellationToken cancellationToken = default)
     {
-        var profile = await _currentUser.GetProfileAsync(cancellationToken);
+        var result = await Engine().RunAsync(filter, true, cancellationToken);
+        var all = result.Items;
+        var page = Math.Max(1, filter.Page ?? 1);
+        var pageSize = Math.Clamp(filter.PageSize ?? 25, 1, 200);
         var today = _clock.Today;
-        IEnumerable<Contract> items = await LoadVisibleAsync(cancellationToken);
-
-        switch ((query.View ?? "all").Trim().ToLowerInvariant())
-        {
-            case "due90":
-                // Same rule as the home tile and the overview count: no decision recorded yet.
-                items = items.Where(c => IsDueWithin(c, today, 90));
-                break;
-            case "approval":
-                items = items.Where(c => c.Status == ContractStatus.InApproval);
-                break;
-            case "mine":
-                items = items.Where(c => ContractAccessRules.IsOnContract(profile, c));
-                break;
-            case "missing":
-                items = items.Where(c => ContractCalculations.MissingData(c).Count > 0);
-                break;
-        }
-
-        if (query.EntityId is not null) items = items.Where(c => c.EntityId == query.EntityId.Value);
-        if (query.DepartmentId is not null) items = items.Where(c => c.DepartmentId == query.DepartmentId.Value);
-        if (query.TypeId is not null) items = items.Where(c => c.TypeId == query.TypeId.Value);
-
-        if (!string.IsNullOrWhiteSpace(query.Status))
-        {
-            var statuses = new HashSet<ContractStatus>();
-            foreach (var part in query.Status.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                if (Enum.TryParse<ContractStatus>(part, true, out var status))
-                {
-                    statuses.Add(status);
-                }
-            }
-            if (statuses.Count > 0)
-            {
-                items = items.Where(c => statuses.Contains(c.Status));
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(query.Q))
-        {
-            var term = query.Q.Trim();
-            items = items.Where(c =>
-                ContainsText(c.Title, term)
-                || ContainsText(c.ContractNo, term)
-                || ContainsText(c.CounterpartyName, term)
-                || ContainsText(reference.UserName(c.OwnerId), term));
-        }
-
-        var list = items.ToList();
-        SortContracts(list, query.Sort, reference);
-        return list;
-    }
-
-    private static void SortContracts(List<Contract> list, string? sort, ReferenceData reference)
-    {
-        var key = (sort ?? "").Trim();
-        var descending = false;
-        if (key.StartsWith("-", StringComparison.Ordinal))
-        {
-            descending = true;
-            key = key.Substring(1);
-        }
-        foreach (var suffix in new[] { ":desc", " desc", ".desc" })
-        {
-            if (key.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
-            {
-                descending = true;
-                key = key.Substring(0, key.Length - suffix.Length);
-            }
-        }
-        foreach (var suffix in new[] { ":asc", " asc", ".asc" })
-        {
-            if (key.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
-            {
-                key = key.Substring(0, key.Length - suffix.Length);
-            }
-        }
-        key = key.Trim().ToLowerInvariant();
-
-        list.Sort((a, b) =>
-        {
-            var result = CompareBy(a, b, key, descending, reference);
-            return result != 0 ? result : string.CompareOrdinal(a.ContractNo, b.ContractNo);
-        });
-    }
-
-    private static int CompareBy(Contract a, Contract b, string key, bool descending, ReferenceData reference)
-    {
-        switch (key)
-        {
-            case "title":
-                return CompareText(a.Title, b.Title, descending);
-            case "contractno":
-                return CompareText(a.ContractNo, b.ContractNo, descending);
-            case "counterparty":
-            case "counterpartyname":
-                return CompareText(a.CounterpartyName, b.CounterpartyName, descending);
-            case "typename":
-            case "type":
-                return CompareText(reference.Type(a.TypeId), reference.Type(b.TypeId), descending);
-            case "entityname":
-            case "entity":
-                return CompareText(reference.Entity(a.EntityId), reference.Entity(b.EntityId), descending);
-            case "departmentname":
-            case "department":
-                return CompareText(reference.Department(a.DepartmentId), reference.Department(b.DepartmentId), descending);
-            case "ownername":
-            case "owner":
-                return CompareText(reference.UserName(a.OwnerId), reference.UserName(b.OwnerId), descending);
-            case "status":
-                return CompareText(a.Status.ToString(), b.Status.ToString(), descending);
-            case "annualvalue":
-            case "value":
-                return CompareNullable(a.AnnualValue, b.AnnualValue, descending);
-            case "startdate":
-                return CompareNullable<DateOnly>(a.StartDate, b.StartDate, descending);
-            case "enddate":
-                return CompareNullable(a.EndDate, b.EndDate, descending);
-            default:
-                // notice / noticeDeadline / daysToNotice / no sort: soonest deadline first, contracts without one last.
-                return CompareNullable(ContractCalculations.ListNoticeDeadline(a), ContractCalculations.ListNoticeDeadline(b), descending);
-        }
-    }
-
-    private static int CompareText(string? a, string? b, bool descending)
-    {
-        var result = string.Compare(a ?? "", b ?? "", StringComparison.OrdinalIgnoreCase);
-        return descending ? -result : result;
-    }
-
-    /// <summary>Nulls always sort last, whatever the direction.</summary>
-    private static int CompareNullable<T>(T? a, T? b, bool descending) where T : struct, IComparable<T>
-    {
-        if (a is null && b is null) return 0;
-        if (a is null) return 1;
-        if (b is null) return -1;
-        var result = a.Value.CompareTo(b.Value);
-        return descending ? -result : result;
-    }
-
-    public async Task<PagedDto<ContractListItemDto>> ListAsync(ContractListQuery query, CancellationToken cancellationToken = default)
-    {
-        var reference = await ReferenceData.LoadAsync(_db, cancellationToken);
-        var all = await QueryAsync(query, reference, cancellationToken);
-        var page = Math.Max(1, query.Page ?? 1);
-        var pageSize = Math.Clamp(query.PageSize ?? 25, 1, 200);
-        var today = _clock.Today;
+        var pageItems = all.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        await result.Reference.LoadExtrasAsync(_db, pageItems.Select(c => c.Id).ToList(), result.Profile.UserId, cancellationToken);
         return new PagedDto<ContractListItemDto>
         {
-            Items = all.Skip((page - 1) * pageSize).Take(pageSize).Select(c => ToListItem(c, reference, today)).ToList(),
+            Items = pageItems.Select(c => ToListItem(c, result.Reference, today)).ToList(),
             Total = all.Count,
             Page = page,
             PageSize = pageSize
         };
     }
 
-    public async Task<byte[]> ExportCsvAsync(ContractListQuery query, CancellationToken cancellationToken = default)
+    /// <summary>List items for given contracts (already access-checked by the caller), with tags, custom fields and watches.</summary>
+    public async Task<List<ContractListItemDto>> ToListItemsAsync(IReadOnlyList<Contract> contracts, ReferenceData reference, CancellationToken cancellationToken = default)
     {
-        var reference = await ReferenceData.LoadAsync(_db, cancellationToken);
-        var all = await QueryAsync(query, reference, cancellationToken);
+        var profile = await _currentUser.GetProfileAsync(cancellationToken);
+        await reference.LoadExtrasAsync(_db, contracts.Select(c => c.Id).ToList(), profile.UserId, cancellationToken);
+        var today = _clock.Today;
+        return contracts.Select(c => ToListItem(c, reference, today)).ToList();
+    }
+
+    public Task<byte[]> ExportCsvAsync(ContractListQuery query, CancellationToken cancellationToken = default) =>
+        ExportCsvAsync(query.ToFilter(), cancellationToken);
+
+    /// <summary>Register column keys usable in the export (CONTRACT_V3 REGISTER_COLUMNS) and their headers.</summary>
+    public static readonly (string Key, string Header)[] ExportColumns =
+    {
+        ("contract", "Title"), ("contractNo", "Contract no"), ("counterparty", "Counterparty"), ("type", "Type"),
+        ("entity", "Entity"), ("department", "Department"), ("owner", "Owner"), ("delegate", "Delegate"),
+        ("responsible", "Responsible"), ("notice", "Notice deadline"), ("start", "Start date"), ("end", "End date"),
+        ("annualValue", "Annual value"), ("totalValue", "Total value"), ("status", "Status"), ("tags", "Tags"),
+        ("autoRenew", "Auto-renew"), ("changeOfControl", "Change of control")
+    };
+
+    public async Task<byte[]> ExportCsvAsync(ContractFilter filter, CancellationToken cancellationToken = default)
+    {
+        var result = await Engine().RunAsync(filter, true, cancellationToken);
+        var reference = result.Reference;
+        var all = result.Items;
         var today = _clock.Today;
         var csv = new StringBuilder();
+        if (filter.Columns.Count > 0)
+        {
+            var columns = ValidateColumns(filter.Columns, reference);
+            await reference.LoadExtrasAsync(_db, all.Select(c => c.Id).ToList(), result.Profile.UserId, cancellationToken);
+            csv.AppendLine(string.Join(",", columns.Select(c => CsvCell(ColumnHeader(c, reference)))));
+            foreach (var contract in all)
+            {
+                csv.AppendLine(string.Join(",", columns.Select(c => CsvCell(ColumnValue(c, contract, reference)))));
+            }
+            _audit.Record("contracts.exported", "Exported " + all.Count + " contracts to CSV");
+            await _db.SaveChangesAsync(cancellationToken);
+            return WithBom(csv.ToString());
+        }
         csv.AppendLine(string.Join(",", new[]
         {
             "Contract no", "Title", "Counterparty", "Type", "Entity", "Department", "Owner", "Status",
@@ -301,19 +233,89 @@ public class ContractQueryService
                 contract.AnnualValue?.ToString("0.##", CultureInfo.InvariantCulture) ?? "",
                 contract.TotalValue?.ToString("0.##", CultureInfo.InvariantCulture) ?? "",
                 contract.Currency,
-                string.Join("; ", ContractCalculations.MissingData(contract))
+                string.Join("; ", reference.Missing(contract))
             };
             csv.AppendLine(string.Join(",", cells.Select(CsvCell)));
         }
         _audit.Record("contracts.exported", "Exported " + all.Count + " contracts to CSV");
         await _db.SaveChangesAsync(cancellationToken);
+        return WithBom(csv.ToString());
+    }
 
+    public static byte[] WithBom(string text)
+    {
         var preamble = Encoding.UTF8.GetPreamble();
-        var body = Encoding.UTF8.GetBytes(csv.ToString());
+        var body = Encoding.UTF8.GetBytes(text);
         var bytes = new byte[preamble.Length + body.Length];
         Buffer.BlockCopy(preamble, 0, bytes, 0, preamble.Length);
         Buffer.BlockCopy(body, 0, bytes, preamble.Length, body.Length);
         return bytes;
+    }
+
+    /// <summary>400 for an unknown column key; cf.&lt;key&gt; must be an active custom field.</summary>
+    public static List<string> ValidateColumns(IEnumerable<string> columns, ReferenceData reference)
+    {
+        var result = new List<string>();
+        foreach (var column in columns)
+        {
+            var known = ExportColumns.Any(c => c.Key == column)
+                || (column.StartsWith("cf.", StringComparison.Ordinal) && reference.CustomFields.Any(d => d.Key == column.Substring(3)));
+            if (!known)
+            {
+                throw new InputValidationException("columns", "Unknown column '" + column + "'.");
+            }
+            if (!result.Contains(column))
+            {
+                result.Add(column);
+            }
+        }
+        return result;
+    }
+
+    public static string ColumnHeader(string column, ReferenceData reference)
+    {
+        if (column.StartsWith("cf.", StringComparison.Ordinal))
+        {
+            var definition = reference.CustomFields.FirstOrDefault(d => d.Key == column.Substring(3));
+            return definition?.Label ?? column;
+        }
+        return ExportColumns.Where(c => c.Key == column).Select(c => c.Header).FirstOrDefault() ?? column;
+    }
+
+    public static string ColumnValue(string column, Contract contract, ReferenceData reference)
+    {
+        var culture = CultureInfo.InvariantCulture;
+        switch (column)
+        {
+            case "contract": return contract.Title;
+            case "contractNo": return contract.ContractNo;
+            case "counterparty": return contract.CounterpartyName;
+            case "type": return reference.Type(contract.TypeId);
+            case "entity": return reference.Entity(contract.EntityId);
+            case "department": return reference.Department(contract.DepartmentId);
+            case "owner": return reference.UserName(contract.OwnerId);
+            case "delegate": return reference.UserName(contract.DelegateId);
+            case "responsible": return reference.UserName(contract.ResponsibleId);
+            case "notice": return FormatDate(ContractCalculations.ListNoticeDeadline(contract));
+            case "start": return FormatDate(contract.StartDate);
+            case "end": return FormatDate(contract.EndDate);
+            case "annualValue": return contract.AnnualValue?.ToString("0.##", culture) ?? "";
+            case "totalValue": return contract.TotalValue?.ToString("0.##", culture) ?? "";
+            case "status": return contract.Status.ToString();
+            case "tags": return string.Join("; ", reference.TagsFor(contract.Id).Select(t => t.Name));
+            case "autoRenew": return contract.AutoRenew ? "Yes" : "No";
+            case "changeOfControl": return contract.ChangeOfControl is null ? "" : (contract.ChangeOfControl.Value ? "Yes" : "No");
+        }
+        if (column.StartsWith("cf.", StringComparison.Ordinal))
+        {
+            var key = column.Substring(3);
+            var values = reference.CustomValuesFor(contract.Id);
+            if (values.TryGetValue(key, out var value) && value is not null)
+            {
+                return CustomFieldService.DisplayRaw(value, reference);
+            }
+        }
+        return "";
     }
 
     private static string FormatDate(DateOnly? date) =>
@@ -342,6 +344,7 @@ public class ContractQueryService
         var contract = await _access.GetReadableAsync(contractId, false, cancellationToken);
         var profile = await _currentUser.GetProfileAsync(cancellationToken);
         var reference = await ReferenceData.LoadAsync(_db, cancellationToken);
+        await reference.LoadExtrasAsync(_db, new[] { contract.Id }, profile.UserId, cancellationToken);
         var detail = await BuildDetailAsync(contract, profile, reference, cancellationToken);
         if (recordView)
         {
@@ -461,8 +464,8 @@ public class ContractQueryService
             detail.SubmittedById = instance.StartedById;
         }
 
-        // Reminders
-        var settings = await ReminderSettingsReader.GetAsync(_db, cancellationToken);
+        // Reminders (release 3: the contract type's own schedule when it has one)
+        var settings = await ReminderSettingsReader.GetForTypeAsync(_db, contract.TypeId, cancellationToken);
         var noticeDays = settings.GetNoticeDays();
         var reminders = await _db.Reminders.AsNoTracking().Where(r => r.ContractId == id).ToListAsync(cancellationToken);
         detail.Reminders = ContractCalculations.ReminderSchedule(contract, noticeDays, settings.EscalationDays, reminders)
@@ -473,7 +476,7 @@ public class ContractQueryService
 
         // Activity
         var events = await _db.AuditEvents.AsNoTracking()
-            .Where(e => e.ContractId == id && e.Action != AuditService.ContractViewed)
+            .Where(e => e.ContractId == id && e.Action != AuditService.ContractViewed && e.Action != "contract.watch")
             .OrderByDescending(e => e.At)
             .Take(40)
             .ToListAsync(cancellationToken);
@@ -492,6 +495,10 @@ public class ContractQueryService
 
         detail.Deviations = JsonDefaults.ReadList<Deviation>(contract.DeviationsJson);
         detail.CanEdit = ContractAccessRules.CanEdit(profile, contract) && contract.Status != ContractStatus.InApproval;
+        // Release 3
+        detail.WatcherCount = await _db.ContractWatchers.AsNoTracking().CountAsync(w => w.ContractId == id, cancellationToken);
+        detail.CommentCount = await _db.ContractComments.AsNoTracking().CountAsync(c => c.ContractId == id, cancellationToken);
+        detail.CanTag = ContractAccessRules.CanEdit(profile, contract);
         detail.CanDecideRenewal = ContractAccessRules.CanDecideRenewal(profile, contract);
         detail.LockedFields = ApprovedTerms.LockedFieldsFor(profile, contract);
 
@@ -570,6 +577,7 @@ public class ContractQueryService
             {
                 continue;
             }
+            await reference.LoadExtrasAsync(_db, new[] { contract.Id }, profile.UserId, cancellationToken);
             var detail = await BuildDetailAsync(contract, profile, reference, cancellationToken);
             result.Add(new MyApprovalDto
             {
@@ -630,10 +638,7 @@ public class ContractQueryService
     public async Task<OverviewDto> OverviewAsync(CancellationToken cancellationToken = default)
     {
         var profile = await _currentUser.GetProfileAsync(cancellationToken);
-        if (!ContractAccessRules.CanSeeOverview(profile))
-        {
-            throw new ForbiddenException("The overview is for entity management, group management and administrators.");
-        }
+        // Release 3: every signed-in user; the figures cover only the contracts the user can see.
         var today = _clock.Today;
         var reference = await ReferenceData.LoadAsync(_db, cancellationToken);
         var contracts = await LoadVisibleAsync(cancellationToken);
@@ -642,17 +647,17 @@ public class ContractQueryService
         var overview = new OverviewDto
         {
             ActiveContracts = live.Count,
-            AnnualValueDkk = live.Sum(c => CurrencyRates.ToDkk(c.AnnualValue, c.Currency)),
+            AnnualValueDkk = live.Sum(c => reference.AnnualDkk(c)),
             DueIn90 = live.Count(c => IsDueWithin(c, today, 90)),
             InApproval = contracts.Count(c => c.Status == ContractStatus.InApproval),
             MissingData = contracts.Count(c =>
                 c.Status != ContractStatus.Expired && c.Status != ContractStatus.Terminated
-                && ContractCalculations.MissingData(c).Count > 0)
+                && reference.Missing(c).Count > 0)
         };
 
         overview.ValueByEntity = live
             .GroupBy(c => c.EntityId)
-            .Select(g => new NameValueDto { Name = reference.Entity(g.Key), ValueDkk = g.Sum(c => CurrencyRates.ToDkk(c.AnnualValue, c.Currency)) })
+            .Select(g => new NameValueDto { Name = reference.Entity(g.Key), ValueDkk = g.Sum(c => reference.AnnualDkk(c)) })
             .OrderByDescending(v => v.ValueDkk)
             .ToList();
         overview.CountByType = live
@@ -697,6 +702,7 @@ public class ContractQueryService
         var byId = contracts.ToDictionary(c => c.Id, c => c);
         var mine = contracts.Where(c => ContractAccessRules.IsOnContract(profile, c)).ToList();
         var home = new HomeDto();
+        var homeReference = await ReferenceData.LoadAsync(_db, cancellationToken);
 
         home.MyContracts = mine.Count(c => c.Status != ContractStatus.Expired && c.Status != ContractStatus.Terminated);
         home.DecisionsThisWeek = mine.Count(c => IsDueWithin(c, today, 7));
@@ -707,7 +713,7 @@ public class ContractQueryService
         home.RenewingIn90 = new RenewingDto
         {
             Count = due90.Count,
-            ValueDkk = due90.Sum(c => CurrencyRates.ToDkk(c.AnnualValue, c.Currency))
+            ValueDkk = due90.Sum(c => homeReference.AnnualDkk(c))
         };
 
         var tasks = new List<(int Rank, HomeTaskDto Dto)>();
@@ -797,7 +803,7 @@ public class ContractQueryService
         // Missing data on my contracts
         foreach (var contract in mine.Where(c => c.Status != ContractStatus.Expired && c.Status != ContractStatus.Terminated))
         {
-            var missing = ContractCalculations.MissingData(contract);
+            var missing = homeReference.Missing(contract);
             if (missing.Count == 0)
             {
                 continue;
@@ -920,27 +926,34 @@ public class ContractQueryService
     public async Task<LookupsDto> LookupsAsync(CancellationToken cancellationToken = default)
     {
         await _currentUser.GetProfileAsync(cancellationToken);
+        // Release 3: inactive rows are included so names still resolve; pickers hide them.
         var entities = await _db.LegalEntities.AsNoTracking().ToListAsync(cancellationToken);
-        var departments = await _db.Departments.AsNoTracking().Where(d => d.IsActive).ToListAsync(cancellationToken);
-        var types = await _db.ContractTypes.AsNoTracking().Where(t => t.IsActive).ToListAsync(cancellationToken);
-        var users = await _db.Users.AsNoTracking().Where(u => u.IsActive).ToListAsync(cancellationToken);
+        var departments = await _db.Departments.AsNoTracking().ToListAsync(cancellationToken);
+        var types = await _db.ContractTypes.AsNoTracking().ToListAsync(cancellationToken);
+        var users = await _db.Users.AsNoTracking().ToListAsync(cancellationToken);
         var userDepartments = await _db.UserDepartments.AsNoTracking().ToListAsync(cancellationToken);
         var departmentsByUser = userDepartments.GroupBy(d => d.UserId).ToDictionary(g => g.Key, g => g.Select(d => d.DepartmentId).ToList());
 
         return new LookupsDto
         {
-            Entities = entities.OrderBy(e => e.SortOrder).ThenBy(e => e.Name, StringComparer.Ordinal).Select(e => new IdNameDto(e.Id, e.Name)).ToList(),
-            Departments = departments.OrderBy(d => d.SortOrder).ThenBy(d => d.Name, StringComparer.Ordinal).Select(d => new IdNameDto(d.Id, d.Name)).ToList(),
-            ContractTypes = types.OrderBy(t => t.SortOrder).ThenBy(t => t.Name, StringComparer.Ordinal).Select(t => new IdNameDto(t.Id, t.Name)).ToList(),
+            Entities = entities.OrderBy(e => e.SortOrder).ThenBy(e => e.Name, StringComparer.Ordinal)
+                .Select(e => new LookupEntityDto { Id = e.Id, Name = e.Name, Country = e.Country, Currency = e.Currency, IsActive = e.IsActive }).ToList(),
+            Departments = departments.OrderBy(d => d.SortOrder).ThenBy(d => d.Name, StringComparer.Ordinal)
+                .Select(d => new NamedRefV3Dto { Id = d.Id, Name = d.Name, IsActive = d.IsActive }).ToList(),
+            ContractTypes = types.OrderBy(t => t.SortOrder).ThenBy(t => t.Name, StringComparer.Ordinal)
+                .Select(t => new NamedRefV3Dto { Id = t.Id, Name = t.Name, IsActive = t.IsActive }).ToList(),
             Users = users.OrderBy(u => u.Name, StringComparer.OrdinalIgnoreCase).Select(u => new LookupUserDto
             {
                 Id = u.Id,
                 Name = u.Name,
                 Initials = u.Initials,
                 DepartmentIds = departmentsByUser.TryGetValue(u.Id, out var ids) ? ids : new List<Guid>(),
-                Roles = u.Roles.ToNames()
+                Roles = u.Roles.ToNames(),
+                IsActive = u.IsActive,
+                Email = u.Email,
+                Title = u.JobTitle
             }).ToList(),
-            Currencies = CurrencyRates.Currencies.ToList()
+            Currencies = await CurrencyTable.ActiveCodesAsync(_db, cancellationToken)
         };
     }
 
@@ -982,5 +995,33 @@ public static class ReminderSettingsReader
     {
         var settings = await db.ReminderSettings.AsNoTracking().FirstOrDefaultAsync(cancellationToken);
         return settings ?? new ReminderSettings();
+    }
+
+    public static ReminderSettings FromSchedule(ReminderSchedule schedule) => new()
+    {
+        Id = schedule.Id,
+        NoticeDays = schedule.NoticeDays,
+        EscalationDays = schedule.EscalationDays,
+        ObligationDays = schedule.ObligationDays
+    };
+
+    /// <summary>Release 3: the settings for one contract type (its own schedule, else the global settings).</summary>
+    public static async Task<ReminderSettings> GetForTypeAsync(IAppDbContext db, Guid typeId, CancellationToken cancellationToken = default)
+    {
+        var schedule = await db.ReminderSchedules.AsNoTracking().FirstOrDefaultAsync(s => s.ContractTypeId == typeId, cancellationToken);
+        return schedule is null ? await GetAsync(db, cancellationToken) : FromSchedule(schedule);
+    }
+
+    /// <summary>Loads the global settings and every per-type schedule once; returns a lookup by contract type.</summary>
+    public static async Task<Func<Guid, ReminderSettings>> GetResolverAsync(IAppDbContext db, CancellationToken cancellationToken = default)
+    {
+        var global = await GetAsync(db, cancellationToken);
+        var schedules = await db.ReminderSchedules.AsNoTracking().ToListAsync(cancellationToken);
+        var byType = new Dictionary<Guid, ReminderSettings>();
+        foreach (var schedule in schedules)
+        {
+            byType[schedule.ContractTypeId] = FromSchedule(schedule);
+        }
+        return typeId => byType.TryGetValue(typeId, out var settings) ? settings : global;
     }
 }

@@ -242,10 +242,11 @@ public class DocumentService
     private readonly IDocumentStore _store;
     private readonly DocumentWriter _writer;
     private readonly AuditService _audit;
+    private readonly DocumentTextIndexer? _indexer;
 
     public DocumentService(
         IAppDbContext db, ICurrentUser currentUser, IContractAccessService access, IDocumentStore store,
-        DocumentWriter writer, AuditService audit)
+        DocumentWriter writer, AuditService audit, DocumentTextIndexer? indexer = null)
     {
         _db = db;
         _currentUser = currentUser;
@@ -253,6 +254,7 @@ public class DocumentService
         _store = store;
         _writer = writer;
         _audit = audit;
+        _indexer = indexer;
     }
 
     public async Task<DocumentDto> UploadAsync(Guid contractId, string fileName, string? kind, Stream content, CancellationToken cancellationToken = default)
@@ -316,6 +318,20 @@ public class DocumentService
             // The unique index on (contract, name, version): the same name was uploaded at the same moment.
             _db.DiscardChanges();
             throw new ConflictException("A file with the same name was uploaded at the same time. Try again.", ProblemTypes.Stale);
+        }
+        if (_indexer is not null)
+        {
+            // Release 3: text for search, extracted with the bounded extractor. Best effort: the
+            // backfill job retries documents that have no text row.
+            try
+            {
+                await _indexer.IndexAsync(document, bytes, cancellationToken);
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _db.DiscardChanges();
+            }
         }
         return new DocumentDto
         {

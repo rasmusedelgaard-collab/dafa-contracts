@@ -139,7 +139,7 @@ The **Deploy test** workflow only appears in the Actions tab once its file is on
 | What you see | What to do |
 |---|---|
 | "Deploy skipped" in the run summary | Add the secrets it lists (step 4), or make the access code at least 12 characters, and run again. |
-| The site shows HTTP 500 right after a deployment that changed the data model | The database still has the old tables. Recreate the database (see "After an update that changes the database" below). |
+| The site shows HTTP 500 right after a deployment that changed the data model | Read the log: from release 3 the app upgrades the schema at start-up. If the upgrader reports an error, recreate the database (see "After an update that changes the database" below). |
 | The site does not start and the log mentions `Auth:Mode` or `Auth:Dev:AccessCode` | The app only starts on the test site with `Auth:Mode=Dev` **and** an access code of at least 12 characters. Check the `MONSTERASP_DEV_ACCESS_CODE` secret and deploy again. |
 | "Too many wrong access codes" | Wait 10 minutes. The limit is per network address, so colleagues behind the same office connection share it. |
 | The deploy step fails with a sign-in / 401 error | WebDeploy is not enabled, or the password secret is wrong (step 3). |
@@ -154,16 +154,49 @@ The **Deploy test** workflow only appears in the Actions tab once its file is on
 
 ## After an update that changes the database
 
-The app creates its tables only when the database is empty; it does not change existing
-tables yet. When a new version changes the data model (the release notes in `docs/STATUS.md`
-say so - "Backend phase 2" does), the test database must be emptied once:
+From release 3 on, **the app upgrades the database itself at start-up**; there is nothing to do
+by hand for releases that only add tables or columns (release 3 does).
+
+How it works (details in `docs/RUNBOOK.md`, "Database schema upgrades"):
+
+- On every start the app first runs `EnsureCreated` (creates everything when the database is
+  empty), then a schema upgrader. The upgrader keeps a small table `SchemaVersion` with the
+  numbered steps it has applied. Each step only **adds**: missing tables, missing columns (new
+  NOT NULL columns get a default so existing rows stay valid) and missing indexes. Nothing is
+  dropped, renamed or rewritten, and every statement first checks whether the object exists, so
+  running it again is harmless.
+- Step 1 brings a database that was created by backend phase 1 up to phase 2 (concurrency
+  columns, reminder term key). Step 2 adds release 3 (search text, custom fields, tags, imports,
+  sync sources, notification and job settings, saved views, watchers, comments, in-app
+  notifications, preferences, data room exports, and new columns on legal entities, counterparties,
+  users, contracts, audit events and the outbox).
+- The demo seed only adds rows that are missing, so existing test data stays.
+
+First deployment of release 3 on the existing test site:
+
+1. Run **Deploy test** as usual.
+2. Open the site. The first start takes a little longer while the upgrader runs.
+3. Check **Control Panel > website > Logs** for a line `Schema upgraded to version 2`. A line
+   starting with `Schema upgrade:` is a warning (for example a unique index that old rows break);
+   the app still runs. A line `Schema drift:` means a table or column is still missing: report it.
+4. Optional check in the database tool: `SELECT * FROM SchemaVersion` shows versions 1 and 2.
+5. As administrator, run **Settings > Jobs > Upload cleanup > Run now** a few times: it extracts
+   the text of the existing documents for search (100 documents per run; it also runs hourly).
+
+If the start fails with an error from the upgrader (shown in the log, the app does not start on
+a half-upgraded schema), the fallback is still to empty the test database once:
 
 1. Control Panel > **Databases**: delete the test database and create a new one with the same
    plan (or drop all tables with the SQL tool there).
 2. If the connection string changed, update the `MONSTERASP_DB_CONNECTION_STRING` secret.
 3. Run **Deploy test** again. The app recreates the tables and the demo data on first start.
 
-All test data entered by hand is lost. That is expected on the test site.
+All test data entered by hand is lost in that case. That is acceptable on the test site.
+
+Release 3 also adds two optional settings for the test site (defaults are right for it):
+`Sync:Provider` = `Demo` (sync sources return demo rows; `Live` queries real sources) and
+`DataRoom:LocalPath` = `App_Data/dataroom` (data room zips, kept 7 days; inside `App_Data`, so the
+deployment does not delete them).
 
 ## Removing the test site
 

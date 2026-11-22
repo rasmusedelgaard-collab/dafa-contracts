@@ -325,7 +325,7 @@ public class AdminService
         }
         if (await _db.Contracts.AnyAsync(c => c.DepartmentId == id, cancellationToken))
         {
-            throw new ConflictException("The department is used by contracts. Deactivate it instead of deleting it.");
+            throw new ConflictException("The department is used by contracts. Deactivate it instead of deleting it.", ProblemTypesV3.InUse);
         }
         var memberships = await _db.UserDepartments.Where(d => d.DepartmentId == id).ToListAsync(cancellationToken);
         _db.UserDepartments.RemoveRange(memberships);
@@ -394,7 +394,7 @@ public class AdminService
         }
         if (await _db.Contracts.AnyAsync(c => c.TypeId == id, cancellationToken))
         {
-            throw new ConflictException("The contract type is used by contracts. Deactivate it instead of deleting it.");
+            throw new ConflictException("The contract type is used by contracts. Deactivate it instead of deleting it.", ProblemTypesV3.InUse);
         }
         var retention = await _db.RetentionRules.Where(r => r.TypeId == id).ToListAsync(cancellationToken);
         _db.RetentionRules.RemoveRange(retention);
@@ -627,7 +627,7 @@ public class AdminService
             Id = m.Id,
             CreatedAt = m.CreatedAt,
             To = to,
-            Channel = "Mail",
+            Channel = string.IsNullOrEmpty(m.Channel) ? "Mail" : m.Channel,
             Recipient = recipientName,
             RecipientEmail = m.RecipientEmail,
             Kind = m.Kind,

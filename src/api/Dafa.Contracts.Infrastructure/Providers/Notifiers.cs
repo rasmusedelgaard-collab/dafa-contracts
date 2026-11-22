@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 namespace Dafa.Contracts.Infrastructure.Providers;
 
 /// <summary>TEST MODE (Notifications:Provider=Outbox). Notifications become rows shown in admin; nothing is sent.</summary>
-public class OutboxNotifier : INotifier
+public class OutboxNotifier : INotifier, IMailChannel
 {
     protected readonly IAppDbContext Db;
     protected readonly IClock Clock;
