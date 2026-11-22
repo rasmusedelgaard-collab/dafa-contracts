@@ -31,3 +31,8 @@ secrets.json
 Thumbs.db
 .idea/
 .vscode/
+
+# Build and deploy output
+artifacts/
+publish/
+infra/main.bicepparam

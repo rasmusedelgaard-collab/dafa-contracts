@@ -66,3 +66,94 @@ Mock state lives in memory and resets on reload; the selected demo user is remem
 - The production bundle includes the mock code (about 495 kB JS, 149 kB gzip); it could be split out with a dynamic import.
 - Checked in headless Chrome at 1440px and 360px only; no Firefox/Safari run, no screen-reader pass, no automated contrast audit. The filter chips size to their content with `field-sizing`, which older Firefox/Safari ignore (chips are then wider).
 - No end-to-end test suite; the browser checks were manual scripts and are not in the repo.
+
+## Backend phase 1 (2026-11-22)
+
+Scope: `src/api`, `tests`, `Dafa.Contracts.sln`, root `.gitignore`. Not committed.
+
+**Nothing here has been compiled or run.** There is no .NET SDK or NuGet access in the workspace. The code was written conservatively and desk-checked (usings, signatures, DI graph, JSON shapes against `src/web/src/api/types.ts`), but the first real compile and test run is the CI `api` job. Expect some compile errors and failing tests on the first run.
+
+### How to run (once a .NET 10 SDK is available)
+```
+dotnet restore Dafa.Contracts.sln
+dotnet build Dafa.Contracts.sln
+dotnet test Dafa.Contracts.sln
+dotnet run --project src/api/Dafa.Contracts.Api      # http://localhost:5080 (Properties/launchSettings.json)
+```
+Defaults need no configuration: Sqlite file `App_Data/dafa-contracts.db`, demo data, Dev sign-in, local files in `App_Data/files`. The SPA is served from `wwwroot` (only a `.gitkeep` is committed; CI copies the build there).
+
+### Built
+- Solution with `Dafa.Contracts.Core`, `.Infrastructure`, `.Api` (assembly `Dafa.Contracts.Api`, in-process hosting defaults untouched) and `tests/Dafa.Contracts.Tests`.
+- Core: entities and enums, calculations (notice deadline, days to notice, next reminder, lifecycle, missing data), access rules, required-field validation, and services for contracts (list/detail/create/update/submit/sign/renewal decision/CSV export), intake, documents, obligations, links, approvals (rule matching, parallel stages, role resolvers, delegate, holiday cover, reject to Draft, final approval with an approval log text file), jobs (contract end/auto-renewal, notice reminders, escalation, obligation reminders, holiday-cover rerouting, supplier sync, directory sync, upload cleanup), home, renewals, overview, search, admin settings, audit.
+- Access model in one place: `ContractAccessRules` (pure rules) + `ContractAccessService` (query filter and `GetReadable/GetEditable`). Every contract, document, obligation, link and approval read goes through it.
+- Infrastructure: one EF Core model for Sqlite and SQL Server, `EnsureCreated`, idempotent seeding (reference data always; demo data when `Seed:DemoData=true` and `Auth:Mode` is not `Entra`): the 9 entities, 13 departments, 10 types, 10 fictional users covering every access path, 28 fictional suppliers, 46 contracts with obligations, links, placeholder documents, 4 approvals in progress + 1 rejected + 1 approved awaiting signature, 6 default approval rules, retention rules, reminder settings, 2 Word templates generated with Open XML.
+- Test-mode providers: Local document store, Heuristic analyzer (PdfPig + Open XML text, regex extraction, summary, deviations), Seed supplier source, Outbox notifier, Seeded directory, no e-signing.
+- API host: all endpoints in brief section 5, RFC 7807 errors, cookie session (HttpOnly, SameSite=Lax, Secure outside Development), Dev and Entra sign-in in separate extension methods, role `Admin` on `api/admin/*`, static files + SPA fallback, hourly `BackgroundService` + `POST api/admin/jobs/run`, anonymous `GET /healthz` (200, "Healthy").
+- Tests (xUnit, 69): access matrix (5 paths + denial + current approver, pure rules and the SQL filter), calculations, validation, rule matching, approval engine (parallel, reject, delegate, holiday cover at start and via the job, fallback approver), reminders (idempotency, schedule, escalation, decision stops reminders, auto-renew), and 8 `WebApplicationFactory` tests on in-memory Sqlite with the demo seed.
+
+### Requests from DevOps: answers
+- Connection string key: **`ConnectionStrings:Default`** (only this one is read). Provider: `Database:Provider` = `Sqlite` | `SqlServer`.
+- `/healthz` exists, is anonymous, returns 200.
+- Assembly name `Dafa.Contracts.Api`; local dev port **5080**.
+- Data Protection keys: `DataProtection:KeysPath`, default `App_Data/keys` under the content root; set it to `../private/keys` on monsterasp.net. The folder is created; if it cannot be written, a warning is logged and keys stay in memory.
+- Dev access code: `Auth:Dev:AccessCode`; empty means no code is asked for.
+- `.gitignore`: `artifacts/`, `publish/`, `infra/main.bicepparam` added.
+
+### Configuration keys
+| Key | Default | Notes |
+|---|---|---|
+| `Auth:Mode` | `Dev` | `Dev` or `Entra` |
+| `Auth:Dev:AccessCode` | empty | when set, required for `dev/users` and `dev/login` |
+| `Auth:Cookie:AllowInsecure` | `false` | `true` allows the session cookie over plain http outside Development |
+| `Auth:Entra:AutoProvision` | `true` | create unknown tenant users as Reader at first sign-in |
+| `AzureAd:*` | none | Entra mode and Graph/Power BI tokens: `Instance`, `TenantId`, `ClientId`, `ClientSecret`, `CallbackPath` |
+| `Database:Provider` | `Sqlite` | `SqlServer` in `appsettings.Production.json` |
+| `ConnectionStrings:Default` | empty | empty + Sqlite = `App_Data/dafa-contracts.db` |
+| `Seed:DemoData` | `true` | ignored in Entra mode. Set `false` for any real data |
+| `DataProtection:KeysPath` | `App_Data/keys` | relative paths are under the content root |
+| `Jobs:Enabled`, `Jobs:IntervalMinutes`, `Jobs:StartupDelaySeconds` | `true`, `60`, `30` | |
+| `Documents:Provider`, `Documents:LocalPath` | `Local`, `App_Data/files` | `SharePoint` uses `SharePoint:Sites:[{Entity,SiteId}]`, `SharePoint:DefaultSiteId` |
+| `Analyzer:Provider` | `Heuristic` | `AzureOpenAI` uses `AzureOpenAI:Endpoint`, `Deployment`, `ApiKey`, `ApiVersion` |
+| `Suppliers:Provider` | `Seed` | `PowerBi` uses `PowerBi:DatasetId`, `Query`, `Columns:Id/Name/Country/VatNo` |
+| `Notifications:Provider`, `Notifications:Sender`, `App:BaseUrl` | `Outbox` | `Graph` sends mail from `Sender` |
+| `Directory:Provider` | `Seeded` | `Graph` |
+| `Signature:Provider` | `None` | `DocuSign` is a stub |
+
+The deploy workflow also writes `Database:ConnectionString`, `ConnectionStrings:DefaultConnection` and `Suppliers:Mode`; these are not read and can be dropped.
+
+### Stubbed / production-mode code that has never run
+All of these compile-targets sit behind the same interfaces and are only registered when their provider key is set: SharePoint document store (Graph REST, app-only token rather than on-behalf-of-user, simple upload so files up to about 4 MB), Azure OpenAI analyzer (falls back to heuristics on any error), Power BI supplier source, Graph mail notifier (no Teams), Graph directory sync (users only, first 999; no group-to-department mapping), DocuSign (throws), Entra sign-in (`Microsoft.Identity.Web`, local sign-out only).
+
+### Contract mismatches (frontend `types.ts` / `api.ts` vs backend)
+Checked against the working-tree versions of `types.ts`, `api.ts` and `client.ts` (including `dev/config`, the access code header/body, `contracts/{id}?peek=true`, `GET reminder-settings`, multipart `admin/templates`, `admin/templates/{id}/content`, `ruleId`/`ruleName` on the preview, `auth/login`). Remaining differences:
+1. `ContractDetail.changeOfControl` is typed `boolean`; the backend returns `null` for contracts where it was never filled in (one seeded contract; it is listed in `missingData` as "Change of control").
+2. `missingData` labels: the backend uses "Notice period", "Contract value", "Signed date" like the mock, and additionally "Title", "Counterparty", "Currency", "Change of control", "Renewal period".
+3. `approvals/preview` approver strings follow "Role · Name"; an unresolved role is "Role · not assigned" and a specific user is "Approver · Name". An optional `currency` parameter converts `value`; without it `value` is DKK as the frontend sends it.
+4. LetExpire on an auto-renew contract is accepted by the API (the frontend just does not offer it).
+5. `renewals` also returns contracts whose notice deadline has passed without a decision while the contract is still running (negative `daysToNotice`).
+6. `POST admin/templates` also accepts JSON `{ name, description, typeId }` without a file and then generates a starter .docx (the earlier frontend shape); the multipart form the frontend now uses stores the uploaded file.
+7. With an access code configured, a caller who already has a session is not asked for the code again on `dev/users` / `dev/login` (so the user switcher keeps working).
+8. Extra fields the frontend can ignore: `openEnded`, `renewalDecidedById` on the detail; `isActive`/`sortOrder` on departments and types; `isActive` on rules and templates; `contractNo` on audit events; `recipient`, `recipientEmail`, `kind`, `deliveredAt` on outbox; more counters on the job result; `email`, `roles`, `access` on dev users.
+9. `search` returns nothing for fewer than 2 characters.
+
+### Known risks (could not be verified without a compiler)
+Most likely to fail compilation or tests, in rough order:
+1. `Auth/EntraAuthExtensions.cs`: `Microsoft.Identity.Web` API surface and version, and its transitive OpenID Connect package on net10.0.
+2. `Providers/OpenXmlTemplateEngine.cs` and `TextExtractor.cs`: Open XML SDK 3.x and PdfPig member names (`SdtElement`, `SdtAlias`, `ExtendedFilePropertiesPart.Properties.Pages`, `Page.GetWords()`).
+3. Package versions: `PdfPig 0.1.10`, `Microsoft.Identity.Web 3.14.1`, `DocumentFormat.OpenXml 3.3.0` and the test packages were chosen from memory.
+4. EF Core query translation on a real provider: `List<Guid>.Contains` in the access filter, `StartsWith` on the contract number, the DateTime UTC value converter, `DbSet` properties declared as `=> Set<T>()`.
+5. ASP.NET details: two `POST admin/templates` actions selected by `[Consumes]`, `IFormFile?` parameters, `WriteAsJsonAsync(object, Type, ...)` overload, `MapFallback("/api/{**path}")` next to `MapFallbackToFile`.
+6. Integration tests: settings are passed as process environment variables and the database is a named shared-cache in-memory Sqlite; Development environment also turns on DI scope validation.
+7. Nullable-reference warnings are likely; warnings are not treated as errors.
+
+Behaviour to check on the first real run: SQL Server `EnsureCreated` against the monsterasp database, the session cookie behind their HTTPS front end (`Auth:Cookie:AllowInsecure` is the escape hatch), startup time of the first seed (46 small files are written), heuristic extraction quality on real PDFs.
+
+### Known gaps
+- No migrations: a schema change needs a new database (or manual SQL) until migrations are introduced.
+- Money totals use fixed placeholder FX rates in `CurrencyRates`.
+- Filtering, sorting and paging of contracts happen in memory after the access filter (fine for about 800 contracts).
+- Retention rules are stored and editable but nothing acts on them yet.
+- No endpoint for legal entities or users/memberships in admin (the brief lists none); they come from the seed or the directory.
+- Uploads are buffered in memory and pending intake uploads are stored in the database (25 MB limit; cleaned after 7 days).
+- Moving a contract to another entity or department does not move its stored files.
+- Under IIS in-process hosting, uploads above about 28 MB are rejected by the IIS request limit unless `web.config` raises it.

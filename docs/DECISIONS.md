@@ -28,3 +28,31 @@
 - FE: Sidebar group labels and phone tab labels are 12px (design: 11px) and group labels use #5b6672 (design: #8a94a0) to meet the brief's "never below 12" and 4.5:1 rules.
 - FE: Mock `intake/from-template` produces an .rtf file (no OpenXML in the browser); the real API returns .docx.
 - FE: `VITE_API_MODE` defaults to `mock` for `npm run dev`/tests and `real` for `npm run build`; `VITE_API_MODE=mock npm run build` gives a backend-free demo build.
+
+## Backend phase 1 (2026-11-22)
+
+- BE: Connection string is read from `ConnectionStrings:Default` only; `Database:Provider` selects `Sqlite` (default) or `SqlServer`.
+- BE: Application services live in Core and use `IAppDbContext` (EF Core `DbSet`s), so Core references `Microsoft.EntityFrameworkCore`; no repository layer.
+- BE: Entities have plain Guid foreign-key columns, no navigation properties and no database foreign keys or cascades, to keep `EnsureCreated` identical on Sqlite and SQL Server (no multiple-cascade-path errors).
+- BE: The access filter runs in SQL; contract filtering, calculated fields, sorting and paging run in memory afterwards (about 800 contracts), because Sqlite cannot sort or sum decimals.
+- BE: All timestamps are UTC `DateTime` (not `DateTimeOffset`); "today" is the UTC date.
+- BE: Approval rule specificity counts entity, type, department and the value band (min and/or max together count as one); ties go to the higher `priority`, then the name. Bands are min inclusive, max exclusive, in DKK.
+- BE: Approval value is total value when set, otherwise annual value, converted to DKK with fixed placeholder rates (`CurrencyRates`), matching the frontend preview.
+- BE: A role resolver that finds nobody falls back to the first administrator (label says so); submit fails with 409 when no rule matches. Rule stages are stored as JSON on the rule.
+- BE: Delegating marks the original step `Delegated` and adds a new `Pending` step for the delegate in the same stage; delegated steps do not count towards stage completion. Holiday cover reroutes a step at most once, when its stage opens or by the hourly job.
+- BE: On rejection the other open steps go back to `Waiting`, so a `Pending` step always belongs to an open approval. The current approver's read access is derived from `Pending` steps.
+- BE: Edit rights: Admin, or role ContractOwner and owner/delegate/responsible on the contract. 403 for a contract that exists but is not visible, 404 for one that does not exist.
+- BE: Notice reminders: when several offsets are already due, only the one closest to the deadline is sent (a contract registered late gets one reminder, not three). Escalation goes to the owner from `escalationDays` before the deadline until the end date.
+- BE: Auto-renew contracts roll forward automatically when the end date passes without notice or a LetExpire decision; rolling forward deletes the contract's notice reminder rows so the next term gets a new cycle. NoticeGiven contracts become Terminated, others Expired.
+- BE: `endDate: null` in a contract body means open-ended; `openEnded: false` with no end date is a validation error.
+- BE: Renewal decisions: Active contracts with an end date only; GiveNotice and LetExpire require a comment. `noticeDeadline`/`daysToNotice` are null in lists for NoticeGiven, Expired and Terminated.
+- BE: `missingData` holds display labels ("Notice period", "Contract value", "Signed date", ...), as in the frontend mock.
+- BE: Intake uploads are kept as rows (`PendingUploads`, bytes in the database) until the contract is created; templates are stored in the database too. Only contract documents go to the document store.
+- BE: The approval log is a UTF-8 text file. Seeded documents are text files marked as demo documents.
+- BE: Demo users, suppliers and counterparties are fictional names; demo data is never seeded when `Auth:Mode=Entra`. `appsettings.Production.json` does not turn demo data off, because the first production-environment deployment is the test site.
+- BE: Dev access code (`Auth:Dev:AccessCode`): when set, `GET api/dev/users` needs header `X-Dev-Access-Code` and `POST api/dev/login` needs `accessCode` (constant-time compare of SHA-256 hashes); a caller with an existing session is not asked again. `GET api/dev/config` is anonymous and returns `{ authMode, accessCodeRequired }`. Empty setting = no change.
+- BE: Data Protection keys are persisted to `DataProtection:KeysPath` (default `App_Data/keys`); failure to write is a logged warning, not a startup error.
+- BE: Roles are read from the database on every request (claims transformation), not stored in the cookie. `POST api/dev/login` returns `Me`. `GET api/auth/login?returnUrl=` challenges in Entra mode and is 404 in Dev mode.
+- BE: `POST contracts/{id}/documents` and `POST contracts/{id}/links` return the updated `ContractDetail`, as the frontend `Api` interface expects. `POST admin/templates` accepts JSON (generates a starter document) or multipart (uploaded .docx).
+- BE: No HTTPS redirection middleware in the app (the host terminates TLS); the session cookie is marked Secure outside Development unless `Auth:Cookie:AllowInsecure=true`.
+- BE: Package versions pinned: EF Core 10.0.0 (Sqlite, SqlServer), Microsoft.Identity.Web 3.14.1, DocumentFormat.OpenXml 3.3.0, PdfPig 0.1.10; tests: Microsoft.NET.Test.Sdk 17.12.0, xunit 2.9.2, xunit.runner.visualstudio 2.8.2, Microsoft.AspNetCore.Mvc.Testing 10.0.0.
