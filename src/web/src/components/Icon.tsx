@@ -67,6 +67,7 @@ const PATHS = {
   ),
   logout: <path d="M10 4H5v16h5M15 8l4 4-4 4M19 12H9" />,
   filter: <path d="M4 5h16l-6 7v6l-4 2v-8z" />,
+  send: <path d="M4 12l16-8-6 16-3-7z" />,
   archive: (
     <>
       <rect x="3" y="4" width="18" height="5" rx="1" />

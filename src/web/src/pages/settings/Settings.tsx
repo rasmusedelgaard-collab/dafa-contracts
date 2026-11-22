@@ -17,6 +17,7 @@ import { SyncSources } from './Sync';
 import { GeneralAdmin, JobsAdmin, NotificationsAdmin } from './System';
 import { UsersAdmin } from './Users';
 import { HolidayCover, Reminders, Retention } from './Policies';
+import { ESignAdmin } from './ESign';
 import { AccessMappingAdmin, DepartmentLinks, StorageHealthAdmin } from './Storage';
 import { TemplateCategories, Templates } from './Templates';
 
@@ -44,6 +45,7 @@ const SECTIONS: { id: string; label: string; group: string; render: () => ReactN
   { id: 'retention', label: 'Retention', group: 'Rules', render: () => <Retention /> },
   { id: 'templates', label: 'Templates', group: 'Rules', render: () => <Templates /> },
   { id: 'template-categories', label: 'Template categories', group: 'Rules', render: () => <TemplateCategories /> },
+  { id: 'esign', label: 'E-signature', group: 'Rules', render: () => <ESignAdmin /> },
   { id: 'holiday-cover', label: 'Holiday cover', group: 'Rules', render: () => <HolidayCover /> },
   { id: 'general', label: 'General', group: 'System', render: () => <GeneralAdmin /> },
   { id: 'jobs', label: 'Jobs', group: 'System', render: () => <JobsAdmin /> },

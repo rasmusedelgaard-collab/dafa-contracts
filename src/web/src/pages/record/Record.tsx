@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { apiMode } from '../../api';
 import { ApiError } from '../../api/api';
-import { permissions, qk, useApi, useAppConfig, useInvalidateContracts, useMe } from '../../app/context';
+import { permissions, qk, useApi, useInvalidateContracts, useMe } from '../../app/context';
 import type { ContractDetail, ContractReminder, Obligation, RenewalDecision } from '../../api/types';
 import { Avatar, Button, ButtonLink, Card, CardTitle, EmptyState, ErrorState, Icon, Pill, Segmented, Skeleton, StatusPill, useToast } from '../../components';
 import { ApprovalRoute, DecisionForm, Deviations } from '../../features/Approval';
@@ -14,6 +14,7 @@ import { EditDetailsDialog, LinkDialog, ObligationDialog, SignDialog, SubmitDial
 import { AdditionalDetails, CommentsTab, CompareDialog, TagsCard, WatchButton } from './collab';
 import { PersonLink } from '../../features/columns';
 import { useFileError } from '../../features/fileErrors';
+import { SendForSignatureDialog, SignatureAction, SignatureCard } from '../../features/Signature';
 
 type Tab = 'overview' | 'obligations' | 'approvals' | 'comments' | 'activity';
 const TABS: { value: Tab; label: string }[] = [
@@ -28,6 +29,7 @@ type Dialog =
   | { kind: 'renewal'; initial?: RenewalDecision }
   | { kind: 'edit' }
   | { kind: 'sign' }
+  | { kind: 'esign' }
   | { kind: 'submit' }
   | { kind: 'upload' }
   | { kind: 'link' }
@@ -97,7 +99,13 @@ function Ring({ days, window: span }: { days: number; window: number }) {
   );
 }
 
+/** Owner item H: the manual "Record manual signature" stays for the owner, the delegate and administrators. */
+function canRecordManualSignature(c: ContractDetail, me: { id: string; roles: string[] }): boolean {
+  return c.ownerId === me.id || c.delegateId === me.id || me.roles.includes('Admin');
+}
+
 function StatusCard({ c, open, setTab }: { c: ContractDetail; open: (d: Dialog) => void; setTab: (t: Tab) => void }) {
+  const manualSign = canRecordManualSignature(c, useMe());
   const wrap = (eyebrow: string, title: string, actions?: ReactNode, ring?: ReactNode, note?: ReactNode) => (
     <Card tone="primary" className="notice-card" aria-label="Status">
       {ring}
@@ -145,12 +153,17 @@ function StatusCard({ c, open, setTab }: { c: ContractDetail; open: (d: Dialog) 
     );
   }
   if (c.status === 'Approved') {
+    const out = c.signature?.status === 'Sent';
     return wrap(
       'Approved',
-      'Mark the contract as signed when both parties have signed',
-      c.canEdit ? (
+      out ? 'Out for signature: see the Signature card' : c.canSendForSignature ? 'Send it for signature, or record a signature made outside the app' : 'Record the signature when both parties have signed',
+      out ? undefined : c.canSendForSignature ? (
+        <Button variant="on-dark" size="md" onClick={() => open({ kind: 'esign' })}>
+          Send for signature
+        </Button>
+      ) : manualSign ? (
         <Button variant="on-dark" size="md" onClick={() => open({ kind: 'sign' })}>
-          Mark as signed
+          Record manual signature
         </Button>
       ) : undefined,
     );
@@ -529,6 +542,7 @@ function Overview({ c, open, setTab }: { c: ContractDetail; open: (d: Dialog) =>
           ) : null}
           <Facts c={c} />
           <AdditionalDetails c={c} onEdit={c.canEdit && c.status !== 'InApproval' ? () => open({ kind: 'edit' }) : undefined} />
+          <SignatureCard c={c} />
           <Documents c={c} open={open} />
           <div className="split" style={{ alignItems: 'stretch' }}>
             <Card pad className="stack" style={{ flex: '1 1 260px', minWidth: 0, padding: '14px 18px' }}>
@@ -690,7 +704,6 @@ export function Record() {
   const invalidate = useInvalidateContracts();
   const [params, setParams] = useSearchParams();
   const [dialog, setDialog] = useState<Dialog>(null);
-  const config = useAppConfig();
 
   const tabParam = params.get('tab');
   const tab: Tab = TABS.some((t) => t.value === tabParam) ? (tabParam as Tab) : 'overview';
@@ -756,11 +769,7 @@ export function Record() {
         </div>
         <div className="row-flex record-actions" style={{ gap: 10 }}>
           <WatchButton c={c} />
-          {config.features.eSign && c.status === 'Approved' && c.canEdit ? (
-            <Button variant="secondary" disabled title="No e-signature provider is connected yet">
-              Send for e-signature
-            </Button>
-          ) : null}
+          <SignatureAction c={c} onOpen={() => setDialog({ kind: 'esign' })} />
           {/* The app is the only door to storage: only administrators get the direct SharePoint link. */}
           {c.storeUrl && permissions(me).canSeeSettings ? (
             <a className="btn btn--secondary" href={c.storeUrl} target="_blank" rel="noreferrer">
@@ -774,8 +783,10 @@ export function Record() {
           ) : null}
           {c.status === 'Draft' && c.canEdit ? (
             <Button onClick={() => setDialog({ kind: 'submit' })}>Submit for approval</Button>
-          ) : c.status === 'Approved' && c.canEdit ? (
-            <Button onClick={() => setDialog({ kind: 'sign' })}>Mark as signed</Button>
+          ) : c.status === 'Approved' && canRecordManualSignature(c, me) && c.signature?.status !== 'Sent' ? (
+            <Button variant={c.canSendForSignature ? 'secondary' : 'primary'} onClick={() => setDialog({ kind: 'sign' })}>
+              Record manual signature
+            </Button>
           ) : c.canDecideRenewal && c.endDate === null && c.renewalDecision === null ? (
             <Button variant="secondary" onClick={() => setDialog({ kind: 'renewal', initial: 'GiveNotice' })}>
               Give notice
@@ -803,6 +814,7 @@ export function Record() {
       {dialog?.kind === 'edit' ? <EditDetailsDialog contract={c} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'submit' ? <SubmitDialog contract={c} submitting={submit.isPending} onSubmit={() => submit.mutate()} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'sign' ? <SignDialog contract={c} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === 'esign' ? <SendForSignatureDialog c={c} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'upload' ? <UploadDialog contract={c} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'link' ? <LinkDialog contract={c} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'compare' ? <CompareDialog c={c} onClose={() => setDialog(null)} /> : null}

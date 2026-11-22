@@ -156,7 +156,7 @@ export function SignDialog({ contract, onClose }: DialogProps) {
 
   return (
     <Modal
-      title="Mark as signed"
+      title="Record manual signature"
       subtitle="The contract becomes active and reminders start. Upload the signed copy under Documents."
       onClose={onClose}
       onSubmit={submit}
@@ -166,7 +166,7 @@ export function SignDialog({ contract, onClose }: DialogProps) {
             Cancel
           </Button>
           <Button type="submit" loading={save.isPending}>
-            Mark as signed
+            Record signature
           </Button>
         </>
       }

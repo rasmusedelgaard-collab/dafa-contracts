@@ -3,7 +3,7 @@ import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { qk, useApi, useInvalidateContracts, useLookups, useMe } from '../../app/context';
 import type { AccessRule, AdminUser, AdminUserInput, ContractRole, ReassignInput, Role } from '../../api/types';
-import { Avatar, Button, ButtonLink, Card, ChipSelect, EmptyState, ErrorState, Field, Icon, Modal, Pill, Segmented, SkeletonRows, Table, TextInput, useToast } from '../../components';
+import { Avatar, Button, ButtonLink, Card, ChipSelect, EmptyState, ErrorState, Field, Icon, Modal, Pill, Segmented, Select, SkeletonRows, Table, TextInput, useToast } from '../../components';
 import { formatDateTime } from '../../lib/dates';
 import { plural } from '../../lib/format';
 import { SectionHead } from './common';
@@ -27,8 +27,8 @@ function UserDialog({ user, onClose }: { user: AdminUser | null; onClose: () => 
   const refresh = useRefreshReference();
   const [d, setD] = useState<AdminUserInput>(
     user
-      ? { name: user.name, email: user.email, title: user.title, roles: user.roles, departmentIds: user.departmentIds, managedEntityIds: user.managedEntityIds, isGroupManagement: user.isGroupManagement, isActive: user.isActive }
-      : { name: '', email: '', title: null, roles: ['Reader'], departmentIds: [], managedEntityIds: [], isGroupManagement: false, isActive: true },
+      ? { name: user.name, email: user.email, title: user.title, roles: user.roles, departmentIds: user.departmentIds, managedEntityIds: user.managedEntityIds, isGroupManagement: user.isGroupManagement, isActive: user.isActive, entityId: user.entityId ?? null, canSendForSignature: user.canSendForSignature ?? false, signatureEntityIds: user.signatureEntityIds ?? [] }
+      : { name: '', email: '', title: null, roles: ['Reader'], departmentIds: [], managedEntityIds: [], isGroupManagement: false, isActive: true, entityId: null, canSendForSignature: false, signatureEntityIds: [] },
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const synced = (f: string) => user?.syncedFields.includes(f) ?? false;
@@ -117,6 +117,29 @@ function UserDialog({ user, onClose }: { user: AdminUser | null; onClose: () => 
           <input type="checkbox" checked={d.isGroupManagement} onChange={(e) => setD({ ...d, isGroupManagement: e.target.checked })} />
           Group management (sees all contracts)
         </label>
+        <Field label="Home legal entity" optional hint="Shown next to the name in person pickers." className="form-grid__full">
+          {(p) => <Select {...p} value={d.entityId ?? ''} placeholder="Not set" options={lookups.entities.filter((x) => x.isActive !== false || x.id === d.entityId).map((x) => ({ value: x.id, label: x.name }))} onChange={(e) => setD({ ...d, entityId: e.target.value || null })} />}
+        </Field>
+        <fieldset className="fieldset-plain form-grid__full">
+          <legend className="field__label">E-signature</legend>
+          <label className="check">
+            <input type="checkbox" checked={!!d.canSendForSignature} onChange={(e) => setD({ ...d, canSendForSignature: e.target.checked })} />
+            Can send contracts for signature outside DAFA
+          </label>
+          {d.canSendForSignature ? (
+            <>
+              <span className="field__hint">Only for these legal entities (none ticked = every entity the person can see):</span>
+              <div className="check-row">
+                {lookups.entities.map((x) => (
+                  <label key={x.id} className="check">
+                    <input type="checkbox" checked={(d.signatureEntityIds ?? []).includes(x.id)} onChange={(e) => setD({ ...d, signatureEntityIds: toggle(d.signatureEntityIds ?? [], x.id, e.target.checked) })} />
+                    {x.name}
+                  </label>
+                ))}
+              </div>
+            </>
+          ) : null}
+        </fieldset>
       </div>
     </Modal>
   );
