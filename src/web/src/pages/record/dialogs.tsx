@@ -408,7 +408,7 @@ export function LinkDialog({ contract, onClose }: DialogProps) {
         ) : (
           <div className="stack" style={{ gap: 8 }}>
             {options.map((o) => (
-              <label key={o.id} className="choice">
+              <label key={o.id} className="choice" data-checked={toId === o.id || undefined}>
                 <input type="radio" name="link-target" checked={toId === o.id} onChange={() => { setToId(o.id); setError(undefined); }} />
                 <span className="choice__title">{o.title}</span>
                 <span className="choice__text">

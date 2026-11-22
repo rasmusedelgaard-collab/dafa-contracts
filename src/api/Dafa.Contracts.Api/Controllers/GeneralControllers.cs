@@ -138,6 +138,7 @@ public class DevController : ControllerBase
         {
             AuthMode = _auth.Mode,
             AccessCodeRequired = _auth.AccessCodeRequired,
+            HttpsRequired = _auth.HttpsRequired,
             Branding = await BrandingService.LoadAsync(_db, cancellationToken)
         };
     }

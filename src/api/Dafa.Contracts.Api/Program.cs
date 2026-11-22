@@ -16,7 +16,11 @@ var environment = builder.Environment;
 // Sign-in mode: Dev (demo users) or Entra (Microsoft.Identity.Web). Fails closed (H3): an unknown or
 // missing Auth:Mode stops the app here, and Dev mode outside the Development environment is
 // refused unless a shared access code of at least 12 characters is configured.
-var authSettings = new AuthSettings(AuthModes.Parse(configuration["Auth:Mode"]), configuration["Auth:Dev:AccessCode"]);
+var authSettings = new AuthSettings(AuthModes.Parse(configuration["Auth:Mode"]), configuration["Auth:Dev:AccessCode"])
+{
+    // The session cookie is Secure unless plain http is allowed: browsers drop it on an http page.
+    HttpsRequired = !CookieSetup.AllowsInsecure(configuration, environment.IsDevelopment())
+};
 authSettings.EnsureSafeFor(environment.IsDevelopment());
 builder.Services.AddSingleton(authSettings);
 builder.Services.AddSingleton(new AccessCodeThrottle());

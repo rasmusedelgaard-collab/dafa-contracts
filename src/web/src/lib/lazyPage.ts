@@ -3,6 +3,7 @@
 // failure reloads the page once (fresh index.html, new chunk names); a second failure within a
 // minute is not retried but shown by the route error boundary with a "Reload" button.
 import { lazy, type ComponentType } from 'react';
+import { sessionStore } from './storage';
 
 const KEY = 'dafa.chunk-reload';
 const WINDOW_MS = 60_000;
@@ -16,26 +17,15 @@ export function isChunkLoadError(e: unknown): boolean {
 export interface ReloadHost {
   now(): number;
   get(): string | null;
-  set(value: string): void;
+  /** False when the value could not be kept across a reload (storage refused by the browser). */
+  set(value: string): unknown;
   reload(): void;
 }
 
 const browserHost: ReloadHost = {
   now: () => Date.now(),
-  get: () => {
-    try {
-      return sessionStorage.getItem(KEY);
-    } catch {
-      return null;
-    }
-  },
-  set: (v) => {
-    try {
-      sessionStorage.setItem(KEY, v);
-    } catch {
-      /* storage unavailable: no automatic reload, the boundary offers one */
-    }
-  },
+  get: () => sessionStore.get(KEY),
+  set: (v) => sessionStore.set(KEY, v),
   reload: () => window.location.reload(),
 };
 
@@ -43,7 +33,9 @@ const browserHost: ReloadHost = {
 export function reloadOnce(host: ReloadHost = browserHost): boolean {
   const last = Number(host.get() ?? 0);
   if (last && host.now() - last < WINDOW_MS) return false;
-  host.set(String(host.now()));
+  // Without storage the reload could not be remembered, and a chunk that is really missing would
+  // reload the page for ever: then there is no automatic reload, the boundary offers one.
+  if (host.set(String(host.now())) === false) return false;
   host.reload();
   return true;
 }

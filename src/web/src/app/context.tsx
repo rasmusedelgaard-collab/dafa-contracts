@@ -126,7 +126,7 @@ export const useLookups = (): Lookups => useSession().lookups;
 
 export function useMeQuery() {
   const api = useApi();
-  return useQuery({ queryKey: qk.me, queryFn: () => api.getMe(), retry: false, staleTime: Infinity });
+  return useQuery({ queryKey: qk.me, queryFn: () => api.getMe(), retry: false, staleTime: Infinity, networkMode: 'always' });
 }
 
 export function useLookupsQuery(enabled: boolean) {

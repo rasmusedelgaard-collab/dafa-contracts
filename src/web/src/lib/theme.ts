@@ -2,18 +2,15 @@
 // `me/preferences` and copied to localStorage so `public/theme-init.js` can apply it before the
 // first paint, the sign-in screen included.
 import type { ThemePreference } from '../api/types';
+import { localStore } from './storage';
 
 const KEY = 'dafa.theme';
 let media: MediaQueryList | null = null;
 let listener: (() => void) | null = null;
 
 export function readStoredTheme(): ThemePreference {
-  try {
-    const v = localStorage.getItem(KEY);
-    return v === 'dark' || v === 'system' ? v : 'light';
-  } catch {
-    return 'light';
-  }
+  const v = localStore.get(KEY);
+  return v === 'dark' || v === 'system' ? v : 'light';
 }
 
 export function resolveTheme(pref: ThemePreference, prefersDark: boolean): 'light' | 'dark' {
@@ -22,11 +19,8 @@ export function resolveTheme(pref: ThemePreference, prefersDark: boolean): 'ligh
 
 /** Applies the preference to <html data-theme> and remembers it; "system" follows the device. */
 export function applyTheme(pref: ThemePreference): void {
-  try {
-    localStorage.setItem(KEY, pref);
-  } catch {
-    /* storage unavailable: the theme still applies for this page */
-  }
+  // Storage unavailable: the theme still applies for this page.
+  localStore.set(KEY, pref);
   if (media && listener) media.removeEventListener?.('change', listener);
   media = typeof window !== 'undefined' && window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
   const set = () => document.documentElement.setAttribute('data-theme', resolveTheme(pref, !!media?.matches));
